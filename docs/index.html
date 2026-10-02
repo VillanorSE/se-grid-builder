@@ -1,0 +1,2081 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SE Grid Builder</title>
+<style>
+  :root { --bg:#16191d; --panel:#20252b; --card:#1b2025; --text:#e6e8eb; --muted:#9aa3ad; --line:#353c44; --accent:#e8a33d; --ok:#66bb6a; --warn:#e57373; }
+  * { box-sizing:border-box; }
+  html, body { height:100%; }
+  body { margin:0; background:var(--bg); color:var(--text); font:13px/1.4 system-ui, sans-serif; display:flex; flex-direction:column; overflow:hidden; }
+  header { display:flex; align-items:center; gap:18px; padding:0 14px; height:42px; flex:none; background:var(--panel); border-bottom:1px solid var(--line); }
+  header h1 { font-size:15px; margin:0; }
+  .tabs { display:flex; gap:2px; height:100%; }
+  .tabs button { border:0; border-bottom:2px solid transparent; border-radius:0; background:none; padding:0 14px; font-size:13px; color:var(--muted); }
+  .tabs button.on { color:var(--text); border-bottom-color:var(--accent); }
+  .tabs button:hover { color:var(--text); }
+  #saveState { margin-left:auto; color:var(--muted); font-size:12px; }
+  .page { flex:1; min-height:0; display:none; }
+  .page.on { display:flex; }
+  .side { width:310px; flex:none; background:var(--panel); border-right:1px solid var(--line); overflow-y:auto; padding:12px 14px; }
+  .main { flex:1; display:flex; flex-direction:column; min-width:0; min-height:0; }
+  .view { flex:1; min-height:0; position:relative; }
+  h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:16px 0 6px; }
+  h2:first-child { margin-top:0; }
+  label { display:flex; align-items:center; gap:6px; margin:4px 0; }
+  input[type=number], input[type=text], input[type=search], select, textarea { background:#14181c; color:var(--text); border:1px solid var(--line); border-radius:4px; padding:3px 5px; font:12px system-ui; }
+  input[type=number] { width:76px; }
+  input[type=range] { flex:1; }
+  textarea { width:100%; }
+  button { background:#14181c; color:var(--text); border:1px solid var(--line); border-radius:4px; padding:4px 8px; cursor:pointer; font:12px system-ui; }
+  button:hover { border-color:var(--accent); }
+  button.primary { border-color:var(--accent); color:var(--accent); }
+  button:disabled { opacity:.45; cursor:default; border-color:var(--line); }
+  .btnrow { display:flex; gap:4px; margin:4px 0; flex-wrap:wrap; }
+  .btnrow button { flex:1; }
+  .hint { color:var(--muted); font-size:12px; }
+  .warn { color:var(--warn); }
+  .okc { color:var(--ok); }
+  .sw { width:12px; height:12px; border-radius:2px; display:inline-block; flex:none; }
+
+  /* library */
+  #libPage { flex-direction:column; }
+  .toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:10px 14px; border-bottom:1px solid var(--line); background:var(--panel); }
+  .toolbar .grow { flex:1; }
+  #libScroll { flex:1; overflow-y:auto; padding:12px 14px; }
+  #libGrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(190px, 1fr)); gap:10px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px; cursor:pointer; display:flex; flex-direction:column; gap:4px; }
+  .card:hover { border-color:var(--accent); }
+  .card.off { opacity:.55; }
+  .card img, .card .ph { width:100%; aspect-ratio:1; border-radius:4px; background:#101316; display:block; }
+  .card .t { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .card .k { display:inline-block; min-width:22px; padding:0 5px; border-radius:4px; color:#101316; font-weight:700; margin-right:6px; text-align:center; }
+  .card .m { color:var(--muted); font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .card label { margin:0; font-size:12px; }
+  .tag { display:inline-block; font-size:10px; padding:0 5px; border-radius:8px; background:#2b3138; color:var(--muted); margin-left:4px; }
+  #importBox { display:none; border-bottom:1px solid var(--line); background:#1c2126; padding:12px 14px; }
+  #importBox.on { display:block; }
+  #importBox .cols { display:grid; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); gap:8px 24px; }
+  .dirrow { display:flex; align-items:center; gap:8px; margin:5px 0; }
+  .dirrow button { flex:none; width:190px; text-align:left; }
+  .dirrow span { color:var(--muted); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .dirrow span.set { color:var(--ok); }
+  #importLog { max-height:150px; overflow-y:auto; font:11px ui-monospace, monospace; color:var(--muted); white-space:pre-wrap; margin-top:8px; }
+
+  /* builder */
+  #mapWrap { height:290px; flex:none; border-top:1px solid var(--line); display:flex; align-items:center; justify-content:center; background:#101316; overflow:auto; }
+  #map { cursor:pointer; }
+  #info { font-variant-numeric:tabular-nums; color:var(--muted); }
+  #info b { color:var(--text); }
+  #layerLabel { color:var(--accent); font-weight:600; }
+  #selInfo { color:var(--text); margin:6px 0; height:4.2em; overflow:hidden; }   /* fixed sizes: nothing below moves */
+  #altList { height:190px; overflow:hidden; }
+  #altList button.alt { display:flex; align-items:center; gap:6px; width:100%; margin:3px 0; text-align:left; }
+  #altList button.alt.on { border-color:var(--accent); }
+  #altList .k { display:inline-block; min-width:22px; padding:0 5px; border-radius:4px; color:#101316; font-weight:700; text-align:center; }
+  #altList .hint { margin-left:auto; }
+  .drop { border:1px dashed var(--line); border-radius:6px; padding:10px; text-align:center; color:var(--muted); }
+  .drop.over { border-color:var(--accent); color:var(--text); }
+  .empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--muted); pointer-events:none; text-align:center; padding:20px; }
+
+  /* sketch */
+  #skStatus { color:var(--accent); min-height:18px; }
+  #skResult { min-height:18px; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<header>
+  <h1>SE Grid Builder</h1>
+  <nav class="tabs">
+    <button data-tab="bPage" class="on">Grid Builder</button>
+    <button data-tab="libPage">Cube Library</button>
+    <button data-tab="skPage">Sketch</button>
+  </nav>
+  <span id="saveState"></span>
+</header>
+
+<!-- ============================== Cube Library ============================== -->
+<section id="libPage" class="page">
+  <div class="toolbar">
+    <input type="search" id="libSearch" placeholder="Search name, key, block or mod" style="width:240px">
+    <select id="libShow"><option value="all">All blocks</option><option value="on">Used in builder</option><option value="off">Not used</option></select>
+    <select id="libSource"><option value="">All sources</option></select>
+    <span id="libCount" class="hint"></span>
+    <span class="grow"></span>
+    <button id="libAllOn">Use shown</button>
+    <button id="libAllOff">Don't use shown</button>
+    <button id="libAdd" class="primary">Add block</button>
+    <button id="libImportToggle">Import from world&hellip;</button>
+    <button id="libExport">Export JSON</button>
+    <button id="libImportJson">Import JSON</button>
+    <button id="libReset">Reset</button>
+    <input type="file" id="libJsonFile" accept=".json,application/json" hidden>
+  </div>
+  <div id="importBox">
+    <div id="fsNote" class="warn" style="display:none;margin-bottom:8px">This browser can't open folders directly, so it shows an
+    "Upload" window instead. Nothing is uploaded: the files are only read on this computer. But it lists every file in a
+    folder first, which is slow for the Workshop folder (tens of thousands of files). Chrome or Edge open folders directly
+    and remember them. In Firefox, run the import as a command instead (in the se-mod-production folder):
+    <code>node tools\se-grid-builder\import_world.mjs "&lt;world save folder&gt;"</code>, then Import JSON the file it
+    writes and choose Cancel to merge.</div>
+    <div class="cols">
+      <div>
+        <h2>Folders</h2>
+        <div class="dirrow"><button data-dir="world">1. World save folder&hellip;</button><span data-dirlabel="world">not set</span></div>
+        <div class="hint" style="margin-left:4px">%APPDATA%\SpaceEngineers\Saves\&lt;id&gt;\&lt;world&gt; (holds Sandbox.sbc)</div>
+        <div class="dirrow"><button data-dir="workshop">2. Workshop mods folder&hellip;</button><span data-dirlabel="workshop">not set</span></div>
+        <div class="hint" style="margin-left:4px">Steam\steamapps\workshop\content\244850</div>
+        <div class="dirrow"><button data-dir="content">3. Game Content folder&hellip;</button><span data-dirlabel="content">optional</span></div>
+        <div class="hint" style="margin-left:4px">Steam\steamapps\common\SpaceEngineers\Content: vanilla blocks and block names</div>
+        <div class="dirrow"><button data-dir="localMods">4. Local mods folder&hellip;</button><span data-dirlabel="localMods">optional</span></div>
+        <div class="hint" style="margin-left:4px">%APPDATA%\SpaceEngineers\Mods: mods in the world that aren't from the Workshop</div>
+      </div>
+      <div>
+        <h2>What to import</h2>
+        <label>Block names matching <input type="text" id="impFilter" style="flex:1"></label>
+        <div class="hint">A regular expression on the block's id and name. Only plain structural blocks (TypeId CubeBlock) that fit in
+        one cell are imported. Armour with a game shape joins the matching vanilla card. Other blocks are read from their model
+        and grouped by shape, so blocks with the same shape share one card.</div>
+        <label><input type="checkbox" id="impVanilla" checked> include vanilla blocks (needs the Content folder)</label>
+        <div class="btnrow" style="margin-top:8px"><button id="impRun" class="primary">Import blocks</button><button id="impClose">Close</button></div>
+        <div class="hint">Blocks larger than one cell (most wings) are counted but not imported yet.</div>
+      </div>
+    </div>
+    <div id="importLog"></div>
+    <input type="file" id="dirFallback" webkitdirectory hidden>
+  </div>
+  <div id="libScroll"><div id="libGrid"></div></div>
+</section>
+
+<!-- ============================== Sketch ============================== -->
+<section id="skPage" class="page">
+  <div class="side">
+    <h2>Block</h2>
+    <label><select id="skShape" style="flex:1;max-width:100%"></select></label>
+    <label>Name <input type="text" id="skName" style="flex:1"></label>
+    <label>Key <input type="text" id="skKey" maxlength="4" style="width:70px"> <span class="hint">short label on the layer map</span></label>
+    <div id="skMeta" class="hint"></div>
+    <label><input type="checkbox" id="skUse"> use in builder</label>
+    <h2>Draw</h2>
+    <div class="hint">Click two points to draw an edge of the block. Drag to orbit, right-drag to pan, wheel to zoom. The orange
+    arrow is the block's Forward. Draw every edge of the shape, then Save.</div>
+    <label><input type="checkbox" id="skGhost" checked> show the saved shape (faint)</label>
+    <label><input type="checkbox" id="skQuarters"> quarter points (default: halves)</label>
+    <div id="skStatus">Click a point to start a line.</div>
+    <div class="btnrow"><button id="skUndo">undo line</button><button id="skClear">clear lines</button></div>
+    <div class="btnrow"><button id="skFromShape">start from saved shape</button></div>
+    <div class="btnrow"><button id="skSave" class="primary">Save to library</button></div>
+    <div id="skResult" class="hint"></div>
+    <h2>Block</h2>
+    <div class="btnrow"><button id="skDelete">delete this block</button></div>
+    <div class="hint">Saving turns the lines into a solid. If the lines close into a solid (each edge shared by two faces) that
+    exact shape is used, concave or not. If not, the shape becomes the convex hull of the points and you get a warning.</div>
+  </div>
+  <div class="main"><div class="view" id="skView"></div></div>
+</section>
+
+<!-- ============================== Grid Builder ============================== -->
+<section id="bPage" class="page on">
+  <div class="side">
+    <h2>Session</h2>
+    <div class="btnrow"><button id="sessSave">Save session</button><button id="sessOpen">Open session</button></div>
+    <input type="file" id="sessFile" accept=".json,application/json" hidden>
+    <div class="hint">One file with the model, settings, cell edits and block library, to keep or to send to someone with
+    this page.</div>
+    <h2>Model</h2>
+    <div class="drop" id="bDrop">Drop an .obj or .stl here, or <button id="bPick">choose a file</button></div>
+    <input type="file" id="bFile" accept=".obj,.stl" hidden>
+    <div id="bModelName" class="hint" style="margin-top:4px"></div>
+    <label>Real length (m) <input type="number" id="bLength" step="0.01" min="0.01" value="5"></label>
+    <div class="hint">The real length of the thing along its front axis. The model is scaled to it.</div>
+    <label>Front axis <select id="bFront"><option>+x</option><option>-x</option><option>+y</option><option>-y</option><option>+z</option><option>-z</option></select>
+      Up <select id="bUp"><option>y</option><option>z</option><option>x</option></select></label>
+    <label style="display:block">Part groups <input type="text" id="bGroups" style="width:100%"></label>
+    <div class="hint">group=words in part names, separated by ";". Everything else is "body". Parts are the model's objects.</div>
+
+    <h2>Scale and grid</h2>
+    <label>Build scale % <input type="number" id="scale" step="5" value="100"></label>
+    <label>Block size <select id="block"><option value="0.5">0.5 m (small grid)</option><option value="2.5">2.5 m (large grid)</option></select></label>
+    <label>Width centre on <select id="centre"><option value="col">a block column (odd width)</option><option value="line">a grid line (even width)</option></select></label>
+    <label>Move grid forward (blocks) <input type="number" id="offX" step="0.1" value="0"></label>
+    <label>Move grid up (blocks) <input type="number" id="offY" step="0.1" value="0"></label>
+    <label>Cells <select id="fill"><option value="solid">all filled cells</option><option value="shell">outer cells only</option></select></label>
+    <label>Min block fill <input type="number" id="minFill" min="0" max="1" step="0.05" value="0.3"></label>
+    <label>Simplify <input type="number" id="simplify" min="0" max="6" step="0.5" value="4"> <span class="hint">0 = follow the model exactly; higher = cubes, halves and slopes win more often</span></label>
+    <div class="hint">A block is considered for a cell only when the model fills at least this share of <i>the block's own</i>
+    volume (a plate: of the model's thin skin). Among those, the winner is the block whose faces best match the model's
+    surface in the cell: the surface should lie on the block's faces, and every face the block shows should have model
+    surface on it. Simpler blocks take near-ties. Thin bits of a neighbour poking through a grid line get no block.</div>
+    <div id="info"></div>
+
+    <h2>Show</h2>
+    <label><input type="checkbox" id="showModel" checked> Model, opacity <input type="range" id="opacity" min="0.05" max="1" step="0.05" value="0.3"></label>
+    <label>On top <select id="onTop"><option value="blocks">blocks (model shows through see-through blocks)</option><option value="model">model (blocks show through a see-through model)</option></select></label>
+    <label><input type="checkbox" id="showCells" checked> Blocks as <select id="cellMode"><option value="shapes">fitted shapes</option><option value="cubes">cubes</option></select></label>
+    <label>Block opacity <input type="range" id="cellOpacity" min="0.05" max="1" step="0.05" value="0.75"></label>
+    <label><input type="checkbox" id="showGrid" checked> Grid lines on the layer</label>
+    <div id="groups"></div>
+
+    <h2>Edit a cell</h2>
+    <div class="hint">Click a cell on the layer map to select it. Edits are kept in this browser for this model and grid settings.</div>
+    <div class="btnrow"><button data-act="prev">&#9664; shape</button><button data-act="next">shape &#9654;</button><button data-act="none">no block</button></div>
+    <div class="btnrow"><button data-act="ry">turn vertical</button><button data-act="rx">turn length</button><button data-act="rz">turn width</button></div>
+    <div class="btnrow"><button data-act="reset">auto</button><button data-act="resetAll">clear all edits</button></div>
+    <div id="selInfo" class="hint">No cell selected.</div>
+    <div id="altList"></div>
+    <div class="btnrow"><button id="cellReport">Copy cell report for Claude</button></div>
+    <div class="btnrow"><button id="editsExport">Export my edits for Claude</button></div>
+    <div class="hint">Saves every cell you've edited (for this model and grid settings) with what the tool had picked, so
+    the fitting can be tuned towards your choices. Send Claude the file's location.</div>
+    <div class="hint">Select a cell the tool got wrong, click this, and paste it into the chat with the block you would use.</div>
+
+    <h2>Layer</h2>
+    <label>Mode <select id="layerMode"><option value="only">only the layer</option><option value="upto" selected>up to the layer</option><option value="all">all layers</option></select></label>
+    <label><input type="range" id="layer" min="1" max="1" value="1"> <span id="layerLabel"></span></label>
+    <div class="hint">The map is the selected layer seen from above: front on the right, columns numbered from the rear, rows from
+    the -Z side (row 1 at the top). Letters are block keys (click a cell for the full name); a dot is a cell the model touches
+    where no block passes the fill rule.</div>
+  </div>
+  <div class="main">
+    <div class="view" id="bView"><div class="empty" id="bEmpty">Load an .obj or .stl model to start.</div></div>
+    <div id="mapWrap"><canvas id="map"></canvas></div>
+  </div>
+</section>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+
+// ---- armor_data.js
+// Generated by build.py from tools/grid-overlay/armor_shapes.json; do not edit.
+const ARMOR = [{"topology":"Box","key":"C","name":"Light Armor Block","block":"SmallBlockArmorBlock","pieces":[[[0.0,1.0,0.0,1.0],[0.0,0.0,-1.0,0.0],[0.0,0.0,1.0,1.0],[0.0,-1.0,0.0,0.0],[1.0,0.0,0.0,1.0],[-1.0,0.0,0.0,0.0]]],"verts":[[[1.0,1.0,-0.0],[-0.0,1.0,-0.0],[1.0,1.0,1.0],[-0.0,1.0,1.0],[1.0,-0.0,-0.0],[-0.0,-0.0,-0.0],[1.0,-0.0,1.0],[-0.0,-0.0,1.0]]]},{"topology":"Slope","key":"S","name":"Light Armor Slope","block":"SmallBlockArmorSlope","pieces":[[[0.0,0.707107,0.707107,0.707107],[-1.0,0.0,0.0,0.0],[1.0,0.0,0.0,1.0],[0.0,-1.0,0.0,0.0],[0.0,0.0,-1.0,0.0]]],"verts":[[[-0.0,-0.0,1.0],[-0.0,1.0,-0.0],[1.0,-0.0,1.0],[1.0,1.0,-0.0],[-0.0,-0.0,-0.0],[1.0,-0.0,-0.0]]]},{"topology":"Corner","key":"K","name":"Light Armor Corner","block":"SmallBlockArmorCorner","pieces":[[[0.0,0.0,-1.0,0.0],[1.0,0.0,0.0,1.0],[-0.57735,0.57735,0.57735,0.0],[0.0,-1.0,0.0,0.0]]],"verts":[[[1.0,1.0,-0.0],[1.0,-0.0,-0.0],[-0.0,-0.0,-0.0],[1.0,-0.0,1.0]]]},{"topology":"InvCorner","key":"I","name":"Light Armor Inv. Corner","block":"SmallBlockArmorCornerInv","pieces":[[[0.57735,-0.57735,-0.57735,0.0],[1.0,0.0,0.0,1.0],[0.0,0.0,-1.0,0.0],[0.0,-1.0,0.0,0.0],[0.0,1.0,0.0,1.0],[-1.0,0.0,0.0,0.0],[0.0,0.0,1.0,1.0]]],"verts":[[[1.0,1.0,-0.0],[1.0,-0.0,1.0],[0.0,-0.0,-0.0],[1.0,1.0,1.0],[-0.0,1.0,-0.0],[-0.0,-0.0,1.0],[-0.0,1.0,1.0]]]},{"topology":"Slope2Base","key":"B","name":"Light Armor Slope 2x1x1 Base","block":"SmallBlockArmorSlope2Base","pieces":[[[0.0,0.894427,0.447214,0.894427],[0.0,0.0,-1.0,0.0],[0.0,0.0,1.0,1.0],[0.0,-1.0,0.0,0.0],[1.0,0.0,0.0,1.0],[-1.0,0.0,0.0,0.0]]],"verts":[[[1.0,1.0,-0.0],[-0.0,1.0,-0.0],[1.0,0.5,1.0],[-0.0,0.5,1.0],[1.0,-0.0,-0.0],[-0.0,-0.0,-0.0],[1.0,-0.0,1.0],[-0.0,-0.0,1.0]]]},{"topology":"Slope2Tip","key":"T","name":"Light Armor Slope 2x1x1 Tip","block":"SmallBlockArmorSlope2Tip","pieces":[[[0.0,0.894427,0.447214,0.447214],[-1.0,0.0,0.0,0.0],[1.0,0.0,0.0,1.0],[0.0,-1.0,0.0,0.0],[0.0,0.0,-1.0,0.0]]],"verts":[[[-0.0,-0.0,1.0],[-0.0,0.5,-0.0],[1.0,-0.0,1.0],[1.0,0.5,-0.0],[-0.0,-0.0,-0.0],[1.0,-0.0,-0.0]]]},{"topology":"Corner2Base","key":"CB","name":"Light Armor Corner 2x1x1 Base","block":"SmallBlockArmorCorner2Base","pieces":[[[1.0,-0.0,0.0,1.0],[-0.0,-1.0,-0.0,-0.0],[0.0,-0.0,1.0,1.0],[-0.0,0.0,-1.0,-0.0],[-0.666667,0.666667,0.333333,0.0]]],"verts":[[[1.0,-0.0,1.0],[1.0,-0.0,-0.0],[1.0,0.5,1.0],[1.0,1.0,-0.0],[0.5,-0.0,1.0],[-0.0,-0.0,0.0]]]},{"topology":"Corner2Tip","key":"CT","name":"Light Armor Corner 2x1x1 Tip","block":"SmallBlockArmorCorner2Tip","pieces":[[[1.0,0.0,0.0,1.0],[-0.0,-1.0,-0.0,-0.0],[-0.666667,0.666667,0.333333,-0.333333],[-0.0,0.0,-1.0,-0.0]]],"verts":[[[1.0,-0.0,-0.0],[1.0,-0.0,1.0],[1.0,0.5,-0.0],[1.0,0.0,1.0],[0.5,-0.0,-0.0]]]},{"topology":"InvCorner2Base","key":"IB","name":"Light Armor Inv. Corner 2x1x1 Base","block":"SmallBlockArmorInvCorner2Base","pieces":[[[1.0,-0.0,0.0,1.0],[-0.0,-1.0,-0.0,-0.0],[0.0,-0.0,1.0,1.0],[-0.0,0.0,-1.0,-0.0],[0.0,1.0,0.0,1.0],[-0.333333,0.666667,0.666667,1.0],[-1.0,0.0,-0.0,-0.0]]],"verts":[[[1.0,-0.0,1.0],[1.0,-0.0,-0.0],[1.0,1.0,1.0],[1.0,1.0,-0.0],[-0.0,-0.0,1.0],[-0.0,-0.0,-0.0],[-0.0,0.5,1.0],[0.0,1.0,-0.0],[-0.0,1.0,0.5]]]},{"topology":"InvCorner2Tip","key":"IT","name":"Light Armor Inv. Corner 2x1x1 Tip","block":"SmallBlockArmorInvCorner2Tip","pieces":[[[1.0,0.0,0.0,1.0],[-0.0,-1.0,-0.0,-0.0],[0.333333,0.666667,0.666667,1.0],[-0.0,-0.0,1.0,1.0],[-0.0,0.0,-1.0,-0.0],[-0.0,1.0,-0.0,1.0],[-1.0,0.0,-0.0,-0.0]]],"verts":[[[1.0,-0.0,1.0],[1.0,-0.0,-0.0],[1.0,1.0,-0.0],[-0.0,-0.0,1.0],[-0.0,-0.0,-0.0],[-0.0,0.5,1.0],[-0.0,1.0,0.5],[0.0,1.0,-0.0]]]},{"topology":"HalfBox","key":"H","name":"Half Light Armor Block","block":"HalfArmorBlock","pieces":[[[0,1,0,0.5]]],"verts":[[[1.0,0.5,1.0],[1.0,0.5,-0.0],[-0.0,0.5,1.0],[-0.0,0.5,-0.0],[1.0,-0.0,1.0],[1.0,-0.0,-0.0],[-0.0,-0.0,1.0],[-0.0,-0.0,-0.0]]]},{"topology":"HalfSlopeBox","key":"HS","name":"Half Slope Light Armor Block","block":"HalfSlopeArmorBlock","pieces":[[[-0.0,-1.0,-0.0,-0.0],[-0.707107,0.707107,0.0,-0.353553],[-0.0,-0.0,-1.0,-0.0],[0.0,0.0,1.0,1.0],[1.0,0.0,0.0,1.0]]],"verts":[[[0.5,-0.0,-0.0],[0.5,-0.0,1.0],[1.0,-0.0,-0.0],[1.0,-0.0,1.0],[1.0,0.5,-0.0],[1.0,0.5,1.0]]]},{"topology":"HalfSlopeInverted","key":"HSI","name":"Half Slope Inv. Light Armor","block":"SmallBlockArmorHalfSlopeInverted","pieces":[[[1,1,0,1.5]]],"verts":[[[1.0,0.5,1.0],[1.0,0.5,-0.0],[0.5,1.0,1.0],[0.5,1.0,-0.0],[1.0,-0.0,1.0],[1.0,-0.0,-0.0],[-0.0,1.0,1.0],[-0.0,1.0,-0.0],[-0.0,-0.0,1.0],[-0.0,-0.0,-0.0]]]},{"topology":"HalfCorner","key":"HC","name":"Light Armor Half Corner Block","block":"SmallBlockArmorHalfCorner","pieces":[[[1,0,1,1],[0,1,0,0.5]]],"verts":[[[1.0,0.5,-0.0],[0.0,0.5,1.0],[1.0,-0.0,-0.0],[0.0,-0.0,1.0],[-0.0,0.5,-0.0],[-0.0,-0.0,-0.0]]]},{"topology":"HalfSlopeCorner","key":"HSC","name":"Half Slope Corner Light Armor","block":"SmallBlockArmorHalfSlopeCorner","pieces":[[[-0.0,-1.0,-0.0,-0.0],[0.57735,0.57735,0.57735,0.288675],[-1.0,-0.0,-0.0,-0.0],[0.0,0.0,-1.0,0.0]]],"verts":[[[-0.0,-0.0,0.5],[0.5,-0.0,-0.0],[0.0,-0.0,-0.0],[-0.0,0.5,-0.0]]]},{"topology":"HalfSlopeCornerInverted","key":"HSCI","name":"Half Slope Corner Inv. Light Armor","block":"SmallBlockArmorHalfSlopeCornerInverted","pieces":[[[1.0,-0.0,0.0,1.0],[-0.0,-1.0,-0.0,-0.0],[0.0,-0.0,1.0,1.0],[-0.0,0.0,-1.0,-0.0],[0.0,1.0,0.0,1.0],[-0.57735,0.57735,0.57735,0.866025],[-1.0,0.0,-0.0,-0.0]]],"verts":[[[1.0,-0.0,1.0],[1.0,-0.0,-0.0],[1.0,1.0,1.0],[1.0,1.0,-0.0],[-0.0,-0.0,1.0],[-0.0,-0.0,-0.0],[0.5,1.0,1.0],[-0.0,0.5,1.0],[0.0,1.0,-0.0],[-0.0,1.0,0.5]]]},{"topology":"SlopedCorner","key":"SC","name":"Light Armor Sloped Corner","block":"SmallBlockArmorSlopedCorner","pieces":[[[0.0,0.0,1.0,1.0],[1.0,0.0,0.0,1.0],[0.408248,0.816497,0.408248,0.816497],[0.0,-1.0,0.0,0.0],[-1.0,0.0,0.0,0.0],[0.0,0.0,-1.0,0.0]]],"verts":[[[1.0,0.0,1.0],[1.0,-0.0,1.0],[-0.0,0.5,1.0],[-0.0,-0.0,1.0],[1.0,0.5,-0.0],[1.0,-0.0,-0.0],[-0.0,1.0,-0.0],[-0.0,-0.0,-0.0]]]},{"topology":"SlopedCornerBase","key":"SCB","name":"Light Armor Sloped Corner Base","block":"SmallBlockArmorSlopedCornerBase","pieces":[[[0.0,1.0,0.0,1.0],[-0.408248,0.816497,0.408248,0.816497],[0.0,-1.0,0.0,0.0],[0.0,0.0,-1.0,0.0],[1.0,0.0,0.0,1.0],[-1.0,0.0,0.0,0.0],[0.0,0.0,1.0,1.0]]],"verts":[[[-0.0,1.0,-0.0],[1.0,1.0,1.0],[1.0,1.0,-0.0],[-0.0,0.5,1.0],[1.0,-0.0,-0.0],[-0.0,-0.0,-0.0],[1.0,-0.0,1.0],[-0.0,-0.0,1.0]]]},{"topology":"SlopedCornerTip","key":"SCT","name":"Sloped Corner Light Armor Tip","block":"SmallBlockArmorSlopedCornerTip","pieces":[[[0.408248,0.816497,0.408248,0.408248],[0.0,0.0,-1.0,0.0],[-1.0,-0.0,-0.0,-0.0],[0.0,-1.0,0.0,0.0]]],"verts":[[[-0.0,0.5,-0.0],[1.0,-0.0,-0.0],[-0.0,-0.0,1.0],[0.0,-0.0,-0.0]]]},{"topology":"HalfSlopedCorner","key":"HSD","name":"Light Armor Half Sloped Corner","block":"SmallBlockArmorHalfSlopedCorner","pieces":[[[0.0,-1.0,0.0,0.0],[0.707107,0.0,0.707107,0.707107],[0.408248,0.816497,0.408248,0.816497],[-1.0,0.0,0.0,0.0],[0.0,0.0,-1.0,0.0]]],"verts":[[[-0.0,-0.0,1.0],[1.0,-0.0,-0.0],[-0.0,-0.0,-0.0],[-0.0,0.5,1.0],[1.0,0.5,-0.0],[-0.0,1.0,-0.0]]]},{"topology":"HalfSlopedCornerBase","key":"HSDB","name":"Light Armor Half Sloped Corner Base","block":"SmallBlockArmorHalfSlopedCornerBase","pieces":[[[0,1,0,0.5],[1,2,1,2]]],"verts":[[[1.0,0.5,-0.0],[0.0,0.5,1.0],[-0.0,0.5,-0.0],[1.0,-0.0,1.0],[1.0,-0.0,-0.0],[-0.0,-0.0,1.0],[-0.0,-0.0,-0.0]]]},{"topology":"RaisedSlopedCorner","key":"RSC","name":"Light Armor Raised Sloped Corner","block":"SmallBlockArmorRaisedSlopedCorner","pieces":[[[1.0,-0.0,0.0,1.0],[-0.0,-1.0,-0.0,-0.0],[0.0,-0.0,1.0,1.0],[-0.0,0.0,-1.0,-0.0],[0.0,1.0,0.0,0.5],[-1.0,0.0,-0.0,-0.0]],[[-0.0,-1.0,-0.0,-0.5],[0.408248,0.816497,0.408248,0.816497],[-1.0,-0.0,-0.0,-0.0],[0.0,0.0,-1.0,0.0]]],"verts":[[[1.0,-0.0,1.0],[1.0,-0.0,-0.0],[1.0,0.5,1.0],[1.0,0.5,-0.0],[-0.0,-0.0,1.0],[-0.0,-0.0,-0.0],[-0.0,0.5,1.0],[0.0,0.5,-0.0]],[[1.0,0.5,0.0],[0.0,0.5,1.0],[-0.0,0.5,-0.0],[-0.0,0.5,1.0],[1.0,0.5,-0.0],[-0.0,1.0,-0.0]]]},{"topology":"CornerSquare","key":"CS","name":"Light Armor Corner Square Block","block":"SmallBlockArmorCornerSquare","pieces":[[[-1.0,0.0,0.0,0.0],[0.0,0.0,-1.0,0.0],[0.0,0.707107,0.707107,0.707107],[0.707107,0.707107,0.0,0.707107],[0.0,-1.0,0.0,0.0]]],"verts":[[[-0.0,1.0,-0.0],[-0.0,-0.0,-0.0],[-0.0,-0.0,1.0],[1.0,-0.0,-0.0],[1.0,-0.0,1.0]]]},{"topology":"CornerSquareInverted","key":"CSI","name":"Light Armor Corner Square Inv. Block","block":"SmallBlockArmorCornerSquareInverted","pieces":[[[1.0,-0.0,0.0,1.0],[-0.0,-1.0,-0.0,-0.0],[0.0,-0.0,1.0,1.0],[-0.707107,0.0,-0.707107,-0.707107],[-0.707107,0.707107,0.0,0.0]],[[-0.0,-1.0,-0.0,-0.0],[1.0,0.0,0.0,1.0],[0.0,0.707107,0.707107,0.707107],[0.0,0.0,-1.0,0.0],[-1.0,-0.0,-0.0,-0.0]]],"verts":[[[1.0,-0.0,1.0],[1.0,-0.0,-0.0],[1.0,1.0,1.0],[1.0,1.0,-0.0],[-0.0,-0.0,1.0]],[[1.0,-0.0,1.0],[1.0,-0.0,-0.0],[-0.0,-0.0,1.0],[0.0,-0.0,-0.0],[1.0,1.0,-0.0],[-0.0,1.0,-0.0]]]},{"topology":"SquareSlopedCornerBase","key":"SSB","name":"Light Armor Square Sloped Corner Base","block":"SmallBlockArmorSquareSlopedCornerBase","pieces":[[[1,2,0,2],[0,2,1,2]]],"verts":[[[1.0,0.5,1.0],[0.0,1.0,-0.0],[1.0,0.5,-0.0],[-0.0,0.5,1.0],[1.0,-0.0,1.0],[1.0,-0.0,-0.0],[-0.0,-0.0,1.0],[-0.0,-0.0,-0.0]]]},{"topology":"SquareSlopedCornerTip","key":"SST","name":"Light Armor Square Sloped Corner Tip","block":"SmallBlockArmorSquareSlopedCornerTip","pieces":[[[-0.0,-1.0,-0.0,-0.0],[0.447214,0.894427,0.0,0.447214],[0.0,0.894427,0.447214,0.447214],[0.0,0.0,-1.0,0.0],[-1.0,-0.0,-0.0,-0.0]]],"verts":[[[1.0,-0.0,1.0],[1.0,-0.0,-0.0],[-0.0,-0.0,1.0],[0.0,-0.0,-0.0],[-0.0,0.5,-0.0]]]},{"topology":"SquareSlopedCornerTipInv","key":"SSTI","name":"Light Armor Square Sloped Corner Tip Inv.","block":"SmallBlockArmorSquareSlopedCornerTipInv","pieces":[[[-0.0,-1.0,-0.0,-0.0],[1.0,-0.0,0.0,1.0],[-0.707107,-0.0,0.707107,-0.0],[0.0,0.0,-1.0,0.0],[-0.447214,0.894427,0.0,0.0]],[[-0.0,-1.0,0.0,0.0],[-0.0,-0.0,1.0,1.0],[0.707107,0.0,-0.707107,0.0],[-1.0,0.0,-0.0,-0.0],[-0.0,0.894427,-0.447214,-0.0]]],"verts":[[[1.0,-0.0,1.0],[1.0,-0.0,-0.0],[-0.0,-0.0,-0.0],[1.0,0.5,1.0],[1.0,0.5,-0.0]],[[1.0,-0.0,1.0],[-0.0,-0.0,1.0],[-0.0,-0.0,-0.0],[1.0,0.5,1.0],[-0.0,0.5,1.0]]]},{"topology":"SlopeTransition","key":"TR","name":"Light Armor Slope Transition","block":"SmallBlockArmorSlopeTransition","pieces":[[[0.0,0.707107,0.707107,0.707107],[-1.0,0.0,0.0,0.0],[1.0,0.0,0.0,1.0],[0.408248,0.816497,0.408248,0.816497],[0.0,-1.0,0.0,0.0],[0.0,0.0,-1.0,0.0]]],"verts":[[[-0.0,1.0,0.0],[-0.0,-0.0,1.0],[1.0,0.0,1.0],[1.0,-0.0,1.0],[-0.0,-0.0,-0.0],[1.0,0.5,-0.0],[1.0,0.0,1.0],[1.0,-0.0,-0.0]]]},{"topology":"SlopeTransitionBase","key":"TRB","name":"Light Armor Slope Transition Base","block":"SmallBlockArmorSlopeTransitionBase","pieces":[[[0.0,0.0,1.0,1.0],[1.0,0.0,0.0,1.0],[0.333329,0.666668,0.666668,0.999997],[0.0,0.894429,0.44721,0.894429],[0.0,-1.0,0.0,0.0],[0.0,0.0,-1.0,0.0],[-1.0,0.0,0.0,0.0]]],"verts":[[[1.0,0.0,1.0],[-0.0,0.49999,1.0],[-0.0,-0.0,1.0],[1.0,1.0,0.0],[1.0,-0.0,-0.0],[-0.0,0.50002,0.99997],[-0.0,1.0,-0.0],[-0.0,-0.0,-0.0]]]},{"topology":"SlopeTransitionTip","key":"TRT","name":"Light Armor Slope Transition Tip","block":"SmallBlockArmorSlopeTransitionTip","pieces":[[[-1.0,0.0,0.0,0.0],[1.0,0.0,0.0,1.0],[0.333329,0.666668,0.666668,0.666668],[0.0,0.894429,0.44721,0.44721],[0.0,0.0,-1.0,0.0],[0.0,-1.0,0.0,0.0]]],"verts":[[[-0.0,0.0,1.0],[-0.0,0.49999,-0.0],[-0.0,-0.0,-0.0],[1.0,0.49998,3e-05],[1.0,-0.0,0.50001],[1.0,0.49999,-0.0],[1.0,-0.0,-0.0]]]},{"topology":"SlopeTransitionMirrored","key":"TRM","name":"Light Armor Slope Transition Mirrored","block":"SmallBlockArmorSlopeTransitionMirrored","pieces":[[[0.0,0.707107,-0.707107,0.0],[1.0,0.0,0.0,1.0],[-1.0,0.0,0.0,0.0],[0.408248,0.816497,-0.408248,0.408248],[0.0,-1.0,0.0,0.0],[0.0,0.0,1.0,1.0]]],"verts":[[[1.0,0.0,-0.0],[-0.0,1.0,1.0],[-0.0,-0.0,-0.0],[1.0,0.5,1.0],[1.0,-0.0,1.0],[-0.0,-0.0,1.0]]]},{"topology":"SlopeTransitionBaseMirrored","key":"TRBM","name":"Light Armor Slope Transition Base Mirrored","block":"SmallBlockArmorSlopeTransitionBaseMirrored","pieces":[[[1.0,0.0,0.0,1.0],[0.0,0.0,-1.0,0.0],[0.333329,0.666668,-0.666668,0.333329],[0.0,0.894429,-0.44721,0.44722],[0.0,-1.0,0.0,0.0],[0.0,0.0,1.0,1.0],[-1.0,0.0,0.0,0.0]]],"verts":[[[1.0,0.0,-0.0],[1.0,1.0,1.0],[1.0,-0.0,1.0],[-0.0,0.49999,-0.0],[-0.0,-0.0,-0.0],[-0.0,0.50002,3e-05],[-0.0,1.0,1.0],[-0.0,-0.0,1.0]]]},{"topology":"SlopeTransitionTipMirrored","key":"TRTM","name":"Light Armor Slope Transition Tip Mirrored","block":"SmallBlockArmorSlopeTransitionTipMirrored","pieces":[[[1.0,0.0,0.0,1.0],[-1.0,0.0,0.0,0.0],[0.333329,0.666668,-0.666668,0.0],[0.0,0.894429,-0.44721,0.0],[0.0,0.0,1.0,1.0],[0.0,-1.0,0.0,0.0]]],"verts":[[[1.0,0.49998,0.99997],[1.0,-0.0,0.49999],[1.0,0.49999,1.0],[1.0,-0.0,1.0],[-0.0,0.0,-0.0],[-0.0,0.49999,1.0],[-0.0,-0.0,1.0]]]}];
+
+// ---- panel_data.js
+// Generated by extract_panels.mjs from the game's armour panel models; do not edit.
+const PANELS = [{"id":"panel:ArmorPanel","key":"P","name":"Armor Panel","blocks":[{"subtype":"LargeArmorPanelLight","size":"Large","mod":"Vanilla","name":"Light Armor Panel"},{"subtype":"LargeArmorPanelHeavy","size":"Large","mod":"Vanilla","name":"Heavy Armor Panel"},{"subtype":"SmallArmorPanelLight","size":"Small","mod":"Vanilla","name":"Light Armor Panel"},{"subtype":"SmallArmorPanelHeavy","size":"Small","mod":"Vanilla","name":"Heavy Armor Panel"}],"tris":[0.96,0,0,1,0,0,1,1,0,1,1,0,0.96,1,0,0.96,0,0,1,1,1,0.96,1,1,0.96,1,0,0.96,1,0,1,1,0,1,1,1,1,0,0,1,0,1,1,1,1,1,1,1,1,1,0,1,0,0,0.96,0,0,0.96,0,1,1,0,1,1,0,1,1,0,0,0.96,0,0,0.96,0,1,0.96,1,1,1,1,1,1,1,1,1,0,1,0.96,0,1,0.96,1,0,0.96,1,1,0.96,0,1,0.96,0,1,0.96,0,0,0.96,1,0]},{"id":"panel:ArmorCenterPanel","key":"PC","name":"Armor Centered Panel","blocks":[{"subtype":"LargeArmorCenterPanelLight","size":"Large","mod":"Vanilla","name":"Light Armor Centered Panel"},{"subtype":"LargeArmorCenterPanelHeavy","size":"Large","mod":"Vanilla","name":"Heavy Armor Centered Panel"},{"subtype":"SmallArmorCenterPanelLight","size":"Small","mod":"Vanilla","name":"Light Armor Centered Panel"},{"subtype":"SmallArmorCenterPanelHeavy","size":"Small","mod":"Vanilla","name":"Heavy Armor Centered Panel"}],"tris":[0.5447,1,0,0.5,1,0,0.5,0,0,0.5,0,0,0.5447,0,0,0.5447,1,0,0.5,1,0,0.5447,1,0,0.5447,1,1,0.5447,1,1,0.5,1,1,0.5,1,0,0.5447,1,1,0.5447,1,0,0.5447,0,0,0.5447,0,0,0.5447,0,1,0.5447,1,1,0.5447,0,1,0.5447,0,0,0.5,0,0,0.5,0,0,0.5,0,1,0.5447,0,1,0.5447,1,1,0.5447,0,1,0.5,0,1,0.5,0,1,0.5,1,1,0.5447,1,1,0.5,0,1,0.5,0,0,0.5,1,0,0.5,1,0,0.5,1,1,0.5,0,1]},{"id":"panel:ArmorSlopedSidePanel","key":"PSd","name":"Armor Panel Side","blocks":[{"subtype":"LargeArmorSlopedSidePanelLight","size":"Large","mod":"Vanilla","name":"Light Armor Panel Side"},{"subtype":"LargeArmorSlopedSidePanelHeavy","size":"Large","mod":"Vanilla","name":"Heavy Armor Panel Side"},{"subtype":"SmallArmorSlopedSidePanelLight","size":"Small","mod":"Vanilla","name":"Light Armor Panel Side"},{"subtype":"SmallArmorSlopedSidePanelHeavy","size":"Small","mod":"Vanilla","name":"Heavy Armor Panel Side"}],"tris":[0.96,1,0,0.96,0,1,0.96,0,0,1,0,0,1,0,1,1,1,0,0.96,0,1,1,0,1,1,0,0,1,0,0,0.96,0,0,0.96,0,1,0.96,1,0,1,1,0,1,0,1,1,0,1,0.96,0,1,0.96,1,0,0.96,0,0,1,0,0,1,1,0,1,1,0,0.96,1,0,0.96,0,0]},{"id":"panel:ArmorSlopedPanel","key":"PS","name":"Armor Panel Slope ","blocks":[{"subtype":"LargeArmorSlopedPanelLight","size":"Large","mod":"Vanilla","name":"Light Armor Panel Slope "},{"subtype":"LargeArmorSlopedPanelHeavy","size":"Large","mod":"Vanilla","name":"Heavy Armor Panel Slope"},{"subtype":"SmallArmorSlopedPanelLight","size":"Small","mod":"Vanilla","name":"Light Armor Panel Slope "},{"subtype":"SmallArmorSlopedPanelHeavy","size":"Small","mod":"Vanilla","name":"Heavy Armor Panel Slope"}],"tris":[1,0,0,1,1,1,0,1,1,0,1,1,0,0,0,1,0,0,0,0,0,0,1,1,0,0.96,1,0,0.96,1,0,0,0.04,0,0,0,1,0.96,1,1,0,0.04,0,0,0.04,0,0,0.04,0,0.96,1,1,0.96,1,1,0,0,1,0,0.04,1,0.96,1,1,0.96,1,1,1,1,1,0,0,0,0.96,1,0,1,1,1,1,1,1,1,1,1,0.96,1,0,0.96,1,1,0,0.04,1,0,0,0,0,0,0,0,0,0,0,0.04,1,0,0.04]},{"id":"panel:ArmorHalfPanel","key":"PH","name":"Armor Half Panel","blocks":[{"subtype":"LargeArmorHalfPanelLight","size":"Large","mod":"Vanilla","name":"Light Armor Half Panel"},{"subtype":"LargeArmorHalfPanelHeavy","size":"Large","mod":"Vanilla","name":"Heavy Armor Half Panel"},{"subtype":"SmallArmorHalfPanelLight","size":"Small","mod":"Vanilla","name":"Light Armor Half Panel"},{"subtype":"SmallArmorHalfPanelHeavy","size":"Small","mod":"Vanilla","name":"Heavy Armor Half Panel"}],"tris":[1,0,0,1,0,1,1,0.5,1,1,0.5,1,1,0.5,0,1,0,0,0.96,0.5,1,0.96,0,1,0.96,0,0,0.96,0,0,0.96,0.5,0,0.96,0.5,1,1,0.5,0,0.96,0.5,0,0.96,0,0,0.96,0,0,1,0,0,1,0.5,0,1,0.5,1,0.96,0.5,1,0.96,0.5,0,0.96,0.5,0,1,0.5,0,1,0.5,1,1,0,1,0.96,0,1,0.96,0.5,1,0.96,0.5,1,1,0.5,1,1,0,1,1,0,0,0.96,0,0,0.96,0,1,0.96,0,1,1,0,1,1,0,0]},{"id":"panel:ArmorHalfCenterPanel","key":"PHC","name":"Armor Centered Half Panel","blocks":[{"subtype":"LargeArmorHalfCenterPanelLight","size":"Large","mod":"Vanilla","name":"Light Armor Centered Half Panel"},{"subtype":"LargeArmorHalfCenterPanelHeavy","size":"Large","mod":"Vanilla","name":"Heavy Armor Centered Half Panel"},{"subtype":"SmallArmorHalfCenterPanelLight","size":"Small","mod":"Vanilla","name":"Light Armor Centered Half Panel"},{"subtype":"SmallArmorHalfCenterPanelHeavy","size":"Small","mod":"Vanilla","name":"Heavy Armor Centered Half Panel"}],"tris":[0.5447,0.5,1,0.5447,0.5,0,0.5447,0,0,0.5447,0,0,0.5447,0,1,0.5447,0.5,1,0.5,0,0,0.5,0.5,0,0.5,0.5,1,0.5,0.5,1,0.5,0,1,0.5,0,0,0.5,0,0,0.5447,0,0,0.5447,0.5,0,0.5447,0.5,0,0.5,0.5,0,0.5,0,0,0.5,0.5,0,0.5447,0.5,0,0.5447,0.5,1,0.5447,0.5,1,0.5,0.5,1,0.5,0.5,0,0.5,0.5,1,0.5447,0.5,1,0.5447,0,1,0.5447,0,1,0.5,0,1,0.5,0.5,1,0.5,0,1,0.5447,0,1,0.5447,0,0,0.5447,0,0,0.5,0,0,0.5,0,1]},{"id":"panel:ArmorQuarterPanel","key":"PQ","name":"Armor Quarter Panel","blocks":[{"subtype":"LargeArmorQuarterPanelLight","size":"Large","mod":"Vanilla","name":"Light Armor Quarter Panel"},{"subtype":"LargeArmorQuarterPanelHeavy","size":"Large","mod":"Vanilla","name":"Heavy Armor Quarter Panel"},{"subtype":"SmallArmorQuarterPanelLight","size":"Small","mod":"Vanilla","name":"Light Armor Quarter Panel"},{"subtype":"SmallArmorQuarterPanelHeavy","size":"Small","mod":"Vanilla","name":"Heavy Armor Quarter Panel"}],"tris":[1,0,0.96,1,0,1,1,0.5,1,1,0.5,1,1,0.5,0.96,1,0,0.96,0.5,0.5,1,0.5,0.5,0.96,1,0.5,0.96,1,0.5,0.96,1,0.5,1,0.5,0.5,1,1,0,1,0.5,0,1,0.5,0.5,1,0.5,0.5,1,1,0.5,1,1,0,1,1,0,0.96,0.5,0,0.96,0.5,0,1,0.5,0,1,1,0,1,1,0,0.96,0.5,0,0.96,0.5,0.5,0.96,0.5,0.5,1,0.5,0.5,1,0.5,0,1,0.5,0,0.96,1,0.5,0.96,0.5,0.5,0.96,0.5,0,0.96,0.5,0,0.96,1,0,0.96,1,0.5,0.96]},{"id":"panel:Armor2x1SlopedPanel","key":"P2B","name":"Armor Panel 2x1 Slope Base","blocks":[{"subtype":"LargeArmor2x1SlopedPanelLight","size":"Large","mod":"Vanilla","name":"Light Armor Panel 2x1 Slope Base"},{"subtype":"LargeArmor2x1SlopedPanelHeavy","size":"Large","mod":"Vanilla","name":"Heavy Armor Panel 2x1 Slope Base"},{"subtype":"SmallArmor2x1SlopedPanelLight","size":"Small","mod":"Vanilla","name":"Light Armor Panel 2x1 Slope Base"},{"subtype":"SmallArmor2x1SlopedPanelHeavy","size":"Small","mod":"Vanilla","name":"Heavy Armor Panel 2x1 Slope Base"}],"tris":[0,0,0,1,0,0,1,1,0.5,1,1,0.5,0,1,0.5,0,0,0,0,1,0.5447,1,1,0.5447,1,0,0.0447,1,0,0.0447,0,0,0.0447,0,1,0.5447,1,1,0.5,1,0,0,1,0,0.0447,1,0,0.0447,1,1,0.5447,1,1,0.5,0,0,0.0447,0,0,0,0,1,0.5,0,1,0.5,0,1,0.5447,0,0,0.0447,1,1,0.5,1,1,0.5447,0,1,0.5447,0,1,0.5447,0,1,0.5,1,1,0.5,0,0,0,0,0,0.0447,1,0,0.0447,1,0,0.0447,1,0,0,0,0,0]},{"id":"panel:Armor2x1SlopedPanelTip","key":"P2T","name":"Armor Panel 2x1 Slope Tip","blocks":[{"subtype":"LargeArmor2x1SlopedPanelTipLight","size":"Large","mod":"Vanilla","name":"Light Armor Panel 2x1 Slope Tip"},{"subtype":"LargeArmor2x1SlopedPanelTipHeavy","size":"Large","mod":"Vanilla","name":"Heavy Armor Panel 2x1 Slope Tip"},{"subtype":"SmallArmor2x1SlopedPanelTipLight","size":"Small","mod":"Vanilla","name":"Light Armor Panel 2x1 Slope Tip"},{"subtype":"SmallArmor2x1SlopedPanelTipHeavy","size":"Small","mod":"Vanilla","name":"Heavy Armor Panel 2x1 Slope Tip"}],"tris":[1,1,1,0,1,1,0,0,0.5,0,0,0.5,1,0,0.5,1,1,1,0,0,0.5447,0,0.9106,1,1,0.9106,1,1,0.9106,1,1,0,0.5447,0,0,0.5447,1,0,0.5447,1,0.9106,1,1,1,1,1,1,1,1,0,0.5,1,0,0.5447,1,0,0.5447,1,0,0.5,0,0,0.5,0,0,0.5,0,0,0.5447,1,0,0.5447,0,1,1,0,0.9106,1,0,0,0.5447,0,0,0.5447,0,0,0.5,0,1,1,1,1,1,1,0.9106,1,0,0.9106,1,0,0.9106,1,0,1,1,1,1,1]},{"id":"panel:Armor2x1SlopedSideBasePanel","key":"P2BR","name":"Armor Panel 2x1 Base Right","blocks":[{"subtype":"LargeArmor2x1SlopedSideBasePanelLight","size":"Large","mod":"Vanilla","name":"Light Armor Panel 2x1 Base Right"},{"subtype":"LargeArmor2x1SlopedSideBasePanelHeavy","size":"Large","mod":"Vanilla","name":"Heavy Armor Panel 2x1 Base Right"},{"subtype":"SmallArmor2x1SlopedSideBasePanelLight","size":"Small","mod":"Vanilla","name":"Light Armor Panel 2x1 Base Right"},{"subtype":"SmallArmor2x1SlopedSideBasePanelHeavy","size":"Small","mod":"Vanilla","name":"Heavy Armor Panel 2x1 Base Right"}],"tris":[1,0,0,1,0,1,1,1,1,1,1,1,1,1,0.5,1,0,0,0.96,1,1,0.96,0,1,0.96,0,0,0.96,0,0,0.96,1,0.5,0.96,1,1,1,1,0.5,0.96,1,0.5,0.96,0,0,0.96,0,0,1,0,0,1,1,0.5,1,1,1,0.96,1,1,0.96,1,0.5,0.96,1,0.5,1,1,0.5,1,1,1,1,0,1,0.96,0,1,0.96,1,1,0.96,1,1,1,1,1,1,0,1,1,0,0,0.96,0,0,0.96,0,1,0.96,0,1,1,0,1,1,0,0]},{"id":"panel:Armor2x1SlopedSideTipPanel","key":"P2TR","name":"Armor Panel 2x1 Tip Right","blocks":[{"subtype":"LargeArmor2x1SlopedSideTipPanelLight","size":"Large","mod":"Vanilla","name":"Light Armor Panel 2x1 Tip Right"},{"subtype":"LargeArmor2x1SlopedSideTipPanelHeavy","size":"Large","mod":"Vanilla","name":"Heavy Armor Panel 2x1 Tip Right"},{"subtype":"SmallArmor2x1SlopedSideTipPanelLight","size":"Small","mod":"Vanilla","name":"Light Armor Panel 2x1 Tip Right"},{"subtype":"SmallArmor2x1SlopedSideTipPanelHeavy","size":"Small","mod":"Vanilla","name":"Heavy Armor Panel 2x1 Tip Right"}],"tris":[1,1,1,1,0,0.5,1,0,1,0.96,1,1,0.96,0,1,0.96,0,0.5,1,0,0.5,0.96,0,0.5,0.96,0,1,0.96,0,1,1,0,1,1,0,0.5,1,1,1,0.96,1,1,0.96,0,0.5,0.96,0,0.5,1,0,0.5,1,1,1,0.96,1,1,1,1,1,1,0,1,1,0,1,0.96,0,1,0.96,1,1]},{"id":"panel:Armor2x1SlopedSideBasePanelInv","key":"P2BL","name":"Armor Panel 2x1 Base Left","blocks":[{"subtype":"LargeArmor2x1SlopedSideBasePanelLightInv","size":"Large","mod":"Vanilla","name":"Light Armor Panel 2x1 Base Left"},{"subtype":"LargeArmor2x1SlopedSideBasePanelHeavyInv","size":"Large","mod":"Vanilla","name":"Heavy Armor Panel 2x1 Base Left"},{"subtype":"SmallArmor2x1SlopedSideBasePanelLightInv","size":"Small","mod":"Vanilla","name":"Light Armor Panel 2x1 Base Left"},{"subtype":"SmallArmor2x1SlopedSideBasePanelHeavyInv","size":"Small","mod":"Vanilla","name":"Heavy Armor Panel 2x1 Base Left"}],"tris":[0,0,0,0,1,0.5,0,1,1,0,1,1,0,0,1,0,0,0,0.04,1,1,0.04,1,0.5,0.04,0,0,0.04,0,0,0.04,0,1,0.04,1,1,0,1,0.5,0,0,0,0.04,0,0,0.04,0,0,0.04,1,0.5,0,1,0.5,0,1,1,0,1,0.5,0.04,1,0.5,0.04,1,0.5,0.04,1,1,0,1,1,0,0,1,0,1,1,0.04,1,1,0.04,1,1,0.04,0,1,0,0,1,0,0,0,0,0,1,0.04,0,1,0.04,0,1,0.04,0,0,0,0,0]},{"id":"panel:Armor2x1SlopedSideTipPanelInv","key":"P2TL","name":"Armor Panel 2x1 Tip Left","blocks":[{"subtype":"LargeArmor2x1SlopedSideTipPanelLightInv","size":"Large","mod":"Vanilla","name":"Light Armor Panel 2x1 Tip Left"},{"subtype":"LargeArmor2x1SlopedSideTipPanelHeavyInv","size":"Large","mod":"Vanilla","name":"Heavy Armor Panel 2x1 Tip Left"},{"subtype":"SmallArmor2x1SlopedSideTipPanelLightInv","size":"Small","mod":"Vanilla","name":"Light Armor Panel 2x1 Tip Left"},{"subtype":"SmallArmor2x1SlopedSideTipPanelHeavyInv","size":"Small","mod":"Vanilla","name":"Heavy Armor Panel 2x1 Tip Left"}],"tris":[0,0,0.5,0,1,1,0,0,1,0.04,0,1,0.04,1,1,0.04,0,0.5,0,0,0.5,0,0,1,0.04,0,1,0.04,0,1,0.04,0,0.5,0,0,0.5,0,1,1,0,0,0.5,0.04,0,0.5,0.04,0,0.5,0.04,1,1,0,1,1,0.04,1,1,0.04,0,1,0,0,1,0,0,1,0,1,1,0.04,1,1]},{"id":"panel:ArmorHalfSlopedPanel","key":"PHS","name":"Armor Panel Half Slope","blocks":[{"subtype":"LargeArmorHalfSlopedPanelLight","size":"Large","mod":"Vanilla","name":"Light Armor Panel Half Slope"},{"subtype":"LargeArmorHalfSlopedPanelHeavy","size":"Large","mod":"Vanilla","name":"Heavy Armor Panel Half Slope"},{"subtype":"SmallArmorHalfSlopedPanelLight","size":"Small","mod":"Vanilla","name":"Light Armor Panel Half Slope"},{"subtype":"SmallArmorHalfSlopedPanelHeavy","size":"Small","mod":"Vanilla","name":"Heavy Armor Panel Half Slope"}],"tris":[0.5,0,0.04,0.5,0.96,1,1,0.96,1,1,0.96,1,1,0,0.04,0.5,0,0.04,1,0.96,1,1,1,1,1,0,0,1,0,0,1,0,0.04,1,0.96,1,0.5,0,0,0.5,0,0.04,1,0,0.04,1,0,0.04,1,0,0,0.5,0,0,0.5,0,0,1,0,0,1,1,1,1,1,1,0.5,1,1,0.5,0,0,0.5,1,1,1,1,1,1,0.96,1,1,0.96,1,0.5,0.96,1,0.5,1,1,0.5,1,1,0.5,0.96,1,0.5,0,0.04,0.5,0,0.04,0.5,0,0,0.5,1,1]},{"id":"panel:Armor2x1HalfSlopedPanelRight","key":"H2BR","name":"Armor Half Panel 2x1 Base Right","blocks":[{"subtype":"LargeArmor2x1HalfSlopedPanelLightRight","size":"Large","mod":"Vanilla","name":"Light Armor Half Panel 2x1 Base Right"},{"subtype":"LargeArmor2x1HalfSlopedPanelHeavyRight","size":"Large","mod":"Vanilla","name":"Heavy Armor Half Panel 2x1 Base Right"},{"subtype":"SmallArmor2x1HalfSlopedPanelLightRight","size":"Small","mod":"Vanilla","name":"Light Armor Half Panel 2x1 Base Right"},{"subtype":"SmallArmor2x1HalfSlopedPanelHeavyRight","size":"Small","mod":"Vanilla","name":"Heavy Armor Half Panel 2x1 Base Right"}],"tris":[1,1,0.5,0.5,1,0.5,0.5,0,0,0.5,0,0,1,0,0,1,1,0.5,1,0,0.0447,0.5,0,0.0447,0.5,1,0.5447,0.5,1,0.5447,1,1,0.5447,1,0,0.0447,1,0,0.0447,1,1,0.5447,1,1,0.5,1,1,0.5,1,0,0,1,0,0.0447,0.5,1,0.5,0.5,1,0.5447,0.5,0,0.0447,0.5,0,0.0447,0.5,0,0,0.5,1,0.5,0.5,1,0.5447,0.5,1,0.5,1,1,0.5,1,1,0.5,1,1,0.5447,0.5,1,0.5447,1,0,0.0447,1,0,0,0.5,0,0,0.5,0,0,0.5,0,0.0447,1,0,0.0447]},{"id":"panel:Armor2x1HalfSlopedTipPanelRight","key":"H2TR","name":"Armor Half Panel 2x1 Tip Right","blocks":[{"subtype":"LargeArmor2x1HalfSlopedTipPanelLightRight","size":"Large","mod":"Vanilla","name":"Light Armor Half Panel 2x1 Tip Right"},{"subtype":"LargeArmor2x1HalfSlopedTipPanelHeavyRight","size":"Large","mod":"Vanilla","name":"Heavy Armor Half Panel 2x1 Tip Right"},{"subtype":"SmallArmor2x1HalfSlopedTipPanelLightRight","size":"Small","mod":"Vanilla","name":"Light Armor Half Panel 2x1 Tip Right"},{"subtype":"SmallArmor2x1HalfSlopedTipPanelHeavyRight","size":"Small","mod":"Vanilla","name":"Heavy Armor Half Panel 2x1 Tip Right"}],"tris":[1,0,0.5,1,1,1,0.5,1,1,0.5,1,1,0.5,0,0.5,1,0,0.5,1,0.9106,1,1,0,0.5447,0.5,0,0.5447,0.5,0,0.5447,0.5,0.9106,1,1,0.9106,1,1,1,1,1,0,0.5,1,0,0.5447,1,0,0.5447,1,0.9106,1,1,1,1,0.5,0,0.5447,1,0,0.5447,1,0,0.5,1,0,0.5,0.5,0,0.5,0.5,0,0.5447,1,0.9106,1,0.5,0.9106,1,0.5,1,1,0.5,1,1,1,1,1,1,0.9106,1,0.5,0,0.5,0.5,1,1,0.5,0.9106,1,0.5,0.9106,1,0.5,0,0.5447,0.5,0,0.5]},{"id":"panel:Armor2x1HalfSlopedPanelLeft","key":"H2BL","name":"Armor Half Panel 2x1 Base Left","blocks":[{"subtype":"LargeArmor2x1HalfSlopedPanelLightLeft","size":"Large","mod":"Vanilla","name":"Light Armor Half Panel 2x1 Base Left"},{"subtype":"LargeArmor2x1HalfSlopedPanelHeavyLeft","size":"Large","mod":"Vanilla","name":"Heavy Armor Half Panel 2x1 Base Left"},{"subtype":"SmallArmor2x1HalfSlopedPanelLightLeft","size":"Small","mod":"Vanilla","name":"Light Armor Half Panel 2x1 Base Left"},{"subtype":"SmallArmor2x1HalfSlopedPanelHeavyLeft","size":"Small","mod":"Vanilla","name":"Heavy Armor Half Panel 2x1 Base Left"}],"tris":[0.5,0,0,0.5,1,0.5,0,1,0.5,0,1,0.5,0,0,0,0.5,0,0,0.5,1,0.5447,0.5,0,0.0447,0,0,0.0447,0,0,0.0447,0,1,0.5447,0.5,1,0.5447,0,1,0.5,0,1,0.5447,0,0,0.0447,0,0,0.0447,0,0,0,0,1,0.5,0.5,0,0.0447,0.5,1,0.5447,0.5,1,0.5,0.5,1,0.5,0.5,0,0,0.5,0,0.0447,0,1,0.5,0.5,1,0.5,0.5,1,0.5447,0.5,1,0.5447,0,1,0.5447,0,1,0.5,0.5,0,0,0,0,0,0,0,0.0447,0,0,0.0447,0.5,0,0.0447,0.5,0,0]},{"id":"panel:Armor2x1HalfSlopedTipPanelLeft","key":"H2TL","name":"Armor Half Panel 2x1 Tip Left","blocks":[{"subtype":"LargeArmor2x1HalfSlopedTipPanelLightLeft","size":"Large","mod":"Vanilla","name":"Light Armor Half Panel 2x1 Tip Left"},{"subtype":"LargeArmor2x1HalfSlopedTipPanelHeavyLeft","size":"Large","mod":"Vanilla","name":"Heavy Armor Half Panel 2x1 Tip Left"},{"subtype":"SmallArmor2x1HalfSlopedTipPanelLightLeft","size":"Small","mod":"Vanilla","name":"Light Armor Half Panel 2x1 Tip Left"},{"subtype":"SmallArmor2x1HalfSlopedTipPanelHeavyLeft","size":"Small","mod":"Vanilla","name":"Heavy Armor Half Panel 2x1 Tip Left"}],"tris":[0.5,1,1,0,1,1,0,0,0.5,0,0,0.5,0.5,0,0.5,0.5,1,1,0.5,0,0.5447,0,0,0.5447,0,0.9106,1,0,0.9106,1,0.5,0.9106,1,0.5,0,0.5447,0,0,0.5447,0,0,0.5,0,1,1,0,1,1,0,0.9106,1,0,0,0.5447,0,0,0.5,0,0,0.5447,0.5,0,0.5447,0.5,0,0.5447,0.5,0,0.5,0,0,0.5,0.5,1,1,0.5,0.9106,1,0,0.9106,1,0,0.9106,1,0,1,1,0.5,1,1,0.5,0.9106,1,0.5,1,1,0.5,0,0.5,0.5,0,0.5,0.5,0,0.5447,0.5,0.9106,1]}];
+
+// ---- core.js
+// SE Grid Builder core: library shapes, sketch-to-solid, block import (SBC + MWM), model loading (OBJ/STL),
+// voxelising and block fitting. No three.js and no DOM, so it runs in Node too (test_core.mjs).
+// A block cell is the unit cube 0..1 in "cell space"; y is up, Forward is -z (as in the game).
+
+const SUB = 6;                       // samples per cell edge when comparing shapes
+const NS = SUB ** 3;                 // samples per cell
+const W = Math.ceil(NS / 32);               // 32-bit words per sample mask
+
+// ---------- vectors
+const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const len = a => Math.hypot(a[0], a[1], a[2]);
+const near = (a, b, e = 1e-6) => Math.abs(a[0] - b[0]) < e && Math.abs(a[1] - b[1]) < e && Math.abs(a[2] - b[2]) < e;
+
+// ---------- the 24 proper rotations of a cube (signed permutation matrices, det +1)
+const ROTS = (() => {
+  const out = [], perms = [[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]];
+  for (const pm of perms) for (let sg = 0; sg < 8; sg++) {
+    const M = [[0,0,0],[0,0,0],[0,0,0]];
+    for (let r = 0; r < 3; r++) M[r][pm[r]] = (sg >> r) & 1 ? -1 : 1;
+    const det = M[0][0]*(M[1][1]*M[2][2]-M[1][2]*M[2][1]) - M[0][1]*(M[1][0]*M[2][2]-M[1][2]*M[2][0]) + M[0][2]*(M[1][0]*M[2][1]-M[1][1]*M[2][0]);
+    if (det === 1) out.push(M);
+  }
+  return out;
+})();
+const rotP = (R, p) => [0, 1, 2].map(r => R[r][0] * p[0] + R[r][1] * p[1] + R[r][2] * p[2]);
+
+// sample k <-> point in the cell; sample index (y*SUB + z)*SUB + x
+const SAMPLE = []; for (let y = 0; y < SUB; y++) for (let z = 0; z < SUB; z++) for (let x = 0; x < SUB; x++) SAMPLE.push([(x + .5) / SUB, (y + .5) / SUB, (z + .5) / SUB]);
+const sIndex = q => { const c = q.map(v => Math.round((v + .5) * SUB - .5)); return (c[1] * SUB + c[2]) * SUB + c[0]; };
+// ROT_MAP[r][k] = the sample of the unrotated shape that lands on sample k after rotation r (R^T p)
+const ROT_MAP = ROTS.map(R => SAMPLE.map(p => sIndex([0, 1, 2].map(c => R[0][c] * (p[0] - .5) + R[1][c] * (p[1] - .5) + R[2][c] * (p[2] - .5)))));
+// 90-degree turns about X, Y, Z as sample permutations (for the cell editor)
+const TURN_MAP = [0, 1, 2].map(axis => SAMPLE.map(p => { const q = [p[0] - .5, p[1] - .5, p[2] - .5];
+  const r = axis === 1 ? [-q[2], q[1], q[0]] : axis === 0 ? [q[0], q[2], -q[1]] : [q[1], -q[0], q[2]]; return sIndex(r); }));
+
+// ---------- bit masks over the NS samples
+const newMask = () => new Uint32Array(W);
+const setBit = (m, k) => { m[k >> 5] |= 1 << (k & 31); };
+const getBit = (m, k) => (m[k >> 5] >>> (k & 31)) & 1;
+const pop = v => { v -= (v >>> 1) & 0x55555555; v = (v & 0x33333333) + ((v >>> 2) & 0x33333333); return (((v + (v >>> 4)) & 0x0f0f0f0f) * 0x01010101) >>> 24; };
+const maskCount = m => { let n = 0; for (let i = 0; i < W; i++) n += pop(m[i]); return n; };
+const maskSig = m => Array.from(m, v => (v >>> 0).toString(36)).join('.');
+const permute = (m, map) => { const o = newMask(); for (let k = 0; k < NS; k++) if (getBit(m, map[k])) setBit(o, k); return o; };
+
+// ---------- solids (cell space). A shape's solids are { type:'planes', planes:[[nx,ny,nz,d]...], verts:[[x,y,z]...] }
+// (convex, inside where n.p <= d) or { type:'tris', tris:[x,y,z, ...] } (a closed or nearly closed triangle surface;
+// inside by ray-parity votes, 4 of 6 axis directions). A point is in the shape when it is in any of its solids.
+function trisInside(tris, p) {
+  let votes = 0;
+  for (let a = 0; a < 3; a++) {
+    const u = (a + 1) % 3, v = (a + 2) % 3, pu = p[u] + 1.37e-7, pv = p[v] + 2.11e-7;
+    let below = 0, above = 0;
+    for (let t = 0; t < tris.length; t += 9) {
+      const Au = tris[t + u], Av = tris[t + v], Bu = tris[t + 3 + u], Bv = tris[t + 3 + v], Cu = tris[t + 6 + u], Cv = tris[t + 6 + v];
+      const d = (Bu - Au) * (Cv - Av) - (Cu - Au) * (Bv - Av);
+      if (Math.abs(d) < 1e-14) continue;
+      const l1 = ((Bu - pu) * (Cv - pv) - (Cu - pu) * (Bv - pv)) / d;
+      if (l1 < 0) continue;
+      const l2 = ((Cu - pu) * (Av - pv) - (Au - pu) * (Cv - pv)) / d;
+      if (l2 < 0 || l1 + l2 > 1) continue;
+      const h = l1 * tris[t + a] + l2 * tris[t + 3 + a] + (1 - l1 - l2) * tris[t + 6 + a];
+      if (Math.abs(h - p[a]) < 1e-5) return true;   // on the surface counts as inside (as for plane solids)
+      if (h < p[a]) below++; else above++;
+    }
+    votes += (below & 1) + (above & 1);
+  }
+  return votes >= 4;
+}
+function solidInside(s, p) {
+  if (s.type === 'planes') return s.planes.every(q => q[0] * p[0] + q[1] * p[1] + q[2] * p[2] <= q[3] + 1e-7);
+  return trisInside(s.tris, p);
+}
+const shapeInside = (shape, p) => shape.solids.some(s => solidInside(s, p));
+
+// samples a triangle surface passes through (for thin shapes such as armour panels)
+function trisSurfaceMask(tris) {
+  const m = newMask(), step = 0.5 / SUB;
+  for (let t = 0; t < tris.length; t += 9) {
+    const A = [tris[t], tris[t + 1], tris[t + 2]], B = [tris[t + 3], tris[t + 4], tris[t + 5]], C = [tris[t + 6], tris[t + 7], tris[t + 8]];
+    const n = Math.max(1, Math.ceil(Math.max(len(sub(A, B)), len(sub(B, C)), len(sub(C, A))) / step));
+    for (let i = 0; i <= n; i++) for (let j = 0; j <= n - i; j++) {
+      const u = i / n, v = j / n, w = 1 - u - v;
+      const c = [0, 1, 2].map(k => Math.min(SUB - 1, Math.floor((A[k] * w + B[k] * u + C[k] * v) * SUB)));
+      if (c.some(q => q < 0)) continue;
+      setBit(m, (c[1] * SUB + c[2]) * SUB + c[0]);
+    }
+  }
+  return m;
+}
+
+// The shape's sample mask in its own orientation. Thin triangle shapes (little inside, mostly surface) are plates and
+// use the samples their surface passes through.
+function shapeMask(shape) {
+  const m = newMask();
+  SAMPLE.forEach((p, k) => { if (shapeInside(shape, p)) setBit(m, k); });
+  const ni = maskCount(m), tris = shape.solids.filter(s => s.type === 'tris');
+  if (tris.length) {
+    const all = new Float32Array(tris.reduce((n, s) => n + s.tris.length, 0)); let o = 0;
+    tris.forEach(s => { all.set(s.tris, o); o += s.tris.length; });
+    const sm = trisSurfaceMask(all);
+    if (shape.plate || ni < maskCount(sm) * 0.25) return { mask: sm, plate: true };
+  }
+  return { mask: m, plate: !!shape.plate };
+}
+
+// convex hull of a point set as half-spaces (brute force; fine for a handful of points)
+function hullPlanes(points) {
+  const P = points, planes = [];
+  for (let a = 0; a < P.length; a++) for (let b = a + 1; b < P.length; b++) for (let c = b + 1; c < P.length; c++) {
+    let n = cross(sub(P[b], P[a]), sub(P[c], P[a])); const L = len(n);
+    if (L < 1e-9) continue;
+    n = n.map(x => x / L); let d = dot(n, P[a]);
+    const s = P.map(p => dot(n, p) - d);
+    if (s.every(x => x <= 1e-7)) {} else if (s.every(x => x >= -1e-7)) { n = n.map(x => -x); d = -d; } else continue;
+    if (!planes.some(q => near(q, n) && Math.abs(q[3] - d) < 1e-6)) planes.push([...n, d]);
+  }
+  return planes;
+}
+const convexSolid = points => ({ type: 'planes', planes: hullPlanes(points), verts: points.map(p => [...p]) });
+
+// ---------- sketch (edge list in cell space) to solid
+// Finds the faces the drawn edges outline: in every plane through three drawn points, the drawn edges lying in that
+// plane form a planar graph whose bounded faces are candidate faces. The sketch is a solid when every drawn edge
+// borders exactly two faces. Convex results are stored as planes, others as triangles. Otherwise: the convex hull of
+// the drawn points, with ok: false and the reason.
+function sketchToShape(lines) {
+  const pts = [], idxOf = new Map(), key = p => p.map(x => Math.round(x * 1e4)).join(',');
+  const id = p => { const k = key(p); if (!idxOf.has(k)) { idxOf.set(k, pts.length); pts.push(p.map(Number)); } return idxOf.get(k); };
+  const E = new Set(), edges = [];
+  for (const [a, b] of lines) {
+    const i = id(a), j = id(b); if (i === j) continue;
+    const k = Math.min(i, j) + '-' + Math.max(i, j); if (E.has(k)) continue; E.add(k); edges.push([Math.min(i, j), Math.max(i, j)]);
+  }
+  if (pts.length < 4) return { ok: false, reason: 'draw at least 4 corner points', solids: null };
+  const faces = [], faceKeys = new Set(), planesSeen = [];
+  for (let a = 0; a < pts.length; a++) for (let b = a + 1; b < pts.length; b++) for (let c = b + 1; c < pts.length; c++) {
+    let n = cross(sub(pts[b], pts[a]), sub(pts[c], pts[a])); const L = len(n); if (L < 1e-9) continue;
+    n = n.map(x => x / L);
+    if (n.find(x => Math.abs(x) > 1e-9) < 0) n = n.map(x => -x);
+    const d = dot(n, pts[a]);
+    if (planesSeen.some(q => near(q, n) && Math.abs(q[3] - d) < 1e-6)) continue;
+    planesSeen.push([...n, d]);
+    const onP = new Set(); pts.forEach((p, i) => { if (Math.abs(dot(n, p) - d) < 1e-6) onP.add(i); });
+    const pe = edges.filter(([i, j]) => onP.has(i) && onP.has(j));
+    if (pe.length < 3) continue;
+    const t1 = Math.abs(n[0]) < 0.9 ? cross(n, [1, 0, 0]) : cross(n, [0, 1, 0]), t1n = t1.map(x => x / len(t1)), t2 = cross(n, t1n);
+    const uv = i => [dot(pts[i], t1n), dot(pts[i], t2)];
+    const adj = new Map();
+    for (const [i, j] of pe) { if (!adj.has(i)) adj.set(i, []); if (!adj.has(j)) adj.set(j, []); adj.get(i).push(j); adj.get(j).push(i); }
+    adj.forEach((nb, i) => { const o = uv(i); nb.sort((p, q) => Math.atan2(uv(p)[1] - o[1], uv(p)[0] - o[0]) - Math.atan2(uv(q)[1] - o[1], uv(q)[0] - o[0])); });
+    const used = new Set();
+    for (const [i0, j0] of pe) for (const [s0, t0] of [[i0, j0], [j0, i0]]) {
+      if (used.has(s0 + '>' + t0)) continue;
+      const cyc = []; let s = s0, t = t0, guard = 0;
+      while (!used.has(s + '>' + t) && guard++ < 64) {
+        used.add(s + '>' + t); cyc.push(s);
+        const nb = adj.get(t), k = nb.indexOf(s);
+        const nx = nb[(k - 1 + nb.length) % nb.length];
+        s = t; t = nx;
+      }
+      if (cyc.length < 3 || s !== s0 || t !== t0) continue;
+      let area = 0; for (let q = 0; q < cyc.length; q++) { const A = uv(cyc[q]), B = uv(cyc[(q + 1) % cyc.length]); area += A[0] * B[1] - B[0] * A[1]; }
+      if (area <= 1e-9) continue;   // the outer (unbounded) face walks the other way round
+      const fk = [...cyc].sort((x, y) => x - y).join(',');
+      if (faceKeys.has(fk)) continue; faceKeys.add(fk);
+      faces.push(cyc);
+    }
+  }
+  const count = new Map(); edges.forEach(([i, j]) => count.set(i + '-' + j, 0));
+  faces.forEach(f => f.forEach((v, q) => { const w = f[(q + 1) % f.length], k = Math.min(v, w) + '-' + Math.max(v, w); if (count.has(k)) count.set(k, count.get(k) + 1); }));
+  const bad = [...count.values()].filter(c => c !== 2).length;
+  if (bad) return { ok: false, reason: `${bad} drawn edge(s) aren't shared by exactly two faces, so the lines don't close into a solid. Saved as the convex hull of the points instead.`,
+    solids: [convexSolid(pts)] };
+  const convex = hullPlanes(pts);
+  const isConvex = faces.length === convex.length && faces.every(f => convex.some(q => f.every(v => Math.abs(dot(q, pts[v]) - q[3]) < 1e-6)));
+  if (isConvex) return { ok: true, reason: 'convex', solids: [{ type: 'planes', planes: convex, verts: pts }] };
+  const tris = [];
+  for (const f of faces) for (const [a, b, c] of earClip(f, pts)) tris.push(...pts[a], ...pts[b], ...pts[c]);
+  return { ok: true, reason: 'non-convex', solids: [{ type: 'tris', tris }] };
+}
+
+function earClip(poly, pts) {
+  if (poly.length === 3) return [[...poly]];
+  let n = [0, 0, 0];
+  for (let i = 0; i < poly.length; i++) { const a = pts[poly[i]], b = pts[poly[(i + 1) % poly.length]]; n = [n[0] + (a[1] - b[1]) * (a[2] + b[2]), n[1] + (a[2] - b[2]) * (a[0] + b[0]), n[2] + (a[0] - b[0]) * (a[1] + b[1])]; }
+  const ax = [0, 1, 2].reduce((m, k) => Math.abs(n[k]) > Math.abs(n[m]) ? k : m, 0), u = (ax + 1) % 3, v = (ax + 2) % 3;
+  const P = i => [pts[i][u], pts[i][v]];
+  const ring = [...poly];
+  const area = ring.reduce((s, _, q) => { const A = P(ring[q]), B = P(ring[(q + 1) % ring.length]); return s + A[0] * B[1] - B[0] * A[1]; }, 0);
+  if (area < 0) ring.reverse();
+  const out = []; let guard = 0;
+  while (ring.length > 3 && guard++ < 200) {
+    let cut = false;
+    for (let q = 0; q < ring.length; q++) {
+      const a = ring[(q - 1 + ring.length) % ring.length], b = ring[q], c = ring[(q + 1) % ring.length];
+      const A = P(a), B = P(b), C = P(c);
+      if ((B[0] - A[0]) * (C[1] - A[1]) - (B[1] - A[1]) * (C[0] - A[0]) <= 1e-12) continue;
+      const blocked = ring.some(w => { if (w === a || w === b || w === c) return false; const X = P(w);
+        const d1 = (B[0] - A[0]) * (X[1] - A[1]) - (B[1] - A[1]) * (X[0] - A[0]), d2 = (C[0] - B[0]) * (X[1] - B[1]) - (C[1] - B[1]) * (X[0] - B[0]), d3 = (A[0] - C[0]) * (X[1] - C[1]) - (A[1] - C[1]) * (X[0] - C[0]);
+        return d1 > 1e-12 && d2 > 1e-12 && d3 > 1e-12; });
+      if (blocked) continue;
+      out.push([a, b, c]); ring.splice(q, 1); cut = true; break;
+    }
+    if (!cut) break;
+  }
+  if (ring.length === 3) out.push(ring);
+  return out;
+}
+
+// ---------- templates: every distinct (shape, rotation) of the shapes in use, as bit masks
+// shapes: library entries ({ solids, use, plate?, penalty? }); the mask is cached on the entry as _m
+function buildTemplates(shapes) {
+  const list = [], bySig = new Map();
+  shapes.forEach((sh, si) => {
+    if (!sh.use || !sh.solids || !sh.solids.length) return;
+    if (!sh._m) sh._m = shapeMask(sh);
+    const { mask, plate } = sh._m;
+    if (!maskCount(mask)) return;
+    ROT_MAP.forEach((map, ri) => {
+      const m = permute(mask, map), sig = maskSig(m);
+      if (bySig.has(sig)) return;
+      bySig.set(sig, list.length);
+      let minY = SUB; for (let k = 0; k < NS && minY === SUB; k++) if (getBit(m, k)) minY = Math.floor(k / (SUB * SUB));   // lowest sample layer
+      const walls = [0, 1, 2, 3, 4, 5].map(w => { const ax = w >> 1, at = w & 1 ? SUB - 1 : 0;
+        for (let u = 0; u < SUB; u++) for (let v = 0; v < SUB; v++) { const q = [0, 0, 0]; q[ax] = at; q[(ax + 1) % 3] = u; q[(ax + 2) % 3] = v;
+          if (!getBit(m, (q[1] * SUB + q[2]) * SUB + q[0])) return false; } return true; });
+      const face = [0, 1, 2, 3, 4, 5].map(w => { const ax = w >> 1, at = w & 1 ? SUB - 1 : 0, f = new Uint8Array(SUB * SUB);
+        for (let u = 0; u < SUB; u++) for (let v = 0; v < SUB; v++) { const q = [0, 0, 0]; q[ax] = at; q[(ax + 1) % 3] = u; q[(ax + 2) % 3] = v;
+          f[u * SUB + v] = getBit(m, (q[1] * SUB + q[2]) * SUB + q[0]); } return f; });
+      list.push({ shape: si, rot: ri, mask: m, n: maskCount(m), plate, sig, minY, walls, face });
+    });
+  });
+  return { list, bySig };
+}
+// the same shape turned 90 degrees about an axis (0 = X length, 1 = Y vertical, 2 = Z width)
+function rotateTemplate(T, ti, axis) {
+  const r = T.bySig.get(maskSig(permute(T.list[ti].mask, TURN_MAP[axis])));
+  return r === undefined ? ti : r;
+}
+// rotation-independent signature of a shape's mask (finds duplicate shapes)
+const shapeKeySig = mask => ROT_MAP.map(map => maskSig(permute(mask, map))).sort()[0];
+
+// ---------- models: OBJ and STL
+function parseObj(text) {
+  const v = [], parts = new Map(); let cur = 'model';
+  for (const raw of text.split('\n')) {
+    const line = raw.trim();
+    if (line.startsWith('v ')) v.push(line.split(/\s+/).slice(1, 4).map(Number));
+    else if (line.startsWith('o ') || line.startsWith('g ')) cur = line.slice(2).trim() || 'model';
+    else if (line.startsWith('f ')) {
+      const idx = line.split(/\s+/).slice(1).map(t => { const i = parseInt(t.split('/')[0]); return i > 0 ? i - 1 : v.length + i; });
+      if (!parts.has(cur)) parts.set(cur, []);
+      const arr = parts.get(cur);
+      for (let k = 1; k < idx.length - 1; k++) arr.push(...v[idx[0]], ...v[idx[k]], ...v[idx[k + 1]]);
+    }
+  }
+  return [...parts.entries()].filter(([, t]) => t.length).map(([name, t]) => ({ name, tris: Float32Array.from(t) }));
+}
+function parseStl(buf) {
+  const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf), dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  if (u8.length >= 84) {
+    const n = dv.getUint32(80, true);
+    if (84 + n * 50 === u8.length) {           // binary
+      const t = new Float32Array(n * 9);
+      for (let i = 0; i < n; i++) for (let k = 0; k < 9; k++) t[i * 9 + k] = dv.getFloat32(84 + i * 50 + 12 + k * 4, true);
+      return [{ name: 'model', tris: t }];
+    }
+  }
+  const text = new TextDecoder().decode(u8), parts = []; let cur = 'model', arr = [];
+  for (const raw of text.split('\n')) {
+    const line = raw.trim();
+    if (line.startsWith('endsolid')) { if (arr.length) parts.push({ name: cur, tris: Float32Array.from(arr) }); arr = []; }
+    else if (line.startsWith('solid')) { cur = line.slice(5).trim() || 'model'; arr = []; }
+    else if (line.startsWith('vertex')) arr.push(...line.split(/\s+/).slice(1, 4).map(Number));
+  }
+  if (arr.length) parts.push({ name: cur, tris: Float32Array.from(arr) });
+  return parts;
+}
+// orient and scale: world X = front, Y = up, Z = side; rear at x = 0, ground at y = 0, centred in z.
+// o: { up: 'y'|'z'|'x', front: '+x'|'-x'|'+y'|'-y'|'+z'|'-z', length: real metres along the front axis }
+function prepareModel(rawParts, o) {
+  const up = 'xyz'.indexOf(o.up), fa = 'xyz'.indexOf(o.front[1]), sg = o.front[0] === '-' ? -1 : 1;
+  if (fa === up) throw new Error('front and up must be different axes');
+  const side = [0, 1, 2].find(i => i !== up && i !== fa);
+  const parts = rawParts.map(p => { const t = new Float32Array(p.tris.length);
+    for (let i = 0; i < t.length; i += 3) { t[i] = p.tris[i + fa] * sg; t[i + 1] = p.tris[i + up]; t[i + 2] = p.tris[i + side]; }
+    return { name: p.name, tris: t }; });
+  const mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
+  parts.forEach(p => { for (let i = 0; i < p.tris.length; i += 3) for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], p.tris[i + k]); mx[k] = Math.max(mx[k], p.tris[i + k]); } });
+  const s = o.length / (mx[0] - mn[0]), cz = (mn[2] + mx[2]) / 2;
+  parts.forEach(p => { for (let i = 0; i < p.tris.length; i += 3) { p.tris[i] = (p.tris[i] - mn[0]) * s; p.tris[i + 1] = (p.tris[i + 1] - mn[1]) * s; p.tris[i + 2] = (p.tris[i + 2] - cz) * s; } });
+  return { parts, size: [(mx[0] - mn[0]) * s, (mx[1] - mn[1]) * s, (mx[2] - mn[2]) * s] };
+}
+// "turret=turret,gun;wheels=wheel" -> group of a part name (first match wins; anything else is "body")
+function groupOf(name, rules) {
+  const n = name.toLowerCase();
+  for (const r of rules.split(';')) { const [g, list] = r.split('='); if (!list) continue;
+    if (list.split(',').some(w => w.trim() && n.includes(w.trim().toLowerCase()))) return g.trim(); }
+  return 'body';
+}
+
+// ---------- surfaces: sample points with (unsigned) normals, for comparing the model's surface with a block's faces
+let SURF_STEP = 0.2;              // spacing of surface samples (model and blocks), in cells
+const setSurfStep = s => { SURF_STEP = s; };     // for tuning (bench_fit.mjs)
+// triangles of a shape's solids in cell space (convex solids: the faces of the hull of their corners)
+function shapeTriangles(shape) {
+  const out = [];
+  for (const s of shape.solids || []) {
+    if (s.type === 'tris') { for (let i = 0; i < s.tris.length; i++) out.push(s.tris[i]); continue; }
+    const V = []; s.verts.forEach(v => { const q = v.map(x => Math.round(x * 1e6) / 1e6 + 0); if (!V.some(w => near(w, q))) V.push(q); });
+    for (const pl of hullPlanes(V)) {
+      const f = V.filter(v => Math.abs(dot(pl, v) - pl[3]) < 1e-6); if (f.length < 3) continue;
+      const c = [0, 1, 2].map(k => f.reduce((a, v) => a + v[k], 0) / f.length);
+      const t1 = sub(f[0], c), t1n = t1.map(x => x / len(t1)), t2 = cross(pl, t1n);
+      f.sort((a, b) => Math.atan2(dot(sub(a, c), t2), dot(sub(a, c), t1n)) - Math.atan2(dot(sub(b, c), t2), dot(sub(b, c), t1n)));
+      for (let i = 1; i + 1 < f.length; i++) out.push(...f[0], ...f[i], ...f[i + 1]);
+    }
+  }
+  return out;
+}
+// evenly spread points on triangles: calls fn(x, y, z, nx, ny, nz, weight) (weight = area per point; unit normal)
+function sampleTris(tris, step, fn) {
+  for (let t = 0; t + 8 < tris.length; t += 9) {
+    const A = [tris[t], tris[t + 1], tris[t + 2]], B = [tris[t + 3], tris[t + 4], tris[t + 5]], C = [tris[t + 6], tris[t + 7], tris[t + 8]];
+    const nrm = cross(sub(B, A), sub(C, A)), area2 = len(nrm); if (area2 < 1e-12) continue;
+    const n = nrm.map(x => x / area2), L = Math.max(len(sub(A, B)), len(sub(B, C)), len(sub(C, A)));
+    const k = Math.max(1, Math.ceil(L / step)), pts = [];
+    for (let i = 0; i < k; i++) for (let j = 0; j < k - i; j++) {
+      pts.push([(i + 1 / 3) / k, (j + 1 / 3) / k]);
+      if (i + j < k - 1) pts.push([(i + 2 / 3) / k, (j + 2 / 3) / k]);
+    }
+    const w = area2 / 2 / pts.length;
+    for (const [u, v] of pts) { const q = 1 - u - v; fn(A[0] * q + B[0] * u + C[0] * v, A[1] * q + B[1] * u + C[1] * v, A[2] * q + B[2] * u + C[2] * v, n[0], n[1], n[2], w); }
+  }
+}
+// a shape's real surface (seams between its pieces dropped) as samples x, y, z, nx, ny, nz, onCellWall, with a spatial
+// hash for lookups. Cached on the shape as _s.
+function shapeSurface(shape) {
+  if (shape._s && shape._s.tol === SURF_D && shape._s.step === SURF_STEP) return shape._s;
+  const inCell = p => p.every(v => v >= -1e-9 && v <= 1 + 1e-9) && shapeInside(shape, p);
+  const pts = [], e = 0.012, thin = shapeMask(shape).plate;
+  sampleTris(shapeTriangles(shape), SURF_STEP, (x, y, z, nx, ny, nz) => {
+    if (!thin) {                           // thin plates: keep every face (both sides are real)
+      const a = inCell([x + nx * e, y + ny * e, z + nz * e]), b = inCell([x - nx * e, y - ny * e, z - nz * e]);
+      if (a === b) return;                 // a seam between pieces, or a face inside the solid
+    }
+    const wall = [x, y, z].some((v, k) => (v < 1e-3 || v > 1 - 1e-3) && Math.abs([nx, ny, nz][k]) > 0.99) ? 1 : 0;
+    pts.push(x, y, z, nx, ny, nz, wall);
+  });
+  const P = Float32Array.from(pts);
+  let inner = 0; for (let i = 6; i < P.length; i += 7) if (!P[i]) inner++;
+  return (shape._s = { pts: P, hash: makeHash(P, 7, -0.01, 1.02), inner, tol: SURF_D, step: SURF_STEP });
+}
+// spatial hash over samples (stride floats each) in the cube [lo, lo+size]^3, buckets of SURF_D
+function makeHash(pts, stride, lo, size) {
+  const G = Math.max(1, Math.ceil(size / SURF_D)), n = pts.length / stride, cellOf = new Int32Array(n), count = new Int32Array(G ** 3 + 1);
+  const b = v => Math.min(G - 1, Math.max(0, Math.floor((v - lo) / SURF_D)));
+  for (let i = 0; i < n; i++) { const o = i * stride, c = (b(pts[o + 1]) * G + b(pts[o + 2])) * G + b(pts[o]); cellOf[i] = c; count[c + 1]++; }
+  for (let c = 0; c < G ** 3; c++) count[c + 1] += count[c];
+  const items = new Int32Array(n), fillAt = count.slice(0, G ** 3);
+  for (let i = 0; i < n; i++) items[fillAt[cellOf[i]]++] = i * stride;
+  return { G, lo, start: count, items, pts };
+}
+// best match for a point among hashed samples within SURF_D: max of closeness x |normal agreement|
+function bestMatch(H, x, y, z, nx, ny, nz) {
+  const { G, lo, start, items, pts } = H;
+  const bx = Math.floor((x - lo) / SURF_D), by = Math.floor((y - lo) / SURF_D), bz = Math.floor((z - lo) / SURF_D);
+  let best = 0;
+  for (let cy = by - 1; cy <= by + 1; cy++) { if (cy < 0 || cy >= G) continue;
+    for (let cz = bz - 1; cz <= bz + 1; cz++) { if (cz < 0 || cz >= G) continue;
+      for (let cx = bx - 1; cx <= bx + 1; cx++) { if (cx < 0 || cx >= G) continue;
+        const c = (cy * G + cz) * G + cx;
+        for (let k = start[c]; k < start[c + 1]; k++) {
+          const o = items[k], dx = pts[o] - x, dy = pts[o + 1] - y, dz = pts[o + 2] - z, d2 = dx * dx + dy * dy + dz * dz;
+          if (d2 >= SURF_D * SURF_D) continue;
+          const al = Math.abs(pts[o + 3] * nx + pts[o + 4] * ny + pts[o + 5] * nz), al2 = al * al;
+          let an = al2 * al2; for (let q = 4; q < NORMAL_POW; q *= 2) an *= an;          // agreement^NORMAL_POW (4, 8, 16)
+          const s = (1 - Math.sqrt(d2) / SURF_D) * (NORMAL_POW === 1 ? al : an);   // parallel faces matter most
+          if (s > best) best = s;
+        } } } }
+  return best;
+}
+let SURF_D = 0.25;                  // a surface point this close (cells) to the other surface counts as on it
+const setSurfTolerance = d => { SURF_D = d; };   // for tuning (bench_fit.mjs); shape hashes are per tolerance
+let NORMAL_POW = 8;                 // how strictly the faces must be parallel: agreement^8 (owner check 2026-10-01)
+const setNormalPow = n => { NORMAL_POW = n; };
+// surface agreement of one candidate (shape sh turned by R) with a cell's model samples.
+// own: the cell's samples (x,y,z,nx,ny,nz,w, cell-local), wsum their total weight; nearH: hash of samples around it.
+// exposed[w]: cell wall w (x-, x+, y-, y+, z-, z+) has an empty neighbour, so a block face there must be model surface.
+// Returns [model surface lying on the block's faces, block's faces inside the cell or on exposed walls lying on model
+// surface], each 0..1 (1 when there is nothing to check).
+function surfaceScore(sh, R, own, wsum, nearH, exposed, wallWeight = 1) {
+  const S = shapeSurface(sh);
+  let m2b = 1;
+  if (wsum > 0) {
+    let acc = 0;
+    for (let i = 0; i < own.length; i += 7) {
+      // model point into the shape's own orientation: q = R^T (p - .5) + .5
+      const px = own[i] - .5, py = own[i + 1] - .5, pz = own[i + 2] - .5, a = own[i + 3], b = own[i + 4], c = own[i + 5];
+      acc += own[i + 6] * bestMatch(S.hash,
+        R[0][0] * px + R[1][0] * py + R[2][0] * pz + .5, R[0][1] * px + R[1][1] * py + R[2][1] * pz + .5, R[0][2] * px + R[1][2] * py + R[2][2] * pz + .5,
+        R[0][0] * a + R[1][0] * b + R[2][0] * c, R[0][1] * a + R[1][1] * b + R[2][1] * c, R[0][2] * a + R[1][2] * b + R[2][2] * c);
+    }
+    m2b = acc / wsum;
+  }
+  let ok = 0, n = 0;
+  const P = S.pts;
+  for (let i = 0; i < P.length; i += 7) {
+    const x = P[i] - .5, y = P[i + 1] - .5, z = P[i + 2] - .5, a = P[i + 3], b = P[i + 4], c = P[i + 5];
+    const X = R[0][0] * x + R[0][1] * y + R[0][2] * z + .5, Y = R[1][0] * x + R[1][1] * y + R[1][2] * z + .5, Z = R[2][0] * x + R[2][1] * y + R[2][2] * z + .5;
+    let wt = 1;
+    if (P[i + 6]) {                         // on a cell wall: only counts where that wall is exposed (the outside skin)
+      const w = X < .01 ? 0 : X > .99 ? 1 : Y < .01 ? 2 : Y > .99 ? 3 : Z < .01 ? 4 : 5;
+      if (!exposed[w]) continue;
+      wt = wallWeight;                      // the owner builds the outside skin first (2026-10-01 edits)
+    }
+    ok += wt * bestMatch(nearH, X, Y, Z, R[0][0] * a + R[0][1] * b + R[0][2] * c, R[1][0] * a + R[1][1] * b + R[1][2] * c, R[2][0] * a + R[2][1] * b + R[2][2] * c);
+    n += wt;
+  }
+  const b2m = n ? ok / n : 1;
+  return [m2b, b2m];
+}
+
+// ---------- model voxelising (per part: surface samples + 6-ray parity inside votes)
+function partSolid(tris, org, fb, fn, out, gi, prio) {
+  const [fnx, , fnz] = fn, idx = (x, y, z) => (y * fnz + z) * fnx + x;
+  const lo = [1e9, 1e9, 1e9], hi = [-1e9, -1e9, -1e9];
+  for (let i = 0; i < tris.length; i += 3) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], tris[i + k]); hi[k] = Math.max(hi[k], tris[i + k]); }
+  const b0 = [0, 1, 2].map(k => Math.max(0, Math.floor((lo[k] - org[k]) / fb)));
+  const b1 = [0, 1, 2].map(k => Math.min(fn[k] - 1, Math.floor((hi[k] - org[k]) / fb)));
+  if (b0.some((v, k) => v > b1[k])) return;
+  const dims = [0, 1, 2].map(k => b1[k] - b0[k] + 1);
+  const lidx = (x, y, z) => ((y - b0[1]) * dims[2] + (z - b0[2])) * dims[0] + (x - b0[0]);
+  const votes = new Uint8Array(dims[0] * dims[1] * dims[2]), surf = new Uint8Array(votes.length);
+  for (let t = 0; t < tris.length; t += 9) {
+    const A = [tris[t], tris[t + 1], tris[t + 2]], B = [tris[t + 3], tris[t + 4], tris[t + 5]], C = [tris[t + 6], tris[t + 7], tris[t + 8]];
+    const n = Math.max(1, Math.ceil(Math.max(len(sub(A, B)), len(sub(B, C)), len(sub(C, A))) / (fb * 0.5)));
+    for (let i = 0; i <= n; i++) for (let j = 0; j <= n - i; j++) {
+      const u = i / n, v = j / n, w = 1 - u - v;
+      const c = [0, 1, 2].map(k => Math.floor((A[k] * w + B[k] * u + C[k] * v - org[k]) / fb));
+      if (c.some((q, k) => q < b0[k] || q > b1[k])) continue;
+      surf[lidx(c[0], c[1], c[2])] = 1;
+    }
+  }
+  for (let a = 0; a < 3; a++) {
+    const u = (a + 1) % 3, v = (a + 2) % 3, cols = new Map();
+    for (let t = 0; t < tris.length; t += 9) {
+      const P = [[tris[t], tris[t + 1], tris[t + 2]], [tris[t + 3], tris[t + 4], tris[t + 5]], [tris[t + 6], tris[t + 7], tris[t + 8]]];
+      const d = (P[1][u] - P[0][u]) * (P[2][v] - P[0][v]) - (P[2][u] - P[0][u]) * (P[1][v] - P[0][v]);
+      if (Math.abs(d) < 1e-12) continue;
+      const iu0 = Math.max(b0[u], Math.ceil((Math.min(P[0][u], P[1][u], P[2][u]) - org[u]) / fb - .5)), iu1 = Math.min(b1[u], Math.floor((Math.max(P[0][u], P[1][u], P[2][u]) - org[u]) / fb - .5));
+      const iv0 = Math.max(b0[v], Math.ceil((Math.min(P[0][v], P[1][v], P[2][v]) - org[v]) / fb - .5)), iv1 = Math.min(b1[v], Math.floor((Math.max(P[0][v], P[1][v], P[2][v]) - org[v]) / fb - .5));
+      for (let iu = iu0; iu <= iu1; iu++) for (let iv = iv0; iv <= iv1; iv++) {
+        const cu = org[u] + (iu + .5) * fb, cv = org[v] + (iv + .5) * fb;
+        const l1 = ((P[1][u] - cu) * (P[2][v] - cv) - (P[2][u] - cu) * (P[1][v] - cv)) / d;
+        const l2 = ((P[2][u] - cu) * (P[0][v] - cv) - (P[0][u] - cu) * (P[2][v] - cv)) / d;
+        const l3 = 1 - l1 - l2;
+        if (l1 < 0 || l2 < 0 || l3 < 0) continue;
+        const key = iu * 100000 + iv;
+        if (!cols.has(key)) cols.set(key, []);
+        cols.get(key).push(l1 * P[0][a] + l2 * P[1][a] + l3 * P[2][a]);
+      }
+    }
+    cols.forEach((hits, key) => {
+      hits.sort((p, q) => p - q);
+      const iu = Math.floor(key / 100000), iv = key % 100000;
+      let h = 0;
+      for (let ia = b0[a]; ia <= b1[a]; ia++) {
+        const ca = org[a] + (ia + .5) * fb;
+        while (h < hits.length && hits[h] < ca) h++;
+        const c = [0, 0, 0]; c[a] = ia; c[u] = iu; c[v] = iv;
+        votes[lidx(c[0], c[1], c[2])] += (h & 1) + ((hits.length - h) & 1);
+      }
+    });
+  }
+  for (let y = b0[1]; y <= b1[1]; y++) for (let z = b0[2]; z <= b1[2]; z++) for (let x = b0[0]; x <= b1[0]; x++) {
+    const li = lidx(x, y, z), g = idx(x, y, z);
+    if (votes[li] >= 4 && (!out.g[g] || prio[gi] < prio[out.g[g]])) out.g[g] = gi;
+    if (surf[li] && (!out.s[g] || prio[gi] < prio[out.s[g]])) out.s[g] = gi;
+  }
+}
+
+// parts: [{group, tris}] in metres (prepared). o: { scale, block, offX, offY, centre: 'col'|'line', fill: 'solid'|'shell',
+// minFill, groupsOn: Set, groupNames: [], groupPriority: [], shapes, T (from buildTemplates) }
+// Fit rule (owner, 2026-10-01): a block may go in a cell when the model fills at least minFill of that block's own
+// volume (solid blocks against the model's inside samples; plates, in thin-skin cells, against its surface samples).
+// Among the allowed blocks, the best overlap (IoU with the cell's model samples) minus the shape's penalty wins.
+// fit per cell: template index, -2 = model there but no block passes, -1 = empty.
+function computeGrid(parts, o) {
+  const s = o.scale, b = o.block, use = parts.filter(p => o.groupsOn.has(p.group));
+  if (!use.length) return null;
+  const scaled = use.map(p => ({ group: p.group, tris: Float32Array.from(p.tris, x => x * s) }));
+  const mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
+  scaled.forEach(p => { for (let i = 0; i < p.tris.length; i += 3) for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], p.tris[i + k]); mx[k] = Math.max(mx[k], p.tris[i + k]); } });
+  let ox = mn[0] + o.offX * b; while (ox > mn[0] + 1e-9) ox -= b;
+  let oy = mn[1] + o.offY * b; while (oy > mn[1] + 1e-9) oy -= b;
+  const halfW = Math.max(-mn[2], mx[2]);
+  let oz, nz;
+  if (o.centre === 'col') { const k = Math.ceil(halfW / b - 0.5); nz = 2 * k + 1; oz = -(k + 0.5) * b; }
+  else { const k = Math.ceil(halfW / b); nz = 2 * k; oz = -k * b; }
+  const nx = Math.ceil((mx[0] - ox) / b - 1e-6), ny = Math.ceil((mx[1] - oy) / b - 1e-6);
+  const fb = b / SUB, fn = [nx * SUB, ny * SUB, nz * SUB];
+  const prio = {}; o.groupNames.forEach((g, i) => { const p = (o.groupPriority || []).indexOf(g); prio[i + 1] = p < 0 ? 50 + i : p; });
+  const fine = { g: new Uint16Array(fn[0] * fn[1] * fn[2]), s: new Uint16Array(fn[0] * fn[1] * fn[2]) };
+  const fidx = (x, y, z) => (y * fn[2] + z) * fn[0] + x, idx = (x, y, z) => (y * nz + z) * nx + x;
+  scaled.forEach(p => partSolid(p.tris, [ox, oy, oz], fb, fn, fine, o.groupNames.indexOf(p.group) + 1, prio));
+  // hidden groups keep their space clear (owner: wheels are left off because suspension blocks go there): a block may
+  // not take more than reserveOverlap of its own volume from a hidden part (inside or surface: tyres are open meshes).
+  // A panel lying on top of a wheel arch is fine; a block through the wheel is not.
+  const reserveOverlap = o.reserveOverlap ?? 0.1;
+  const hid = { g: new Uint16Array(fn[0] * fn[1] * fn[2]), s: new Uint16Array(fn[0] * fn[1] * fn[2]) };
+  let anyHidden = false;
+  // each hidden part is filled solid between its outer surfaces along all three axes (its "visual hull"), so an open
+  // tyre shell counts as a whole wheel; parts are filled one at a time so the gap between two wheels stays open
+  if (reserveOverlap < 1) parts.filter(p => !o.groupsOn.has(p.group)).forEach(p => { anyHidden = true;
+    const one = { g: new Uint16Array(fn[0] * fn[1] * fn[2]), s: new Uint16Array(fn[0] * fn[1] * fn[2]) };
+    partSolid(Float32Array.from(p.tris, v => v * s), [ox, oy, oz], fb, fn, one, 1, { 1: 0 });
+    const lo = [1e9, 1e9, 1e9], hi = [-1, -1, -1];
+    for (let fy = 0; fy < fn[1]; fy++) for (let fz = 0; fz < fn[2]; fz++) for (let fx = 0; fx < fn[0]; fx++) if (one.s[fidx(fx, fy, fz)] || one.g[fidx(fx, fy, fz)]) {
+      lo[0] = Math.min(lo[0], fx); lo[1] = Math.min(lo[1], fy); lo[2] = Math.min(lo[2], fz); hi[0] = Math.max(hi[0], fx); hi[1] = Math.max(hi[1], fy); hi[2] = Math.max(hi[2], fz); }
+    if (hi[0] < 0) return;
+    const on = (fx, fy, fz) => one.s[fidx(fx, fy, fz)] || one.g[fidx(fx, fy, fz)];
+    for (let fy = lo[1]; fy <= hi[1]; fy++) for (let fz = lo[2]; fz <= hi[2]; fz++) for (let fx = lo[0]; fx <= hi[0]; fx++) {
+      if (on(fx, fy, fz)) { hid.s[fidx(fx, fy, fz)] = 1; continue; }
+      // inside the span along x, y and z: surface on both sides in every axis
+      let ok = true;
+      for (const [dx, dy, dz] of [[1, 0, 0], [0, 1, 0], [0, 0, 1]]) {
+        let a = false, b = false;
+        for (let k = 1; !a; k++) { const X = fx - dx * k, Y = fy - dy * k, Z = fz - dz * k; if (X < lo[0] || Y < lo[1] || Z < lo[2]) break; if (on(X, Y, Z)) a = true; }
+        for (let k = 1; !b; k++) { const X = fx + dx * k, Y = fy + dy * k, Z = fz + dz * k; if (X > hi[0] || Y > hi[1] || Z > hi[2]) break; if (on(X, Y, Z)) b = true; }
+        if (!a || !b) { ok = false; break; }
+      }
+      if (ok) hid.g[fidx(fx, fy, fz)] = 1;
+    }
+  });
+  const mh = newMask();
+  const N = nx * ny * nz, cell = new Int16Array(N), fit = new Int32Array(N).fill(-1), fill = new Float32Array(N);
+  const T = o.T.list, pen = T.map(tp => o.shapes[tp.shape].penalty ?? 0.11);
+  const surface = o.scoring !== 'volume', K = o.candidates || 12, ALT = 5, PEN_SCALE = o.penaltyScale ?? 4;   // simplicity penalties (seed.js) break near-ties
+  const WV = o.weights ? o.weights[0] : 0.3, WM = o.weights ? o.weights[1] : 0.35, WB = o.weights ? o.weights[2] : 0.35;
+  // model surface samples binned per cell, cell-local (0..1); weights are areas in cell units
+  const bins = new Map();
+  // only surface facing open air counts: a sample with solid on both sides (a face buried inside another part, or between
+  // overlapping parts) is hidden geometry a builder ignores
+  const solidAt = (x, y, z) => { const fx = Math.floor((x - ox) / fb), fy = Math.floor((y - oy) / fb), fz = Math.floor((z - oz) / fb);
+    return fx >= 0 && fy >= 0 && fz >= 0 && fx < fn[0] && fy < fn[1] && fz < fn[2] && fine.g[fidx(fx, fy, fz)] > 0; };
+  let hidden = 0, seen = 0;
+  if (surface) scaled.forEach(p => sampleTris(p.tris, SURF_STEP * b, (x, y, z, a, bb, c, w) => {
+    const cx = Math.floor((x - ox) / b), cy = Math.floor((y - oy) / b), cz = Math.floor((z - oz) / b);
+    if (cx < 0 || cy < 0 || cz < 0 || cx >= nx || cy >= ny || cz >= nz) return;
+    seen++;
+    const e = fb * 1.5;
+    if (solidAt(x + a * e, y + bb * e, z + c * e) && solidAt(x - a * e, y - bb * e, z - c * e)) { hidden++; return; }
+    const k = idx(cx, cy, cz); let arr = bins.get(k); if (!arr) bins.set(k, arr = []);
+    arr.push((x - ox) / b - cx, (y - oy) / b - cy, (z - oz) / b - cz, a, bb, c, w / (b * b));
+  }));
+  // model samples in and around a cell (neighbours within a margin), cell-local
+  const nearPts = (x, y, z, m) => {
+    const out = [];
+    for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+      const X = x + dx, Y = y + dy, Z = z + dz; if (X < 0 || Y < 0 || Z < 0 || X >= nx || Y >= ny || Z >= nz) continue;
+      const arr = bins.get(idx(X, Y, Z)); if (!arr) continue;
+      for (let i = 0; i < arr.length; i += 7) { const px = arr[i] + dx, py = arr[i + 1] + dy, pz = arr[i + 2] + dz;
+        if (px < -m || py < -m || pz < -m || px > 1 + m || py > 1 + m || pz > 1 + m) continue; out.push(px, py, pz, arr[i + 3], arr[i + 4], arr[i + 5], arr[i + 6]); }
+    }
+    return out;
+  };
+  const alt = new Int32Array(N * ALT).fill(-1), altScore = new Float32Array(N * ALT), keep = new Map();
+  const niOf = new Uint16Array(N), matOf = new Uint16Array(N);   // inside samples; inside or surface samples
+  for (let y = 0; y < ny; y++) for (let z = 0; z < nz; z++) for (let x = 0; x < nx; x++) { let n = 0, m = 0;
+    for (let sy = 0; sy < SUB; sy++) for (let sz = 0; sz < SUB; sz++) for (let sx = 0; sx < SUB; sx++) {
+      const f = fidx(x * SUB + sx, y * SUB + sy, z * SUB + sz); if (fine.g[f]) n++; if (fine.g[f] || fine.s[f]) m++; }
+    niOf[idx(x, y, z)] = n; matOf[idx(x, y, z)] = m; }
+  // owner's style (2026-10-01 edits): shaped blocks only on the outside. A cell with model material in all six
+  // neighbours and at least interiorFill of its own volume filled is part of the solid core: a cube.
+  const interiorFill = o.interiorFill ?? 0.5, occupied = (o.occupiedFill ?? 0.1) * NS;
+  const cubeTi = T.findIndex(tp => tp.n === NS && !tp.plate);
+  const isInterior = (x, y, z) => [[x - 1, y, z], [x + 1, y, z], [x, y - 1, z], [x, y + 1, z], [x, y, z - 1], [x, y, z + 1]]
+    .every(([X, Y, Z]) => X >= 0 && Y >= 0 && Z >= 0 && X < nx && Y < ny && Z < nz && matOf[idx(X, Y, Z)] >= occupied);
+  // a thin cell whose material hugs a wall and carries straight on from the neighbour's solid there is that neighbour
+  // poking through (or its face lying on the grid line), not a plate: no block there
+  const spill = (x, y, z) => {
+    let tot = 0; const layer = [0, 0, 0, 0, 0, 0];
+    for (let sy = 0; sy < SUB; sy++) for (let sz = 0; sz < SUB; sz++) for (let sx = 0; sx < SUB; sx++) {
+      const f = fidx(x * SUB + sx, y * SUB + sy, z * SUB + sz); if (!fine.g[f] && !fine.s[f]) continue; tot++;
+      if (sx < 2) layer[0]++; if (sx >= SUB - 2) layer[1]++; if (sy < 2) layer[2]++; if (sy >= SUB - 2) layer[3]++; if (sz < 2) layer[4]++; if (sz >= SUB - 2) layer[5]++;
+    }
+    // the neighbour across wall k must have material in its own 2 layers at that wall (so this continues from it)
+    const nb = [[x - 1, y, z, 0, SUB - 2], [x + 1, y, z, 0, 0], [x, y - 1, z, 1, SUB - 2], [x, y + 1, z, 1, 0], [x, y, z - 1, 2, SUB - 2], [x, y, z + 1, 2, 0]];
+    return nb.some(([X, Y, Z, ax, from], k) => {
+      if (X < 0 || Y < 0 || Z < 0 || X >= nx || Y >= ny || Z >= nz || layer[k] < 0.8 * tot) return false;
+      let m = 0;
+      for (let a = from; a < from + 2; a++) for (let u = 0; u < SUB; u++) for (let v = 0; v < SUB; v++) {
+        const s = [0, 0, 0]; s[ax] = a; s[(ax + 1) % 3] = u; s[(ax + 2) % 3] = v;
+        if (fine.g[fidx(X * SUB + s[0], Y * SUB + s[1], Z * SUB + s[2])]) m++;
+      }
+      return m >= 0.5 * layer[k];
+    });
+  };
+  const mi = newMask(), ms = newMask(), cnt = new Uint32Array(o.groupNames.length + 1), cand = [];
+  for (let y = 0; y < ny; y++) for (let z = 0; z < nz; z++) for (let x = 0; x < nx; x++) {
+    cnt.fill(0); mi.fill(0); ms.fill(0); let ni = 0, ns = 0;
+    for (let sy = 0; sy < SUB; sy++) for (let sz = 0; sz < SUB; sz++) for (let sx = 0; sx < SUB; sx++) {
+      const f = fidx(x * SUB + sx, y * SUB + sy, z * SUB + sz), k = (sy * SUB + sz) * SUB + sx, g = fine.g[f], gs = fine.s[f];
+      if (g) { setBit(mi, k); ni++; cnt[g]++; }
+      if (gs) { setBit(ms, k); ns++; if (!g) cnt[gs]++; }
+    }
+    if (!ni && !ns) continue;
+    const ci = idx(x, y, z);
+    let best = 1; for (let g = 1; g < cnt.length; g++) if (cnt[g] > cnt[best]) best = g;
+    const inside = ni === NS && !ns;
+    if (o.fill === 'shell' && inside) continue;
+    // a cell with hardly any model in it (a speck past the hull) gets no block
+    if (matOf[ci] < (o.minMaterial ?? 0.08) * NS) { fit[ci] = -2; if (o.skipped) o.skipped(x, y, z, 'speck', ni, ns); continue; }
+    mh.fill(0); let nh = 0, hidTop = -1;
+    if (anyHidden) for (let sy = 0; sy < SUB; sy++) for (let sz = 0; sz < SUB; sz++) for (let sx = 0; sx < SUB; sx++) {
+      const f = fidx(x * SUB + sx, y * SUB + sy, z * SUB + sz); if (hid.g[f] || hid.s[f]) { setBit(mh, (sy * SUB + sz) * SUB + sx); nh++; hidTop = sy; } }
+    // a cell a hidden part really occupies (a wheel well): only blocks entirely above the hidden part (mudguard tops)
+    const wheelWell = nh >= (o.reserveFill ?? 0.15) * NS;
+    cell[ci] = inside ? -best : best;
+    const thin = ni <= NS / 6 + 4;            // at most about one sample layer: a thin skin, plates are allowed (on the surface samples)
+    // poke-through: no plates (a sliver isn't a panel), but a shaped piece may round the edge off (owner's dome/edge
+    // edits); 'skip' leaves the cell empty as before
+    const poke = thin && (o.pokeThrough ?? 'noPlates') !== false && spill(x, y, z);
+    if (poke && o.pokeThrough === 'skip') { fit[ci] = -2; if (o.skipped) o.skipped(x, y, z, 'poke-through', ni, ns); continue; }
+    // a skin: an exposed cell wall with model surface over most of it (the hull's outside). Blocks with a full face on
+    // it skip the fill rule (the owner thickens thin skins into half blocks; surface scoring then decides)
+    const skin = [0, 1, 2, 3, 4, 5].map(w => {
+      const ax = w >> 1, X = [x - 1, x + 1, x, x, x, x][w], Y = [y, y, y - 1, y + 1, y, y][w], Z = [z, z, z, z, z - 1, z + 1][w];
+      if (X >= 0 && Y >= 0 && Z >= 0 && X < nx && Y < ny && Z < nz && niOf[idx(X, Y, Z)] >= NS / 4) return false;   // not exposed
+      let hit = 0;
+      for (let u = 0; u < SUB; u++) for (let v = 0; v < SUB; v++) { let on = false;
+        for (let d = 0; d < 2 && !on; d++) { const q = [0, 0, 0]; q[ax] = w & 1 ? SUB - 1 - d : d; q[(ax + 1) % 3] = u; q[(ax + 2) % 3] = v;
+          if (getBit(ms, (q[1] * SUB + q[2]) * SUB + q[0]) || getBit(mi, (q[1] * SUB + q[2]) * SUB + q[0])) on = true; }
+        if (on) hit++; }
+      return hit >= (o.skinCover ?? 0.6) * SUB * SUB;
+    });
+    const anySkin = skin.some(Boolean) && (o.skinCover ?? 0.6) < 1;
+    // 1. volume (D-030): blocks the model fills enough of, ranked by overlap minus simplicity penalty
+    cand.length = 0;
+    for (let ti = 0; ti < T.length; ti++) {
+      const tp = T[ti];
+      if (tp.plate && (!thin || poke)) continue;
+      const M = tp.plate ? ms : mi, tm = tp.mask;
+      let inter = 0, uni = 0;
+      for (let w = 0; w < W; w++) { inter += pop(tm[w] & M[w]); uni += pop(tm[w] | M[w]); }
+      const bfill = inter / tp.n;
+      if (!uni || (bfill < o.minFill && !(anySkin && !tp.plate && tp.walls.some((c, w) => c && skin[w])))) continue;
+      if (nh) { if (wheelWell && tp.minY < hidTop) continue;
+        let ov = 0; for (let w = 0; w < W; w++) ov += pop(tm[w] & mh[w]); if (ov > reserveOverlap * tp.n) continue; }
+      cand.push({ ti, iou: inter / uni, bfill, sc: inter / uni - pen[ti] });
+    }
+    if (!cand.length) { fit[ci] = -2; if (o.skipped) o.skipped(x, y, z, 'no block passes the fill rule', ni, ns); continue; }
+    cand.sort((p, q) => q.sc - p.sc);
+    // keep the best K, at most 2 orientations per shape (so near-identical turns of one shape can't crowd out the rest)
+    { const per = new Map(); let n = 0;
+      for (const c of cand) { const s = T[c.ti].shape, k = per.get(s) || 0; if (k >= 2) continue; per.set(s, k + 1); cand[n++] = c; if (n >= K) break; }
+      cand.length = n; }
+    // 2. surface: the model's surface in the cell should run along the block's faces (model -> block), and every face
+    //    the block adds inside the cell should have model surface on it (block -> model)
+    if (surface) {
+      const own = bins.get(ci) || [], nearH = makeHash(nearPts(x, y, z, SURF_D), 7, -SURF_D, 1 + 2 * SURF_D);
+      const exposed = [[x - 1, y, z], [x + 1, y, z], [x, y - 1, z], [x, y + 1, z], [x, y, z - 1], [x, y, z + 1]]
+        .map(([X, Y, Z]) => X < 0 || Y < 0 || Z < 0 || X >= nx || Y >= ny || Z >= nz || niOf[idx(X, Y, Z)] < NS / 4);
+      let wsum = 0; for (let i = 6; i < own.length; i += 7) wsum += own[i];
+      for (const c of cand) {
+        const [m2b, b2m] = surfaceScore(o.shapes[T[c.ti].shape], ROTS[T[c.ti].rot], own, wsum, nearH, exposed, o.wallWeight ?? 2);
+        c.m2b = m2b; c.b2m = b2m; c.raw = WV * c.iou + WM * m2b + WB * b2m; c.sc = c.raw - PEN_SCALE * pen[c.ti];
+      }
+      cand.sort((p, q) => q.sc - p.sc);
+    }
+    if (o.debug) o.debug(x, y, z, cand, ni, ns);
+    if (interiorFill < 1 && cubeTi >= 0 && ni >= interiorFill * NS && isInterior(x, y, z) && T[cand[0].ti] !== T[cubeTi]) {
+      const c = cand.find(c => c.ti === cubeTi) || { ti: cubeTi, sc: cand[0].sc, bfill: ni / NS };
+      cand.splice(cand.indexOf(c) >= 0 ? cand.indexOf(c) : 0, cand.indexOf(c) >= 0 ? 1 : 0); cand.unshift(c);
+    }
+    const top = cand[0], plateMin = o.plateMinScore ?? 0;
+    const q = top.raw ?? top.sc;          // match quality before the simplicity tie-breaker
+    fit[ci] = surface && (q < (o.minScore ?? 0.2) || (T[top.ti].plate && q < plateMin)) ? -2 : top.ti; fill[ci] = top.bfill;   // -2: nothing matches well
+    for (let k = 0; k < Math.min(ALT, cand.length); k++) { alt[ci * ALT + k] = cand[k].ti; altScore[ci * ALT + k] = cand[k].sc; }
+    if (fit[ci] >= 0 && !(interiorFill < 1 && cand[0].ti === cubeTi && isInterior(x, y, z))) keep.set(ci, { x, y, z, cand: cand.map(c => ({ ti: c.ti, sc: c.sc })) });
+  }
+  // continuity (owner, 2026-10-01: side walls and skins run on from block to block): a candidate gains for every face it
+  // meets flush with the neighbouring block's face; two passes, each using the previous pass's picks
+  const WC = surface ? (o.contactWeight ?? 2) : 0;
+  if (WC > 0) for (let pass = 0; pass < 2; pass++) {
+    const prev = Int32Array.from(fit);
+    keep.forEach(({ x, y, z, cand }, ci) => {
+      let best = null, bs = -1e9;
+      for (const c of cand) {
+        let contact = 0;
+        for (let w = 0; w < 6; w++) {
+          const X = x + [-1, 1, 0, 0, 0, 0][w], Y = y + [0, 0, -1, 1, 0, 0][w], Z = z + [0, 0, 0, 0, -1, 1][w];
+          if (X < 0 || Y < 0 || Z < 0 || X >= nx || Y >= ny || Z >= nz) continue;
+          const nf = prev[idx(X, Y, Z)]; if (nf < 0) continue;
+          const a = T[c.ti].face[w], b = T[nf].face[w ^ 1];
+          let s2 = 0; for (let k = 0; k < SUB * SUB; k++) if (a[k] && b[k]) s2++;
+          contact += s2 / (SUB * SUB);
+        }
+        const sc = c.sc + WC * contact / 6;
+        if (sc > bs) { bs = sc; best = c; }
+      }
+      if (best) fit[ci] = best.ti;
+    });
+  }
+  return { nx, ny, nz, b, ox, oy, oz, cell, fit, fill, idx, alt, altScore, ALT, hiddenShare: seen ? hidden / seen : 0 };
+
+}
+
+// ---------- block import: world mod list, block definitions (.sbc), models (.mwm via mwm.js)
+const unxml = s => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+function parseWorldMods(sandboxXml) {
+  const sect = (sandboxXml.match(/<Mods>([\s\S]*?)<\/Mods>/) || [])[1] || '';
+  return [...sect.matchAll(/<ModItem\b([^>]*)>([\s\S]*?)<\/ModItem>/g)].map(m => ({
+    name: unxml((m[1].match(/FriendlyName="([^"]*)"/) || [])[1] || ''),
+    file: (m[2].match(/<Name>([^<]*)<\/Name>/) || [])[1] || '',
+    id: (m[2].match(/<PublishedFileId>(\d+)<\/PublishedFileId>/) || [])[1] || '',
+  }));
+}
+const tag = (s, t) => { const m = s.match(new RegExp('<' + t + '>\\s*([^<]*?)\\s*</' + t + '>')); return m ? unxml(m[1]) : null; };
+const vec = (s, t) => { const m = s.match(new RegExp('<' + t + '\\s+x\\s*=\\s*"([-\\d.]+)"\\s+y\\s*=\\s*"([-\\d.]+)"\\s+z\\s*=\\s*"([-\\d.]+)"')); return m ? [+m[1], +m[2], +m[3]] : null; };
+// cube block definitions in one .sbc file
+function parseBlockDefs(xml) {
+  const out = [];
+  for (const cb of xml.matchAll(/<CubeBlocks>([\s\S]*?)<\/CubeBlocks>/g)) for (const m of cb[1].matchAll(/<Definition\b([^>]*)>([\s\S]*?)<\/Definition>/g)) {
+    const d = m[2], idm = d.match(/<Id>([\s\S]*?)<\/Id>/); if (!idm) continue;
+    const xsi = (m[1].match(/xsi:type="([^"]*)"/) || [])[1] || '';
+    const typeId = tag(idm[1], 'TypeId') || xsi.replace('MyObjectBuilder_', '').replace(/Definition$/, '');
+    const head = d.replace(/<BuildProgressModels>[\s\S]*?<\/BuildProgressModels>/g, '').replace(/<CubeDefinition>[\s\S]*?<\/CubeDefinition>/g, m2 => m2.replace(/<Sides>[\s\S]*?<\/Sides>/, ''));
+    out.push({ typeId, subtype: tag(idm[1], 'SubtypeId') || '', displayName: tag(d, 'DisplayName') || '', cubeSize: tag(d, 'CubeSize') || '',
+      size: vec(d, 'Size') || [1, 1, 1], model: tag(head, 'Model'), modelOffset: vec(d, 'ModelOffset') || [0, 0, 0],
+      topology: tag(d, 'CubeTopology'), public: tag(d, 'Public') !== 'false' });
+  }
+  return out;
+}
+// model triangles (metres, block centred on the origin) -> cell space. ENGINE_CONSTRAINT: small cell 0.5 m, large 2.5 m.
+const CELL_M = { Small: 0.5, Large: 2.5 };
+function modelToCell(tris, def) {
+  const c = CELL_M[def.cubeSize] || 0.5, off = def.modelOffset || [0, 0, 0], t = new Float32Array(tris.length);
+  for (let i = 0; i < tris.length; i += 3) for (let k = 0; k < 3; k++) t[i + k] = Math.round(((tris[i + k] + off[k]) / c + .5) * 1e4) / 1e4;
+  return t;
+}
+// localisation keys (DisplayName_Block_...) -> English text, from Content/Data/Localization/MyTexts.resx
+function parseResx(xml) {
+  const out = {};
+  for (const m of xml.matchAll(/<data name="([^"]+)"[^>]*>\s*<value>([\s\S]*?)<\/value>/g)) out[m[1]] = unxml(m[2]);
+  return out;
+}
+// a readable name for a block definition
+function blockName(d, texts) {
+  const n = d.displayName;
+  if (n && texts && texts[n]) return texts[n];
+  if (n && !/^DisplayName_/.test(n)) return n;
+  return d.subtype.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ');
+}
+// edges of a convex solid (pairs of its points that share two face planes) - a starting sketch for an existing shape
+function solidEdges(solid) {
+  if (solid.type !== 'planes') return [];
+  // stored planes may leave out the cell walls (the cell clips them) and are rounded, so use the hull of the corners
+  const V = [];
+  solid.verts.forEach(v => { const p = v.map(x => Math.round(x * 1e6) / 1e6 + 0); if (!V.some(q => near(q, p))) V.push(p); });
+  const P = hullPlanes(V), out = [], seen = new Set();
+  const on = V.map(v => P.map((q, i) => Math.abs(q[0] * v[0] + q[1] * v[1] + q[2] * v[2] - q[3]) < 1e-6 ? i : -1).filter(i => i >= 0));
+  for (let a = 0; a < V.length; a++) for (let b = a + 1; b < V.length; b++) {
+    if (near(V[a], V[b])) continue;
+    const common = on[a].filter(i => on[b].includes(i));
+    if (common.length < 2) continue;
+    // drop segments that contain another point of the same edge line (keep the short pieces)
+    if (V.some((v, c) => c !== a && c !== b && !near(v, V[a]) && !near(v, V[b]) && common.every(i => on[c].includes(i)) &&
+      dot(sub(v, V[a]), sub(v, V[b])) < 0)) continue;
+    const k = [V[a], V[b]].map(v => v.map(x => Math.round(x * 1e4)).join(',')).sort().join('|');
+    if (seen.has(k)) continue; seen.add(k);
+    out.push([V[a].map(x => Math.round(x * 1e4) / 1e4), V[b].map(x => Math.round(x * 1e4) / 1e4)]);
+  }
+  return out;
+}
+// edges of a whole shape. For several pieces, keep only real edges of their union: around the middle of each piece
+// edge, look at 16 directions across it; inside all round = buried, inside on exactly one side of a line = a seam on
+// a flat face; anything else is a real edge.
+function shapeEdges(shape) {
+  const all = shape.solids.flatMap(solidEdges);
+  if (shape.solids.length < 2) return all;
+  const inCell = p => p.every(v => v >= -1e-9 && v <= 1 + 1e-9) && shapeInside(shape, p);
+  const out = [], seen = new Set();
+  for (const [a, b] of all) {
+    const k = [a, b].map(v => v.join(',')).sort().join('|'); if (seen.has(k)) continue; seen.add(k);
+    const d = sub(b, a), dl = len(d), dn = d.map(x => x / dl);
+    const u0 = Math.abs(dn[0]) < 0.9 ? cross(dn, [1, 0, 0]) : cross(dn, [0, 1, 0]), u = u0.map(x => x / len(u0)), w = cross(dn, u);
+    const mids = [0.3, 0.5, 0.7].map(t => a.map((x, i) => x + d[i] * t));
+    let keep = false;
+    for (const m of mids) {
+      const ins = [];
+      for (let q = 0; q < 16; q++) { const an = q * Math.PI / 8 + 0.1, r = 0.02; ins.push(inCell(m.map((x, i) => x + r * (Math.cos(an) * u[i] + Math.sin(an) * w[i])))); }
+      const n = ins.filter(Boolean).length;
+      const flat = ins.every((v, q) => v !== ins[(q + 8) % 16]);
+      if (n > 0 && n < 16 && !flat) { keep = true; break; }
+    }
+    if (keep) out.push([a, b]);
+  }
+  return out;
+}
+// short unique key from a name: "Light Armor Panel" -> "P", "Half Sloped Panel" -> "HSP"
+function makeKey(name, taken) {
+  const words = name.replace(/[^A-Za-z0-9 ]/g, ' ').split(/\s+/).filter(w => w && !/^(small|large|light|heavy|armor|armour|block|grid)$/i.test(w));
+  const base = (words.map(w => /^\d/.test(w) ? w : w[0].toUpperCase()).join('') || 'X').slice(0, 4);
+  let k = base, n = 2; while (taken.has(k)) k = base.slice(0, 3) + n++;
+  return k;
+}
+
+// ---- mwm.js
+// Reads triangles from a Space Engineers .mwm model (the classic tagged layout written by MwmBuilder, "Version:01157001"
+// and similar). Header: "Debug" tag + strings, then an index of (tag name, byte offset). Each tag's data starts with
+// its name again. Vertices are HalfVector4 (x, y, z, scale); position = xyz * scale. MeshParts hold int32 indices.
+// Returns { tris: Float32Array (9 floats per triangle, model metres), bbox: [min, max] | null } or throws.
+
+function halfToFloat(h) {
+  const s = h & 0x8000 ? -1 : 1, e = (h >> 10) & 0x1f, f = h & 0x3ff;
+  if (e === 0) return s * Math.pow(2, -14) * (f / 1024);
+  if (e === 31) return f ? NaN : s * Infinity;
+  return s * Math.pow(2, e - 15) * (1 + f / 1024);
+}
+
+function readMwm(buf) {
+  const dv = new DataView(buf instanceof ArrayBuffer ? buf : buf.buffer, buf.byteOffset || 0, buf.byteLength);
+  const u8 = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
+  let p = 0;
+  const i32 = () => { const v = dv.getInt32(p, true); p += 4; return v; };
+  const str = () => {
+    let n = 0, sh = 0, c;
+    do { c = u8[p++]; n |= (c & 0x7f) << sh; sh += 7; } while (c & 0x80);
+    if (n > 4096 || p + n > u8.length) throw new Error('bad string');
+    let s = ''; for (let k = 0; k < n; k++) s += String.fromCharCode(u8[p + k]); p += n; return s;
+  };
+  if (str() !== 'Debug') throw new Error('not an mwm model');
+  const nd = i32(); for (let k = 0; k < nd; k++) str();
+  const ni = i32(), index = {};
+  if (ni < 1 || ni > 200) throw new Error('unsupported mwm layout');
+  for (let k = 0; k < ni; k++) { const name = str(); index[name] = i32(); }
+  if (!('Vertices' in index) || !('MeshParts' in index)) throw new Error('mwm has no Vertices/MeshParts');
+
+  p = index.Vertices; if (str() !== 'Vertices') throw new Error('bad Vertices offset');
+  const nv = i32();
+  if (nv < 0 || p + nv * 8 > u8.length) throw new Error('bad vertex count');
+  const verts = new Float32Array(nv * 3);
+  for (let k = 0; k < nv; k++) {
+    const x = halfToFloat(dv.getUint16(p, true)), y = halfToFloat(dv.getUint16(p + 2, true)),
+      z = halfToFloat(dv.getUint16(p + 4, true)), w = halfToFloat(dv.getUint16(p + 6, true));
+    p += 8; verts[k * 3] = x * w; verts[k * 3 + 1] = y * w; verts[k * 3 + 2] = z * w;
+  }
+
+  let bbox = null;
+  if ('BoundingBox' in index) {
+    p = index.BoundingBox; str();
+    const f = [0, 1, 2, 3, 4, 5].map(k => dv.getFloat32(p + 4 * k, true));
+    bbox = [f.slice(0, 3), f.slice(3)];
+  }
+
+  p = index.MeshParts; str();
+  const np = i32(), idx = [];
+  if (np < 0 || np > 1000) throw new Error('bad mesh part count');
+  for (let q = 0; q < np; q++) {
+    i32();                                   // material hash
+    const n = i32();
+    if (n < 0 || p + n * 4 > u8.length) throw new Error('bad index count');
+    for (let k = 0; k < n; k++) idx.push(i32());
+    if (u8[p++]) {                           // has material
+      str();                                 // material name
+      const nt = i32(); if (nt < 0 || nt > 64) throw new Error('bad texture count');
+      for (let k = 0; k < nt; k++) { str(); str(); }                     // textures
+      // user-data dict, then the technique name. Older files (e.g. 01097001) put a float and two vec3s (specular and
+      // colour values, 28 bytes) between the two; try without them first.
+      const nu = i32(); if (nu < 0 || nu > 64) throw new Error('bad user data count');
+      for (let k = 0; k < nu; k++) { str(); str(); }
+      const at = p, tech = () => { try { const t = str(); return /^[A-Z_0-9]{2,32}$/.test(t) ? t : null; } catch (e) { return null; } };
+      let t = tech();
+      if (!t) { p = at + 28; t = tech(); }
+      if (!t) throw new Error('unknown material layout');
+      if (t === 'GLASS') { str(); str(); p++; }      // glass adds CW/CCW material names and a smooth flag
+    }
+  }
+  const tris = new Float32Array(Math.floor(idx.length / 3) * 9);
+  for (let t = 0; t + 2 < idx.length; t += 3) for (let c = 0; c < 3; c++) {
+    const v = idx[t + c]; if (v < 0 || v >= nv) throw new Error('index out of range');
+    tris.set(verts.subarray(v * 3, v * 3 + 3), (t + c) * 3);
+  }
+  return { tris, bbox };
+}
+
+// ---- seed.js
+// The starting Cube Library: the 33 owner-confirmed vanilla armour shapes (armor_data.js, generated from
+// tools/grid-overlay/armor_shapes.json by build.py) plus the 18 vanilla armour panels (panel_data.js, generated from the
+// game's models by extract_panels.mjs; round panels left out).
+
+// near-ties go to the simpler block: fit score minus this. Ranked the way the owner builds (2026-10-01: plain slopes over
+// corner pieces): cube, half, slope, 2x1 slopes and the flat panel, half slopes and other panels, corners, the rest.
+const PENALTY = { C: 0, H: 0.01, S: 0.02, B: 0.03, T: 0.03, P: 0.03, HS: 0.05, HSI: 0.05,
+  K: 0.09, I: 0.09, CB: 0.09, CT: 0.09, IB: 0.09, IT: 0.09, HC: 0.09 };
+const DEFAULT_PENALTY = 0.11;   // other vanilla shapes
+const PANEL_PENALTY = 0.05;
+const MOD_PENALTY = 0.13;       // imported mod blocks: used only when clearly better
+
+function seedLibrary() {
+  const armour = ARMOR.map(s => ({
+    id: 'vanilla:' + s.topology, key: s.key, name: s.name, topology: s.topology, source: 'Vanilla armour',
+    blocks: [{ subtype: s.block, size: 'Small', mod: 'Vanilla' }], use: true, plate: false,
+    penalty: PENALTY[s.key] ?? DEFAULT_PENALTY,
+    // planes from the exact corner points (the stored ones are rounded and leave out the cell walls)
+    solids: s.verts.map(vs => ({ type: 'planes', planes: hullPlanes(vs), verts: vs })), lines: [],
+  }));
+  const panels = PANELS.map(p => ({ id: p.id, key: p.key, name: p.name, source: 'Vanilla panels', blocks: p.blocks, use: true,
+    plate: true, penalty: PENALTY[p.key] ?? PANEL_PENALTY, solids: [{ type: 'tris', tris: Float32Array.from(p.tris) }], lines: [] }));
+  return [...armour, ...panels];
+}
+
+// ---- importer.js
+// Import blocks from a world's mod list into the Cube Library.
+// Folders are { read(path) -> ArrayBuffer | null, list(path) -> [{ name, kind: 'file'|'directory' }] } (async), so the
+// page (File System Access API or a folder upload) and Node (test_core.mjs) share this code.
+
+const DEFAULT_FILTER = 'armou?r|panel|plate|slope|corner|hull|wing';
+const dec = new TextDecoder();
+const text = async (fs, p) => { const b = await fs.read(p); return b ? dec.decode(b) : null; };
+
+async function sbcFiles(fs, dir) {
+  const out = [];
+  for (const e of await fs.list(dir)) {
+    const p = dir + '/' + e.name;
+    if (e.kind === 'directory') out.push(...await sbcFiles(fs, p));
+    else if (e.name.toLowerCase().endsWith('.sbc')) out.push(p);
+  }
+  return out;
+}
+
+// library: array of shapes (changed in place). Returns a summary. o: { world, workshop, content?, localMods?, filter,
+// includeVanilla, log(msg), yieldNow() }
+async function importWorldBlocks(library, o) {
+  const log = o.log || (() => {}), pause = o.yieldNow || (async () => {});
+  const sandbox = await text(o.world, 'Sandbox.sbc');
+  if (!sandbox) throw new Error('Sandbox.sbc not found in the world folder');
+  const mods = parseWorldMods(sandbox);
+  log(`World lists ${mods.length} mods.`);
+  let texts = null;
+  if (o.content) { const r = await text(o.content, 'Data/Localization/MyTexts.resx'); if (r) texts = parseResx(r); }
+
+  const sources = [];
+  if (o.includeVanilla && o.content) sources.push({ name: 'Vanilla', fs: o.content, root: '' });
+  for (const m of mods) {
+    if (m.id && o.workshop && (await o.workshop.list(m.id)).length) sources.push({ name: m.name || m.id, fs: o.workshop, root: m.id });
+    else if (o.localMods && m.file && (await o.localMods.list(m.file)).length) sources.push({ name: m.name || m.file, fs: o.localMods, root: m.file });
+    else log(`  not found: ${m.name || m.file} (${m.id ? 'Workshop ' + m.id : 'local mod'})`);
+  }
+
+  const re = new RegExp(o.filter || DEFAULT_FILTER, 'i');
+  const byTopology = new Map(library.filter(s => s.topology).map(s => [s.topology, s]));
+  const bySig = new Map();
+  for (const s of library) { if (!s.solids || !s.solids.length) continue; if (!s._m) s._m = shapeMask(s); if (maskCount(s._m.mask)) bySig.set(shapeKeySig(s._m.mask), s); }
+  const keys = new Set(library.map(s => s.key));
+  const sum = { mods: sources.length, defs: 0, matched: 0, topology: 0, models: 0, newShapes: 0, multiCell: 0, noShape: 0, unreadable: 0, filteredOut: 0 };
+  const addBlock = (s, d, src) => {
+    s.blocks ||= [];
+    if (!s.blocks.some(b => b.subtype === d.subtype && b.size === d.cubeSize)) s.blocks.push({ subtype: d.subtype, size: d.cubeSize, mod: src.name, name: blockName(d, texts) });
+  };
+  for (const src of sources) {
+    const files = await sbcFiles(src.fs, (src.root ? src.root + '/' : '') + 'Data');
+    let n = 0;
+    for (const f of files) {
+      const xml = await text(src.fs, f); if (!xml || !xml.includes('<CubeBlocks')) continue;
+      for (const d of parseBlockDefs(xml)) {
+        sum.defs++;
+        if (d.typeId !== 'CubeBlock' || !d.public) continue;
+        if (!re.test(d.subtype + ' ' + d.displayName + ' ' + blockName(d, texts))) { sum.filteredOut++; continue; }
+        sum.matched++;
+        if (d.size.some(v => v !== 1)) { sum.multiCell++; continue; }
+        if (d.topology) {
+          const s = byTopology.get(d.topology);
+          if (s) { addBlock(s, d, src); sum.topology++; n++; } else sum.noShape++;
+          continue;
+        }
+        if (!d.model) { sum.noShape++; continue; }
+        const mp = d.model.split('\\').join('/');
+        let buf = await src.fs.read((src.root ? src.root + '/' : '') + mp);
+        if (!buf && o.content) buf = await o.content.read(mp);
+        let tris;
+        try { if (!buf) throw new Error('missing'); tris = modelToCell(readMwm(buf).tris, d); } catch (e) { sum.unreadable++; continue; }
+        // blocks called panels or plates are plates even when their thin model happens to cover sample points
+        const shape = { plate: /panel|plate/i.test(d.subtype + ' ' + blockName(d, texts)), solids: [{ type: 'tris', tris }] };
+        shape._m = shapeMask(shape);
+        if (!maskCount(shape._m.mask)) { sum.noShape++; continue; }
+        const sig = shapeKeySig(shape._m.mask);
+        let s = bySig.get(sig);
+        if (!s) {
+          const name = blockName(d, texts);
+          s = Object.assign(shape, { id: 'mesh:' + src.name + ':' + d.subtype, key: makeKey(name, keys), name, source: src.name,
+            blocks: [], use: false, penalty: MOD_PENALTY, lines: [], rev: 1 });   // mod blocks start off: switch on the ones you build with
+          keys.add(s.key); library.push(s); bySig.set(sig, s); sum.newShapes++;
+        }
+        addBlock(s, d, src); sum.models++; n++;
+        if (n % 25 === 0) await pause();
+      }
+    }
+    log(`  ${src.name}: ${n} blocks`);
+    await pause();
+  }
+  return sum;
+}
+
+
+const el = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const tick = () => new Promise(r => setTimeout(r, 0));
+
+// ---------------------------------------------------------------- storage (IndexedDB; the library can be megabytes)
+const DB = (() => {
+  let p;
+  const open = () => p ||= new Promise((res, rej) => { const r = indexedDB.open('se-grid-builder', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('kv'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+  const run = async (mode, fn) => { const db = await open(); return new Promise((res, rej) => {
+    const t = db.transaction('kv', mode), req = fn(t.objectStore('kv')); t.oncomplete = () => res(req && req.result); t.onerror = () => rej(t.error); }); };
+  return { get: k => run('readonly', s => s.get(k)).catch(() => undefined), set: (k, v) => run('readwrite', s => s.put(v, k)), del: k => run('readwrite', s => s.delete(k)),
+    keys: () => run('readonly', s => s.getAllKeys()).catch(() => []) };
+})();
+
+// ---------------------------------------------------------------- library state
+let LIB = [];
+let libVersion = 0;                    // bumps whenever shapes or their use flags change (templates rebuild)
+const stripped = s => { const { _m, _s, ...rest } = s; return rest; };   // drop caches
+let saveTimer = null;
+function libChanged(shape) {
+  if (shape) { shape._m = null; shape._s = null; shape.rev = (shape.rev || 0) + 1; thumbCache.delete(shape.id); }
+  libVersion++;
+  el('saveState').textContent = 'saving…';
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    try { await DB.set('library', LIB.map(stripped)); el('saveState').textContent = 'saved in this browser'; }
+    catch (e) { el('saveState').textContent = 'could not save: ' + e.message; }
+  }, 400);
+}
+// one colour per kind of block (the key letters and edges tell shapes apart)
+const KIND_COLORS = { armour: new THREE.Color('#8fb8de'), plate: new THREE.Color('#d8b26a'), mod: new THREE.Color('#86c08f'), mine: new THREE.Color('#c39bd3') };
+const shapeKind = s => isPlate(s) ? 'plate' : s.id.startsWith('vanilla:') ? 'armour' : s.id.startsWith('mesh:') ? 'mod' : 'mine';
+const shapeColor = s => KIND_COLORS[shapeKind(s)];
+const shapeVolume = s => { if (!s._m) s._m = shapeMask(s); return maskCount(s._m.mask) / NS; };
+const isPlate = s => { if (!s.solids || !s.solids.length) return false; if (!s._m) s._m = shapeMask(s); return s._m.plate; };
+
+// old Block shape sketch drawings (shapeSketch:v1, keyed by topology) were drawn with Forward towards the viewer;
+// the game's +Z is the other way, so they turn 180 degrees about the vertical axis (x -> 1-x, z -> 1-z)
+function adoptOldSketches() {
+  let old = {};
+  try { old = JSON.parse(localStorage.getItem('shapeSketch:v1') || '{}'); } catch (e) { return; }
+  for (const [topo, r] of Object.entries(old)) {
+    const s = LIB.find(x => x.topology === topo);
+    if (s && (!s.lines || !s.lines.length) && r.lines && r.lines.length)
+      s.lines = r.lines.map(l => l.map(p => [1 - p[0], p[1], 1 - p[2]]));
+  }
+}
+
+// ---------------------------------------------------------------- geometry of a shape (cell space 0..1)
+function solidGeometry(sol) {
+  if (sol.type === 'planes') return new ConvexGeometry(sol.verts.map(v => new THREE.Vector3(v[0], v[1], v[2])));
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(Float32Array.from(sol.tris), 3));
+  g.computeVertexNormals(); return g;
+}
+function shapeGeometry(s) {
+  const parts = (s.solids || []).map(solidGeometry).map(g => { g.deleteAttribute('uv'); if (g.index) return g.toNonIndexed(); return g; });
+  if (!parts.length) return null;
+  parts.forEach(g => { if (!g.attributes.normal) g.computeVertexNormals(); });
+  return parts.length === 1 ? parts[0] : mergeGeometries(parts);
+}
+
+// ---------------------------------------------------------------- shared scene bits
+function makeView(container, opts = {}) {
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(window.devicePixelRatio);
+  container.appendChild(renderer.domElement);
+  const scene = new THREE.Scene(); scene.background = new THREE.Color('#16191d');
+  const camera = new THREE.PerspectiveCamera(opts.fov || 40, 1, 0.02, 1000);
+  camera.position.set(4, 3, 6);          // never sit on the orbit target (orbiting there does nothing)
+  const controls = new OrbitControls(camera, renderer.domElement);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.5));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.3); sun.position.set(5, 10, 7); scene.add(sun);
+  const v = { renderer, scene, camera, controls, container, active: false,
+    resize() { const w = container.clientWidth, h = container.clientHeight; if (!w || !h) return; renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix(); } };
+  // optional overlay scene drawn on top after a depth clear (the Grid Builder's model)
+  if (opts.overlay) { v.overlay = new THREE.Scene(); v.overlay.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.5));
+    const s2 = new THREE.DirectionalLight(0xffffff, 1.3); s2.position.set(5, 10, 7); v.overlay.add(s2); renderer.autoClear = false; }
+  renderer.setAnimationLoop(() => { if (!v.active) return; controls.update();
+    if (!v.overlay) { renderer.render(scene, camera); return; }
+    renderer.clear(); renderer.render(scene, camera); renderer.clearDepth(); renderer.render(v.overlay, camera); });
+  return v;
+}
+const cellOutline = () => { const l = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)), new THREE.LineBasicMaterial({ color: 0x7a8794 })); l.position.set(.5, .5, .5); return l; };
+const forwardArrow = () => new THREE.ArrowHelper(new THREE.Vector3(0, 0, -1), new THREE.Vector3(.5, 0, -0.05), 0.6, 0xe8a33d, 0.18, 0.12);
+
+// ---------------------------------------------------------------- thumbnails
+const thumbCache = new Map();
+const thumb = (() => {
+  let r = null, scene, cam, holder;
+  return s => {
+    const key = s.id;
+    if (thumbCache.has(key)) return thumbCache.get(key);
+    if (!r) {
+      r = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true }); r.setSize(200, 200); r.setPixelRatio(1);
+      scene = new THREE.Scene(); scene.background = new THREE.Color('#101316');
+      scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.4));
+      const sun = new THREE.DirectionalLight(0xffffff, 1.4); sun.position.set(3, 5, 4); scene.add(sun);
+      cam = new THREE.PerspectiveCamera(30, 1, 0.1, 50); cam.position.set(2.4, 2.0, 2.6); cam.lookAt(.5, .45, .5);
+      const o = cellOutline(); o.material.color.set(0x55606c); scene.add(o, forwardArrow());
+      holder = new THREE.Group(); scene.add(holder);
+    }
+    holder.clear();
+    const g = shapeGeometry(s);
+    if (g) {
+      holder.add(new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color: shapeColor(s), flatShading: true, side: THREE.DoubleSide })));
+      holder.add(new THREE.LineSegments(new THREE.EdgesGeometry(g, 20), new THREE.LineBasicMaterial({ color: 0x0d1013 })));
+    }
+    r.render(scene, cam);
+    const url = r.domElement.toDataURL('image/png');
+    holder.children.forEach(c => c.geometry.dispose());
+    thumbCache.set(key, url);
+    return url;
+  };
+})();
+
+// ================================================================ Cube Library tab
+const thumbObserver = new IntersectionObserver(entries => entries.forEach(e => {
+  if (!e.isIntersecting) return;
+  const img = e.target, s = LIB.find(x => x.id === img.dataset.id);
+  if (s) img.src = thumb(s);
+  thumbObserver.unobserve(img);
+}), { root: el('libScroll'), rootMargin: '300px' });
+
+function shownShapes() {
+  const q = el('libSearch').value.trim().toLowerCase(), show = el('libShow').value, src = el('libSource').value;
+  return LIB.filter(s => (show === 'all' || (show === 'on') === !!s.use) && (!src || s.source === src) &&
+    (!q || [s.name, s.key, s.source, ...(s.blocks || []).flatMap(b => [b.subtype, b.name || '', b.mod || ''])].join(' ').toLowerCase().includes(q)));
+}
+function renderLibrary() {
+  const sources = [...new Set(LIB.map(s => s.source))];
+  const cur = el('libSource').value;
+  el('libSource').innerHTML = '<option value="">All sources</option>' + sources.map(s => `<option ${s === cur ? 'selected' : ''}>${esc(s)}</option>`).join('');
+  const list = shownShapes(), grid = el('libGrid');
+  el('libCount').textContent = `${list.length} of ${LIB.length} blocks, ${LIB.filter(s => s.use).length} used in builder`;
+  grid.innerHTML = '';
+  const frag = document.createDocumentFragment();
+  for (const s of list) {
+    const c = document.createElement('div'); c.className = 'card' + (s.use ? '' : ' off'); c.dataset.id = s.id;
+    const blocks = s.blocks || [], vol = s.solids && s.solids.length ? Math.round(shapeVolume(s) * 100) : null;
+    const bl = blocks.length ? blocks.slice(0, 2).map(b => b.name || b.subtype).join(', ') + (blocks.length > 2 ? ` +${blocks.length - 2}` : '') : 'no game blocks linked';
+    c.innerHTML = `${thumbCache.has(s.id) ? `<img src="${thumbCache.get(s.id)}">` : `<img data-id="${esc(s.id)}" alt="">`}
+      <div class="t"><span class="k" style="background:${shapeColor(s).getStyle()}">${esc(s.key)}</span>${esc(s.name)}</div>
+      <div class="m">${esc(s.source)}${vol === null ? '<span class="tag">no shape yet</span>' : isPlate(s) ? '<span class="tag">plate</span>' : ` &middot; fills ${vol}%`}</div>
+      <div class="m" title="${esc(blocks.map(b => `${b.name || b.subtype} (${b.size || '?'}${b.mod ? ', ' + b.mod : ''})`).join('\n'))}">${esc(bl)}</div>
+      <label><input type="checkbox" ${s.use ? 'checked' : ''}> use in builder</label>`;
+    const img = c.querySelector('img[data-id]'); if (img) thumbObserver.observe(img);
+    const cb = c.querySelector('input');
+    cb.addEventListener('click', e => e.stopPropagation());
+    c.querySelector('label').addEventListener('click', e => e.stopPropagation());
+    cb.addEventListener('change', () => { s.use = cb.checked; c.classList.toggle('off', !s.use); libChanged(); updateLibCount(); });
+    c.addEventListener('click', () => openSketch(s.id));
+    frag.appendChild(c);
+  }
+  grid.appendChild(frag);
+}
+function updateLibCount() { el('libCount').textContent = `${shownShapes().length} of ${LIB.length} blocks, ${LIB.filter(s => s.use).length} used in builder`; }
+['libSearch', 'libShow', 'libSource'].forEach(id => el(id).addEventListener('input', renderLibrary));
+el('libAllOn').addEventListener('click', () => { shownShapes().forEach(s => s.use = true); libChanged(); renderLibrary(); });
+el('libAllOff').addEventListener('click', () => { shownShapes().forEach(s => s.use = false); libChanged(); renderLibrary(); });
+el('libAdd').addEventListener('click', () => {
+  const name = prompt('Name of the new block:', 'New block'); if (!name) return;
+  const s = { id: 'user:' + Date.now().toString(36), key: makeKey(name, new Set(LIB.map(x => x.key))), name, source: 'My blocks', blocks: [],
+    use: true, penalty: 0.11, solids: [], lines: [], rev: 1, user: true };
+  LIB.push(s); libChanged(); renderLibrary(); openSketch(s.id);
+});
+el('libExport').addEventListener('click', () => {
+  const data = { format: 'se-grid-builder-library', version: 1, shapes: LIB.map(s => {
+    const o = stripped(s);
+    o.solids = (s.solids || []).map(sol => sol.type === 'tris' ? { type: 'tris', tris: Array.from(sol.tris, v => Math.round(v * 1e4) / 1e4) } : sol);
+    return o; }) };
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(data)], { type: 'application/json' }));
+  a.download = 'cube-library.json'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+});
+// ---------------------------------------------------------------- sessions: everything needed to see the same grid elsewhere
+const VIEW_SETTINGS = ['layerMode', 'opacity', 'cellOpacity', 'cellMode'];
+const toB64 = buf => { const u = new Uint8Array(buf); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
+const fromB64 = b => { const s = atob(b), u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u.buffer; };
+el('sessSave').addEventListener('click', async () => {
+  const m = await DB.get('model');
+  if (!m || !m.buf) { alert('Load a model first.'); return; }
+  const settings = {}; [...SETTINGS, ...VIEW_SETTINGS].forEach(id => settings[id] = el(id).value);
+  settings.layer = el('layer').value; settings.showModel = el('showModel').checked; settings.showCells = el('showCells').checked; settings.showGrid = el('showGrid').checked;
+  const edits = {};
+  for (const k of await DB.keys()) if (typeof k === 'string' && k.startsWith('ov:' + m.name + '|')) edits[k] = await DB.get(k);
+  const data = { format: 'se-grid-builder-session', version: 1, saved: new Date().toISOString(),
+    model: { name: m.name, data: toB64(m.buf) }, settings, groupsOn: [...groupOn], edits,
+    library: LIB.map(s => { const o = stripped(s);
+      o.solids = (s.solids || []).map(sol => sol.type === 'tris' ? { type: 'tris', tris: Array.from(sol.tris, v => Math.round(v * 1e4) / 1e4) } : sol); return o; }) };
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(data)], { type: 'application/json' }));
+  a.download = m.name.replace(/\.[^.]+$/, '').replace(/[^\w-]+/g, '_') + '-session.json'; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+});
+el('sessOpen').addEventListener('click', () => el('sessFile').click());
+el('sessFile').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  let d;
+  try { d = JSON.parse(await f.text()); if (d.format !== 'se-grid-builder-session') throw new Error('not an SE Grid Builder session'); }
+  catch (err) { alert('Could not open: ' + err.message); return; }
+  if (!confirm(`Open the session for ${d.model.name}? This replaces this browser's block library, model and settings (export the library first if you want to keep it).`)) return;
+  LIB = d.library.map(s => ({ ...s, solids: (s.solids || []).map(sol => sol.type === 'tris' ? { type: 'tris', tris: Float32Array.from(sol.tris) } : sol) }));
+  thumbCache.clear(); libChanged(); renderLibrary(); refreshSketchList();
+  for (const [k, v] of Object.entries(d.edits || {})) await DB.set(k, v);
+  Object.entries(d.settings || {}).forEach(([id, v]) => { const x = el(id); if (!x) return; if (x.type === 'checkbox') x.checked = !!v; else x.value = v; });
+  saveBuilderSettings(); applyDrawOrder();
+  const buf = fromB64(d.model.data);
+  await DB.set('model', { name: d.model.name, buf }).catch(() => {});
+  B.pendingGroups = d.groupsOn || null; B.ovKey = '';   // reload the edits for these settings
+  showTab('bPage');
+  await setModel(d.model.name, buf, true);
+  applyModelVisibility(); drawCells();
+});
+el('libImportJson').addEventListener('click', () => el('libJsonFile').click());
+el('libJsonFile').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  try {
+    const d = JSON.parse(await f.text());
+    if (d.format !== 'se-grid-builder-library' || !Array.isArray(d.shapes)) throw new Error('not a Cube Library export');
+    const replace = confirm(`${d.shapes.length} blocks in the file.\n\nOK: replace the library with them.\nCancel: merge them in (new cards are added; cards you already have keep their shape and settings and gain any new game blocks).`);
+    const incoming = d.shapes.map(s => ({ ...s, solids: (s.solids || []).map(sol => sol.type === 'tris' ? { type: 'tris', tris: Float32Array.from(sol.tris) } : sol) }));
+    if (replace) LIB = incoming;
+    else incoming.forEach(s => { const cur = LIB.find(x => x.id === s.id);
+      if (!cur) { LIB.push(s); return; }
+      cur.blocks ||= []; (s.blocks || []).forEach(b => { if (!cur.blocks.some(c => c.subtype === b.subtype && c.size === b.size)) cur.blocks.push(b); }); });
+    thumbCache.clear(); libChanged(); renderLibrary(); refreshSketchList();
+  } catch (err) { alert('Could not import: ' + err.message); }
+});
+el('libReset').addEventListener('click', () => {
+  if (!confirm('Reset the library to the 33 vanilla armour shapes and 18 vanilla armour panels? Imported and added blocks are removed (export first to keep them).')) return;
+  LIB = seedLibrary(); adoptOldSketches(); thumbCache.clear(); libChanged(); renderLibrary(); refreshSketchList();
+});
+
+// ---------------------------------------------------------------- import from a world
+const DIRS = {};                       // key -> folder object { name, read, list }
+async function dirChild(dir, name) {
+  try { return await dir.getDirectoryHandle(name); } catch (e) {}
+  try { return await dir.getFileHandle(name); } catch (e) {}
+  const low = name.toLowerCase();
+  for await (const [n, h] of dir.entries()) if (n.toLowerCase() === low) return h;
+  return null;
+}
+function handleFS(root) {
+  const walk = async p => { let h = root; for (const part of p.split('/').filter(Boolean)) { if (h.kind !== 'directory') return null; h = await dirChild(h, part); if (!h) return null; } return h; };
+  return { name: root.name,
+    async read(p) { const h = await walk(p); if (!h || h.kind !== 'file') return null; return (await h.getFile()).arrayBuffer(); },
+    async list(p) { const h = await walk(p); if (!h || h.kind !== 'directory') return []; const out = []; for await (const [n, c] of h.entries()) out.push({ name: n, kind: c.kind }); return out; } };
+}
+function filesFS(files) {             // fallback: a folder chosen with <input webkitdirectory>
+  const map = new Map(); let name = '';
+  for (const f of files) { const parts = f.webkitRelativePath.split('/'); name = parts[0]; map.set(parts.slice(1).join('/').toLowerCase(), f); }
+  return { name,
+    async read(p) { const f = map.get(p.split('/').filter(Boolean).join('/').toLowerCase()); return f ? f.arrayBuffer() : null; },
+    async list(p) { const pre = p.split('/').filter(Boolean).join('/').toLowerCase(), plen = pre ? pre.length + 1 : 0, seen = new Map();
+      for (const [k, f] of map) { if (pre && !k.startsWith(pre + '/')) continue; const rest = k.slice(plen).split('/');
+        if (!seen.has(rest[0])) seen.set(rest[0], rest.length > 1 ? 'directory' : 'file'); }
+      return [...seen].map(([n, kind]) => ({ name: n, kind })); } };
+}
+// let people pick a parent folder: look for the expected thing a few levels down
+async function settle(key, fs) {
+  if (key === 'world') return (await fs.read('Sandbox.sbc')) ? fs : null;
+  if (key === 'content') { for (const pre of ['', 'Content', 'SpaceEngineers/Content']) if ((await fs.list(pre + (pre ? '/' : '') + 'Data')).length) return sub(fs, pre); return null; }
+  if (key === 'workshop') { for (const pre of ['', '244850', 'content/244850', 'workshop/content/244850', 'steamapps/workshop/content/244850'])
+    if ((await fs.list(pre)).some(e => /^\d{6,}$/.test(e.name))) return sub(fs, pre); return null; }
+  return fs;
+  function sub(f, pre) { if (!pre) return f; return { name: f.name + '/' + pre, read: p => f.read(pre + '/' + p), list: p => f.list(pre + (p ? '/' + p : '')) }; }
+}
+function showDir(key) { const s = document.querySelector(`[data-dirlabel="${key}"]`); s.textContent = DIRS[key] ? DIRS[key].name : (key === 'content' || key === 'localMods' ? 'optional' : 'not set'); s.classList.toggle('set', !!DIRS[key]); }
+let fallbackKey = null;
+document.querySelectorAll('[data-dir]').forEach(btn => btn.addEventListener('click', async () => {
+  const key = btn.dataset.dir;
+  if (window.showDirectoryPicker) {
+    let h; try { h = await window.showDirectoryPicker({ id: 'sgb-' + key, mode: 'read' }); } catch (e) { return; }
+    const fs = await settle(key, handleFS(h));
+    if (!fs) { alert(key === 'world' ? 'No Sandbox.sbc in that folder. Pick the world\'s own folder.' : key === 'workshop' ? 'No Workshop mods found there. Pick ...\\steamapps\\workshop\\content\\244850.' : 'No Data folder found there. Pick ...\\SpaceEngineers\\Content.'); return; }
+    DIRS[key] = fs; DB.set('dir:' + key, h).catch(() => {}); showDir(key);
+  } else { fallbackKey = key; el('dirFallback').click(); }
+}));
+el('dirFallback').addEventListener('change', async e => {
+  const files = [...e.target.files]; e.target.value = ''; if (!files.length || !fallbackKey) return;
+  const fs = await settle(fallbackKey, filesFS(files));
+  if (!fs) { alert('That folder does not look right; see the hint under the button.'); return; }
+  DIRS[fallbackKey] = fs; showDir(fallbackKey);
+});
+async function restoreDirs() {     // folders remembered from last time (permission is asked again on Import)
+  for (const key of ['world', 'workshop', 'content', 'localMods']) {
+    const h = await DB.get('dir:' + key); if (!h) continue;
+    DIRS[key] = { pending: h, name: h.name + ' (remembered)' }; showDir(key);
+  }
+}
+async function grantDirs() {
+  for (const key of Object.keys(DIRS)) {
+    const d = DIRS[key]; if (!d.pending) continue;
+    let ok = false;
+    try { ok = (await d.pending.queryPermission({ mode: 'read' })) === 'granted' || (await d.pending.requestPermission({ mode: 'read' })) === 'granted'; } catch (e) {}
+    if (ok) { DIRS[key] = await settle(key, handleFS(d.pending)); showDir(key); }
+  }
+}
+el('libImportToggle').addEventListener('click', () => el('importBox').classList.toggle('on'));
+if (!window.showDirectoryPicker) el('fsNote').style.display = 'block';
+el('impClose').addEventListener('click', () => el('importBox').classList.remove('on'));
+el('impFilter').value = DEFAULT_FILTER;
+el('impRun').addEventListener('click', async () => {
+  await grantDirs();
+  const log = m => { el('importLog').textContent += m + '\n'; el('importLog').scrollTop = 1e9; };
+  el('importLog').textContent = '';
+  if (!DIRS.world || !DIRS.workshop) { log('Set the world save folder and the Workshop mods folder first.'); return; }
+  const waiting = Object.keys(DIRS).filter(k => DIRS[k] && DIRS[k].pending);
+  if (waiting.length) { log('The browser still needs your OK to read: ' + waiting.join(', ') + '. Click Import blocks again (or pick the folders again).'); return; }
+  try { new RegExp(el('impFilter').value); } catch (e) { log('The name filter is not a valid regular expression.'); return; }
+  el('impRun').disabled = true;
+  const before = LIB.length, t0 = performance.now();
+  try {
+    const sum = await importWorldBlocks(LIB, { world: DIRS.world, workshop: DIRS.workshop, content: DIRS.content, localMods: DIRS.localMods,
+      filter: el('impFilter').value, includeVanilla: el('impVanilla').checked, log, yieldNow: tick });
+    LIB.slice(before).forEach(s => s.rev = 1);
+    log(`\nDone in ${((performance.now() - t0) / 1000).toFixed(1)} s. ${sum.matched} matching blocks: ${sum.topology} armour joined the vanilla shapes, ` +
+      `${sum.models} read from models (${sum.newShapes} new cards, switched off: turn on the ones you build with). Skipped: ${sum.multiCell} larger than one cell, ${sum.unreadable} with unreadable models, ` +
+      `${sum.noShape} without a usable shape.`);
+    LIB.forEach(s => thumbCache.delete(s.id));
+    libChanged(); renderLibrary(); refreshSketchList();
+  } catch (e) { log('Import failed: ' + e.message); }
+  el('impRun').disabled = false;
+});
+
+// ================================================================ Sketch tab
+const SK = { view: null, shapeId: null, lines: [], pick: null };
+function sketchShape() { return LIB.find(s => s.id === SK.shapeId); }
+function refreshSketchList() {
+  const sel = el('skShape'), cur = SK.shapeId;
+  sel.innerHTML = LIB.map(s => `<option value="${esc(s.id)}">${esc(s.key)} - ${esc(s.name)}</option>`).join('');
+  if (cur && LIB.some(s => s.id === cur)) sel.value = cur; else { SK.shapeId = LIB[0] && LIB[0].id; sel.value = SK.shapeId || ''; }
+  if (SK.view) loadSketch();
+}
+function initSketchView() {
+  const v = SK.view = makeView(el('skView'), { fov: 35 });
+  v.camera.position.set(2.3, 1.9, 2.6); v.controls.target.set(.5, .45, .5);
+  v.scene.add(cellOutline(), forwardArrow());
+  v.ghost = new THREE.Group(); v.linesG = new THREE.Group(); v.points = new THREE.Group();
+  v.scene.add(v.ghost, v.linesG, v.points);
+  buildSketchPoints();
+  const ray = new THREE.Raycaster(), mouse = new THREE.Vector2(); let downAt = null;
+  v.renderer.domElement.addEventListener('pointerdown', e => { downAt = [e.clientX, e.clientY]; });
+  v.renderer.domElement.addEventListener('pointerup', e => {
+    if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 4 || e.button !== 0) return;
+    const r = v.renderer.domElement.getBoundingClientRect();
+    mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+    ray.setFromCamera(mouse, v.camera);
+    const hit = ray.intersectObjects(v.points.children)[0]; if (!hit) return;
+    const m = hit.object;
+    if (!SK.pick) { SK.pick = m; m.material = ptSel; el('skStatus').textContent = 'Now click the other end.'; return; }
+    if (SK.pick !== m) { SK.lines.push([SK.pick.userData.p, m.userData.p]); drawSketchLines(); markSketchDirty(); }
+    SK.pick.material = ptMat; SK.pick = null; el('skStatus').textContent = 'Click a point to start a line.';
+  });
+}
+const ptGeo = new THREE.SphereGeometry(0.025, 12, 8), ptMat = new THREE.MeshBasicMaterial({ color: 0xcfd6de }), ptSel = new THREE.MeshBasicMaterial({ color: 0xe8a33d });
+function buildSketchPoints() {
+  const v = SK.view; v.points.clear(); SK.pick = null;
+  const corners = [[0,0,0],[1,0,0],[0,1,0],[1,1,0],[0,0,1],[1,0,1],[0,1,1],[1,1,1]], edges = [];
+  corners.forEach((a, i) => corners.forEach((b, j) => { if (j > i && a.reduce((s, x, k) => s + Math.abs(x - b[k]), 0) === 1) edges.push([a, b]); }));
+  const n = el('skQuarters').checked ? 4 : 2, seen = new Set();
+  const add = p => { const k = p.join(','); if (seen.has(k)) return; seen.add(k); const m = new THREE.Mesh(ptGeo, ptMat); m.position.set(...p); m.userData.p = p; v.points.add(m); };
+  edges.forEach(([a, b]) => { for (let k = 0; k <= n; k++) add(a.map((x, i) => x + (b[i] - x) * k / n)); });
+  [[.5,.5,0],[.5,.5,1],[.5,0,.5],[.5,1,.5],[0,.5,.5],[1,.5,.5]].forEach(add);
+  // points the current lines use that aren't on the grid (e.g. from an imported shape) stay clickable
+  SK.lines.forEach(l => l.forEach(p => add(p)));
+}
+function drawSketchGhost() {
+  const v = SK.view, s = sketchShape(); v.ghost.clear();
+  if (!s || !el('skGhost').checked) return;
+  const g = shapeGeometry(s); if (!g) return;
+  v.ghost.add(new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color: 0xd8b26a, transparent: true, opacity: 0.2, depthWrite: false, side: THREE.DoubleSide })));
+  v.ghost.add(new THREE.LineSegments(new THREE.EdgesGeometry(g, 20), new THREE.LineBasicMaterial({ color: 0xd8b26a, transparent: true, opacity: 0.4 })));
+}
+function drawSketchLines() {
+  const v = SK.view; v.linesG.clear();
+  const pts = []; SK.lines.forEach(([a, b]) => pts.push(...a, ...b));
+  if (pts.length) { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    v.linesG.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0x4fc3f7 }))); }
+}
+let sketchDirty = false;
+function markSketchDirty() { sketchDirty = true; el('skResult').textContent = 'Lines changed; Save to update the library.'; el('skResult').className = 'hint'; }
+function loadSketch() {
+  const s = sketchShape(); if (!s) return;
+  SK.lines = (s.lines || []).map(l => l.map(p => [...p])); sketchDirty = false;
+  el('skShape').value = s.id; el('skName').value = s.name; el('skKey').value = s.key; el('skUse').checked = !!s.use;
+  const blocks = s.blocks || [];
+  el('skMeta').innerHTML = `${esc(s.source)}${blocks.length ? ' &middot; ' + blocks.length + ' game block' + (blocks.length > 1 ? 's' : '') + ': ' + esc(blocks.slice(0, 4).map(b => b.name || b.subtype).join(', ')) + (blocks.length > 4 ? '…' : '') : ''}`;
+  el('skFromShape').disabled = !(s.solids || []).some(x => x.type === 'planes');
+  el('skDelete').disabled = !(s.user || s.id.startsWith('mesh:'));
+  el('skResult').textContent = '';
+  buildSketchPoints(); drawSketchGhost(); drawSketchLines();
+}
+function openSketch(id) { SK.shapeId = id; showTab('skPage'); refreshSketchList(); }
+el('skShape').addEventListener('change', () => {
+  if (sketchDirty && !confirm('Discard the unsaved lines?')) { el('skShape').value = SK.shapeId; return; }
+  SK.shapeId = el('skShape').value; loadSketch();
+});
+el('skGhost').addEventListener('change', drawSketchGhost);
+el('skQuarters').addEventListener('change', buildSketchPoints);
+el('skUndo').addEventListener('click', () => { SK.lines.pop(); drawSketchLines(); markSketchDirty(); });
+el('skClear').addEventListener('click', () => { if (SK.lines.length && confirm('Clear all lines?')) { SK.lines = []; drawSketchLines(); markSketchDirty(); } });
+el('skFromShape').addEventListener('click', () => {
+  const s = sketchShape(); if (!s) return;
+  if (SK.lines.length && !confirm('Replace the current lines with the saved shape\'s edges?')) return;
+  SK.lines = s.solids.flatMap(solidEdges); buildSketchPoints(); drawSketchLines(); markSketchDirty();
+});
+el('skName').addEventListener('change', () => { const s = sketchShape(); if (!s) return; s.name = el('skName').value.trim() || s.name; libChanged(); refreshSketchList(); renderLibrary(); });
+el('skKey').addEventListener('change', () => { const s = sketchShape(); if (!s) return;
+  const k = el('skKey').value.trim().toUpperCase().slice(0, 4);
+  if (!k || LIB.some(x => x !== s && x.key === k)) { alert('Keys must be unique and not empty.'); el('skKey').value = s.key; return; }
+  s.key = k; libChanged(); refreshSketchList(); renderLibrary(); });
+el('skUse').addEventListener('change', () => { const s = sketchShape(); if (!s) return; s.use = el('skUse').checked; libChanged(); renderLibrary(); });
+el('skSave').addEventListener('click', () => {
+  const s = sketchShape(); if (!s) return;
+  const r = sketchToShape(SK.lines);
+  if (!r.solids) { el('skResult').textContent = 'Not saved: ' + r.reason + '.'; el('skResult').className = 'warn'; return; }
+  if (s.blocks && s.blocks.length && s.source !== 'My blocks' && !confirm(`This replaces the shape of ${s.blocks.length} game block(s) (${s.source}). Continue?`)) return;
+  s.solids = r.solids; s.lines = SK.lines.map(l => l.map(p => [...p])); sketchDirty = false;
+  libChanged(s);
+  const vol = Math.round(shapeVolume(s) * 100);
+  el('skResult').textContent = r.ok ? `Saved (${r.reason}, fills ${vol}% of the cell${isPlate(s) ? ', plate' : ''}).` : 'Saved, with a warning: ' + r.reason;
+  el('skResult').className = r.ok ? 'okc' : 'warn';
+  drawSketchGhost(); renderLibrary();
+});
+el('skDelete').addEventListener('click', () => {
+  const s = sketchShape(); if (!s || !confirm(`Delete "${s.name}" from the library?`)) return;
+  LIB = LIB.filter(x => x !== s); SK.shapeId = null; libChanged(); refreshSketchList(); renderLibrary();
+});
+
+// ================================================================ Grid Builder tab
+const B = { view: null, raw: null, model: null, parts: null, grid: null, T: null, Tver: -1, overrides: {}, ovKey: '', selected: null, modelName: '' };
+const GROUP_PRIORITY = ['turret', 'body', 'wheels', 'antennas'];
+const GROUP_COLORS = { body: '#e0606e', turret: '#d6a05a', wheels: '#8a8f96', antennas: '#b86464' };   // the model in a red no block uses (blocks: blue, tan, green)
+const colorOfGroup = g => GROUP_COLORS[g] || '#6f9a6f';
+let groupNames = [], groupOn = new Set(), modelMeshes = [];
+
+function initBuilderView() {
+  const v = B.view = makeView(el('bView'), { overlay: true });
+  v.modelGroup = new THREE.Group(); v.cellGroup = new THREE.Group(); v.gridGroup = new THREE.Group();
+  v.selGroup = new THREE.Group(); v.selGroup.renderOrder = 999; v.overlay.add(v.selGroup);   // selected cell: always on top
+  v.scene.add(v.gridGroup); applyDrawOrder();
+}
+function templates() {
+  if (B.Tver !== libVersion) { B.T = buildTemplates(LIB); B.Tver = libVersion; tplGeo.forEach(g => g && g.dispose()); tplEdges.forEach(g => g && g.dispose()); tplGeo.length = 0; tplEdges.length = 0; B.T.list.forEach(t => t.color = shapeColor(LIB[t.shape])); }
+  return B.T;
+}
+const tplGeo = [], tplEdges = [];
+const boxGeo = new THREE.BoxGeometry(1, 1, 1), boxEdges = new THREE.EdgesGeometry(boxGeo);
+// empty a group and free its GPU memory (every redraw builds new meshes; without this a long editing session piles up
+// thousands of buffers and the view starts to stutter). Cached block shapes stay.
+function disposeGroup(g) {
+  const keep = new Set([boxGeo, boxEdges, ...tplGeo, ...tplEdges]);
+  g.traverse(o => {
+    if (o.geometry && !keep.has(o.geometry)) o.geometry.dispose();
+    if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.dispose());
+    if (o.isInstancedMesh) o.dispose();
+  });
+  g.clear();
+}
+function tplGeometry(i) {
+  if (!tplGeo[i]) {
+    const t = B.T.list[i], g = shapeGeometry(LIB[t.shape]), R = ROTS[t.rot];
+    g.translate(-.5, -.5, -.5);
+    g.applyMatrix4(new THREE.Matrix4().set(R[0][0], R[0][1], R[0][2], 0, R[1][0], R[1][1], R[1][2], 0, R[2][0], R[2][1], R[2][2], 0, 0, 0, 0, 1));
+    tplGeo[i] = g; tplEdges[i] = new THREE.EdgesGeometry(g, 20);
+  }
+  return tplGeo[i];
+}
+
+async function loadModelFile(file) {
+  const buf = await file.arrayBuffer();
+  await DB.set('model', { name: file.name, buf }).catch(() => {});
+  setModel(file.name, buf, true);
+}
+function setModel(name, buf, fresh) {
+  let done = Promise.resolve();
+  try {
+    const raw = /\.stl$/i.test(name) ? parseStl(buf) : parseObj(new TextDecoder().decode(buf));
+    if (!raw.length) throw new Error('no triangles found');
+    B.raw = raw; B.modelName = name;
+    el('bModelName').textContent = `${name}: ${raw.length} part${raw.length > 1 ? 's' : ''}, ${raw.reduce((n, p) => n + p.tris.length / 9, 0)} triangles`;
+    el('bEmpty').style.display = 'none';
+    done = prepare(fresh);
+  } catch (e) { el('bModelName').innerHTML = `<span class="warn">Could not read ${esc(name)}: ${esc(e.message)}</span>`; }
+  return done;
+}
+async function prepare(frame) {
+  if (!B.raw) return;
+  let prep;
+  try { prep = prepareModel(B.raw, { up: el('bUp').value, front: el('bFront').value, length: parseFloat(el('bLength').value) || 1 }); }
+  catch (e) { el('bModelName').innerHTML = `<span class="warn">${esc(e.message)}</span>`; return; }
+  const rules = el('bGroups').value;
+  B.parts = prep.parts.map(p => ({ ...p, group: groupOf(p.name, rules) }));
+  groupNames = [...new Set(B.parts.map(p => p.group))].sort((a, b) => ((GROUP_PRIORITY.indexOf(a) + 99) % 99) - ((GROUP_PRIORITY.indexOf(b) + 99) % 99));
+  groupOn = B.pendingGroups ? new Set(B.pendingGroups.filter(g => groupNames.includes(g)))
+    : new Set(groupNames.filter(g => g !== 'antennas' && g !== 'wheels'));   // wheels: built from suspension blocks
+  B.pendingGroups = null;
+  el('groups').innerHTML = '';
+  groupNames.forEach(g => {
+    const l = document.createElement('label');
+    l.innerHTML = `<input type="checkbox" ${groupOn.has(g) ? 'checked' : ''}> <span class="sw" style="background:${colorOfGroup(g)}"></span> model: ${esc(g)}`;
+    l.querySelector('input').addEventListener('change', e => { e.target.checked ? groupOn.add(g) : groupOn.delete(g); rebuild(); });
+    el('groups').appendChild(l);
+  });
+  const v = B.view; disposeGroup(v.modelGroup); modelMeshes = [];
+  groupNames.forEach(g => {
+    const list = B.parts.filter(p => p.group === g), total = list.reduce((n, p) => n + p.tris.length, 0), arr = new Float32Array(total); let o = 0;
+    list.forEach(p => { arr.set(p.tris, o); o += p.tris.length; });
+    const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(arr, 3)); geo.computeVertexNormals();
+    // the model is an overlay drawn over the finished block view (see makeView): a depth-only pass, then colour on its
+    // nearest surface only, so the opacity slider fades it over the blocks without showing its own back faces
+    const depth = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ colorWrite: false, side: THREE.DoubleSide })); depth.renderOrder = 1;
+    const mat = new THREE.MeshLambertMaterial({ color: colorOfGroup(g), transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false, depthFunc: THREE.LessEqualDepth });
+    const color = new THREE.Mesh(geo, mat); color.renderOrder = 2;
+    modelMeshes.push({ g, depth, color, mat }); v.modelGroup.add(depth, color);
+  });
+  saveBuilderSettings();
+  await rebuild();
+  if (frame && B.grid) frameModel();
+}
+function frameModel() {
+  const g = B.grid, v = B.view, c = new THREE.Vector3(g.ox + g.nx * g.b / 2, g.oy + g.ny * g.b / 2, 0);
+  v.controls.target.copy(c); v.camera.position.set(c.x - g.nx * g.b * 0.9, c.y + g.ny * g.b * 1.4, c.z + g.nz * g.b * 2.2);
+}
+function opts() {
+  return { scale: (parseFloat(el('scale').value) || 100) / 100, block: parseFloat(el('block').value), offX: parseFloat(el('offX').value) || 0,
+    offY: parseFloat(el('offY').value) || 0, centre: el('centre').value, fill: el('fill').value, minFill: parseFloat(el('minFill').value) || 0,
+    penaltyScale: isNaN(parseFloat(el('simplify').value)) ? 4 : parseFloat(el('simplify').value),
+    groupsOn: groupOn, groupNames, groupPriority: GROUP_PRIORITY, shapes: LIB, T: templates() };
+}
+// manual edits: cell "x,y,z" -> template signature (stable when the library changes), or 'none'; per model + grid settings
+const gridSig = () => { const o = opts(); return [B.modelName, el('bLength').value, el('bFront').value, el('bUp').value, o.scale, o.block, o.centre, o.offX, o.offY].join('|'); };
+async function loadOverrides() { B.ovKey = gridSig(); B.overrides = (await DB.get('ov:' + B.ovKey)) || {}; }
+const saveOverrides = () => DB.set('ov:' + B.ovKey, B.overrides).catch(() => {});
+function effFit(x, y, z) {             // >= 0 template, -2 no block passes, -1 empty, -3 forced no block
+  const k = x + ',' + y + ',' + z;
+  if (k in B.overrides) { const v = B.overrides[k]; if (v === 'none') return -3; const ti = B.T.bySig.get(v); if (ti !== undefined) return ti; }
+  return B.grid.fit[B.grid.idx(x, y, z)];
+}
+let rebuildToken = 0;
+async function rebuild() {
+  if (!B.parts) return;
+  const token = ++rebuildToken;
+  el('info').textContent = 'Fitting…'; await tick(); if (token !== rebuildToken) return;
+  const t0 = performance.now();
+  B.grid = computeGrid(B.parts, opts());
+  B.fitMs = performance.now() - t0;
+  if (gridSig() !== B.ovKey) { await loadOverrides(); B.selected = null; }
+  showSel(); applyModelVisibility(); updateInfo(); drawCells();
+}
+function drawCells() {
+  const v = B.view; disposeGroup(v.cellGroup); disposeGroup(v.gridGroup); disposeGroup(v.selGroup);
+  const g = B.grid; if (!g) { drawMap(); return; }
+  const { nx, ny, nz, b, ox, oy, oz, cell, idx } = g, T = B.T;
+  const L = parseInt(el('layer').value) - 1, mode = el('layerMode').value;
+  const shown = y => mode === 'all' || (mode === 'upto' ? y <= L : y === L);
+  if (el('showCells').checked) {
+    const op = parseFloat(el('cellOpacity').value), shapes = el('cellMode').value === 'shapes', byGeo = new Map(), edges = [];
+    for (let y = 0; y < ny; y++) { if (!shown(y)) continue;
+      for (let z = 0; z < nz; z++) for (let x = 0; x < nx; x++) {
+        const ci = idx(x, y, z), cv = cell[ci], f = effFit(x, y, z);
+        if (f === -3 || (!cv && f < 0)) continue;
+        const c = [ox + (x + .5) * b, oy + (y + .5) * b, oz + (z + .5) * b];
+        if (shapes && f === -2) { edges.push({ geo: boxEdges, c, s: b * 0.9, faint: true }); continue; }
+        if (!shapes && !cv) continue;
+        const key = shapes ? f : 'cube';
+        if (!byGeo.has(key)) byGeo.set(key, []);
+        byGeo.get(key).push({ c, v: cv || 1 });
+      } }
+    const m = new THREE.Matrix4(), col = new THREE.Color();
+    byGeo.forEach((list, key) => {
+      const geo = key === 'cube' ? boxGeo : tplGeometry(key);
+      const inst = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: op < 1, opacity: op, flatShading: true, side: THREE.DoubleSide }), list.length);
+      list.forEach((it, n) => {
+        const sz = key === 'cube' ? b * 0.94 : b * 0.98;
+        m.makeScale(sz, sz, sz); m.setPosition(it.c[0], it.c[1], it.c[2]); inst.setMatrixAt(n, m);
+        if (key === 'cube') { col.set(colorOfGroup(groupNames[Math.abs(it.v) - 1])); if (it.v < 0) col.lerp(new THREE.Color('#ffffff'), 0.4); }
+        else col.copy(T.list[key].color);
+        inst.setColorAt(n, col);
+        edges.push({ geo: key === 'cube' ? boxEdges : tplEdges[key], c: it.c, s: sz });
+      });
+      v.cellGroup.add(inst);
+    });
+    const pts = [], faint = [];
+    edges.forEach(e => { const pa = e.geo.attributes.position, tgt = e.faint ? faint : pts;
+      for (let k = 0; k < pa.count; k++) tgt.push(e.c[0] + pa.getX(k) * e.s, e.c[1] + pa.getY(k) * e.s, e.c[2] + pa.getZ(k) * e.s); });
+    [[pts, 0x0d1013, 0.9], [faint, 0x8a96a3, 0.35]].forEach(([arr, c, o]) => { if (!arr.length) return;
+      const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.Float32BufferAttribute(arr, 3));
+      const ls = new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: c, transparent: true, opacity: o })); ls.renderOrder = 3; v.cellGroup.add(ls); });
+  }
+  if (B.selected) {
+    // selected cell: a see-through orange box plus a bright outline, drawn over everything (lines are 1 px in WebGL, so
+    // the outline is repeated slightly larger to read as a thick line)
+    const [sx, sy, sz] = B.selected, c = new THREE.Vector3(ox + (sx + .5) * b, oy + (sy + .5) * b, oz + (sz + .5) * b);
+    const fill = new THREE.Mesh(boxGeo, new THREE.MeshBasicMaterial({ color: 0xff8c1a, transparent: true, opacity: 0.22, depthTest: false, depthWrite: false }));
+    fill.position.copy(c); fill.scale.setScalar(b * 1.01); fill.renderOrder = 999; v.selGroup.add(fill);
+    for (const k of [1.02, 1.035, 1.05]) {
+      const e = new THREE.LineSegments(boxEdges, new THREE.LineBasicMaterial({ color: 0xffa040, depthTest: false, transparent: true }));
+      e.position.copy(c); e.scale.setScalar(b * k); e.renderOrder = 1000; v.selGroup.add(e);
+    }
+  }
+  v.gridGroup.add(new THREE.Box3Helper(new THREE.Box3(new THREE.Vector3(ox, oy, oz), new THREE.Vector3(ox + nx * b, oy + ny * b, oz + nz * b)), 0x55606c));
+  if (el('showGrid').checked && mode !== 'all') {
+    const y = oy + L * b, pts = [];
+    for (let x = 0; x <= nx; x++) pts.push(ox + x * b, y, oz, ox + x * b, y, oz + nz * b);
+    for (let z = 0; z <= nz; z++) pts.push(ox, y, oz + z * b, ox + nx * b, y, oz + z * b);
+    const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    v.gridGroup.add(new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: 0xe8a33d, transparent: true, opacity: 0.6 })));
+  }
+  v.gridGroup.add(new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(ox + nx * b + 0.3, oy, 0), 1.2, 0xe8a33d, 0.35, 0.2));
+  drawMap();
+}
+
+const mapGeom = { pad: 30, cs: 10 };
+el('map').addEventListener('click', e => {
+  if (!B.grid) return;
+  const r = el('map').getBoundingClientRect(), k = el('map').width / r.width;
+  const x = Math.floor(((e.clientX - r.left) * k - mapGeom.pad) / mapGeom.cs), z = Math.floor(((e.clientY - r.top) * k - mapGeom.pad) / mapGeom.cs);
+  if (x < 0 || z < 0 || x >= B.grid.nx || z >= B.grid.nz) return;
+  B.selected = [x, parseInt(el('layer').value) - 1, z]; showSel(); drawCells();
+});
+function showSel() {
+  if (!B.selected || !B.grid) { el('selInfo').textContent = 'No cell selected.'; return; }
+  const [x, y, z] = B.selected, f = effFit(x, y, z), k = x + ',' + y + ',' + z, g = B.grid;
+  let what = f === -3 ? 'no block' : f === -2 ? 'no block (nothing fits well)' : f === -1 ? 'empty' : '';
+  if (f >= 0) { const s = LIB[B.T.list[f].shape], bl = (s.blocks || []).map(b => b.name || b.subtype);
+    what = `${s.key}: ${s.name}${bl.length ? ' (' + bl.slice(0, 3).join(', ') + (bl.length > 3 ? '…' : '') + ')' : ''}`;
+    if (!(k in B.overrides)) what += `, fills ${Math.round(g.fill[g.idx(x, y, z)] * 100)}% of the block`; }
+  el('selInfo').textContent = `Column ${x + 1}, row ${z + 1}, layer ${y + 1}: ${what}${k in B.overrides ? ' (edited)' : ' (auto)'}`;
+  // the best-matching blocks for this cell, as one-click choices
+  const box = el('altList'); box.innerHTML = '';
+  const ci = g.idx(x, y, z), list = [];
+  for (let a = 0; a < g.ALT; a++) { const ti = g.alt[ci * g.ALT + a]; if (ti >= 0 && ti < B.T.list.length) list.push([ti, g.altScore[ci * g.ALT + a]]); }
+  if (!list.length) return;
+  box.insertAdjacentHTML('beforeend', '<div class="hint">Best matches (click to use):</div>');
+  list.forEach(([ti, sc]) => {
+    const s = LIB[B.T.list[ti].shape], b = document.createElement('button');
+    b.className = 'alt' + (ti === f ? ' on' : '');
+    b.innerHTML = `<span class="k" style="background:${shapeColor(s).getStyle()}">${esc(s.key)}</span>${esc(s.name)} <span class="hint">${Math.round(sc * 100)}</span>`;
+    b.addEventListener('click', () => { B.overrides[k] = B.T.list[ti].sig; saveOverrides(); showSel(); drawCells(); });
+    box.appendChild(b);
+  });
+}
+document.querySelectorAll('button[data-act]').forEach(btn => btn.addEventListener('click', () => {
+  const act = btn.dataset.act, T = B.T;
+  if (act === 'resetAll') { if (confirm('Clear all edits for these grid settings?')) { B.overrides = {}; saveOverrides(); showSel(); drawCells(); } return; }
+  if (!B.selected || !B.grid || !T.list.length) return;
+  const [x, y, z] = B.selected, k = x + ',' + y + ',' + z, f = effFit(x, y, z);
+  const used = [...new Set(T.list.map(t => t.shape))], firstOf = si => T.list.findIndex(t => t.shape === si);
+  if (act === 'reset') delete B.overrides[k];
+  else if (act === 'none') B.overrides[k] = 'none';
+  else if (act === 'next' || act === 'prev') {
+    const cur = f >= 0 ? used.indexOf(T.list[f].shape) : (act === 'next' ? -1 : used.length);
+    B.overrides[k] = T.list[firstOf(used[(cur + (act === 'next' ? 1 : -1) + used.length) % used.length])].sig;
+  } else {
+    const base = f >= 0 ? f : firstOf(used[0]);
+    B.overrides[k] = T.list[rotateTemplate(T, base, act === 'rx' ? 0 : act === 'ry' ? 1 : 2)].sig;
+  }
+  saveOverrides(); showSel(); drawCells();
+}));
+// a cell report: the settings and the top matches, so a wrong pick can be reproduced exactly (and kept as a test)
+// all edits for the current model + grid settings, with the settings and the library in use, as a file (format
+// se-grid-builder-edits v1; read by owner_cases.mjs). Template identity is its mask signature (shape + orientation).
+el('editsExport').addEventListener('click', () => {
+  if (!B.grid) { alert('Load a model first.'); return; }
+  const g = B.grid, keys = Object.keys(B.overrides);
+  if (!keys.length) { alert('No edited cells for these settings yet.'); return; }
+  const tpl = ti => ti >= 0 ? { key: LIB[B.T.list[ti].shape].key, shape: LIB[B.T.list[ti].shape].id, sig: B.T.list[ti].sig } : null;
+  const cells = keys.map(k => {
+    const [x, y, z] = k.split(',').map(Number), ci = g.idx(x, y, z), v = B.overrides[k];
+    const chosen = v === 'none' ? 'none' : tpl(B.T.bySig.has(v) ? B.T.bySig.get(v) : -1) || { sig: v, missing: true };
+    const alts = []; for (let a = 0; a < g.ALT; a++) { const ti = g.alt[ci * g.ALT + a]; if (ti >= 0) alts.push({ ...tpl(ti), score: +g.altScore[ci * g.ALT + a].toFixed(3) }); }
+    return { column: x + 1, layer: y + 1, row: z + 1, chosen, auto: g.fit[ci] >= 0 ? tpl(g.fit[ci]) : 'none', alternatives: alts };
+  });
+  const data = { format: 'se-grid-builder-edits', version: 1, exported: new Date().toISOString(),
+    model: { file: B.modelName, length: +el('bLength').value, front: el('bFront').value, up: el('bUp').value, groups: el('bGroups').value, groupsOn: [...groupOn] },
+    grid: { scale: +el('scale').value / 100, block: +el('block').value, centre: el('centre').value, offX: +el('offX').value, offY: +el('offY').value, fill: el('fill').value, minFill: +el('minFill').value, penaltyScale: +el('simplify').value },
+    library: LIB.filter(s => s.use).map(s => s.id), cells };
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }));
+  a.download = `grid-edits-${B.modelName.replace(/\.[^.]+$/, '').replace(/[^\w-]+/g, '_')}.json`; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+});
+el('cellReport').addEventListener('click', async () => {
+  if (!B.selected || !B.grid) { alert('Select a cell on the layer map first.'); return; }
+  const [x, y, z] = B.selected, g = B.grid, ci = g.idx(x, y, z), f = effFit(x, y, z), name = ti => LIB[B.T.list[ti].shape].key;
+  const alts = [];
+  for (let a = 0; a < g.ALT; a++) { const ti = g.alt[ci * g.ALT + a]; if (ti >= 0) alts.push(`${name(ti)} ${g.altScore[ci * g.ALT + a].toFixed(2)}`); }
+  const used = LIB.filter(s => s.use), mods = used.filter(s => s.id.startsWith('mesh:'));
+  const text = [`SE Grid Builder cell report`,
+    `model: ${B.modelName}; length ${el('bLength').value} m; front ${el('bFront').value}; up ${el('bUp').value}; groups "${el('bGroups').value}"; on: ${[...groupOn].join(', ')}`,
+    `grid: scale ${el('scale').value}%; block ${el('block').value} m; centre ${el('centre').value}; forward ${el('offX').value}; up ${el('offY').value}; cells ${el('fill').value}; min fill ${el('minFill').value}; simplify ${el('simplify').value}`,
+    `library: ${used.length} blocks in use (${mods.length} mod blocks${mods.length ? ': ' + mods.slice(0, 12).map(s => s.key).join(' ') + (mods.length > 12 ? ' ...' : '') : ''})`,
+    `cell: column ${x + 1}, layer ${y + 1}, row ${z + 1}; shown: ${f >= 0 ? name(f) : f === -3 ? 'no block (edited)' : 'no block'}${(x + ',' + y + ',' + z) in B.overrides ? ' (edited)' : ''}`,
+    `best matches: ${alts.join(', ') || 'none'}`,
+    `I would use: `].join('\n');
+  try { await navigator.clipboard.writeText(text); el('cellReport').textContent = 'Copied: paste it in the chat'; setTimeout(() => el('cellReport').textContent = 'Copy cell report for Claude', 2500); }
+  catch (e) { prompt('Copy this:', text); }
+});
+function drawMap() {
+  const cv = el('map'), wrap = el('mapWrap'), g = B.grid;
+  if (!g) { cv.width = cv.height = 1; return; }
+  const { nx, nz, cell, idx } = g, L = parseInt(el('layer').value) - 1, T = B.T;
+  const pad = 30, cs = mapGeom.cs = Math.max(8, Math.min(Math.floor((wrap.clientWidth - 2 * pad) / nx), Math.floor((wrap.clientHeight - 2 * pad) / nz)));
+  cv.width = nx * cs + 2 * pad; cv.height = nz * cs + 2 * pad;
+  const c = cv.getContext('2d');
+  c.fillStyle = '#101316'; c.fillRect(0, 0, cv.width, cv.height);
+  for (let z = 0; z < nz; z++) for (let x = 0; x < nx; x++) {
+    const f = effFit(x, L, z), v = cell[idx(x, L, z)] || f >= 0, edited = (x + ',' + L + ',' + z) in B.overrides;
+    const px = pad + x * cs, py = pad + z * cs;
+    if (v && f !== -3) { c.fillStyle = f >= 0 ? T.list[f].color.getStyle() : '#2a3038'; c.fillRect(px, py, cs, cs); }
+    c.strokeStyle = '#353c44'; c.strokeRect(px + 0.5, py + 0.5, cs, cs);
+    if (edited) { c.fillStyle = '#ff8c1a'; c.fillRect(px + cs - 6, py + 1, 5, 5); }
+    if (B.selected && B.selected[0] === x && B.selected[1] === L && B.selected[2] === z) { c.strokeStyle = '#ff8c1a'; c.lineWidth = 3; c.strokeRect(px + 1.5, py + 1.5, cs - 3, cs - 3); c.lineWidth = 1; }
+    if (f === -3 && cs >= 14) { c.fillStyle = '#8a96a3'; c.font = 'bold ' + Math.floor(cs * 0.5) + 'px system-ui'; c.textAlign = 'center'; c.fillText('×', px + cs / 2, py + cs * 0.68); }
+    if (v && f !== -3 && cs >= 14) { const lab = f >= 0 ? LIB[T.list[f].shape].key : '·'; c.fillStyle = f >= 0 ? '#101316' : '#8a96a3';
+      c.font = 'bold ' + Math.floor(cs * (lab.length > 2 ? 0.3 : lab.length > 1 ? 0.38 : 0.5)) + 'px system-ui'; c.textAlign = 'center';
+      c.fillText(lab, px + cs / 2, py + cs * 0.64); }
+  }
+  c.fillStyle = '#9aa3ad'; c.font = '11px system-ui'; c.textAlign = 'center';
+  for (let x = 0; x < nx; x++) c.fillText(x + 1, pad + x * cs + cs / 2, pad - 8);
+  c.textAlign = 'right';
+  for (let z = 0; z < nz; z++) c.fillText(z + 1, pad - 6, pad + z * cs + cs / 2 + 4);
+  c.fillStyle = '#e8a33d'; c.textAlign = 'left'; c.fillText('FRONT →', cv.width - pad + 2, cv.height / 2);
+}
+function updateInfo() {
+  const g = B.grid;
+  if (!g) { el('info').textContent = B.parts ? 'No model parts selected.' : ''; return; }
+  const { nx, ny, nz, b, cell, fit } = g;
+  let blocks = 0, none = 0; for (let i = 0; i < cell.length; i++) if (cell[i]) { if (fit[i] >= 0) blocks++; else none++; }
+  el('info').innerHTML = `Grid <b>${nx}</b> long x <b>${nz}</b> wide x <b>${ny}</b> high blocks<br>= ${(nx * b).toFixed(1)} x ${(nz * b).toFixed(1)} x ${(ny * b).toFixed(1)} m<br>` +
+    `<b>${blocks}</b> blocks, ${none} cells with no block passing<br><span class="hint">${B.T.list.length} block orientations from ${LIB.filter(s => s.use).length} library blocks, fitted in ${Math.round(B.fitMs)} ms</span>`;
+  const lay = el('layer'); lay.max = ny; if (parseInt(lay.value) > ny) lay.value = ny;
+  el('layerLabel').textContent = `layer ${lay.value} of ${ny}`;
+}
+function applyModelVisibility() {
+  const on = el('showModel').checked, op = parseFloat(el('opacity').value);
+  B.view.modelGroup.scale.setScalar(opts().scale);
+  modelMeshes.forEach(m => { const vis = on && groupOn.has(m.g); m.depth.visible = vis; m.color.visible = vis; m.mat.opacity = op; });
+}
+// what is drawn on top: the overlay scene is drawn after a depth clear, so whatever is in it is never hidden by the other
+function applyDrawOrder() {
+  const v = B.view; if (!v) return;
+  const blocksOnTop = el('onTop').value !== 'model';
+  v.scene.remove(v.cellGroup, v.modelGroup); v.overlay.remove(v.cellGroup, v.modelGroup);
+  if (blocksOnTop) { v.scene.add(v.modelGroup); v.overlay.add(v.cellGroup); } else { v.scene.add(v.cellGroup); v.overlay.add(v.modelGroup); }
+}
+const SETTINGS = ['bLength', 'bFront', 'bUp', 'bGroups', 'scale', 'block', 'centre', 'offX', 'offY', 'fill', 'minFill', 'simplify', 'onTop'];
+function saveBuilderSettings() { const s = {}; SETTINGS.forEach(id => s[id] = el(id).value); DB.set('builder', s).catch(() => {}); }
+['bLength', 'bFront', 'bUp', 'bGroups'].forEach(id => el(id).addEventListener('change', () => prepare(true)));
+['scale', 'block', 'centre', 'offX', 'offY', 'fill', 'minFill', 'simplify'].forEach(id => el(id).addEventListener('change', () => { saveBuilderSettings(); rebuild(); }));
+['showCells', 'showGrid', 'layerMode', 'cellMode'].forEach(id => el(id).addEventListener('change', drawCells));
+el('cellOpacity').addEventListener('input', drawCells);
+el('layer').addEventListener('input', () => { if (B.selected) B.selected[1] = parseInt(el('layer').value) - 1; updateInfo(); showSel(); drawCells(); });
+el('showModel').addEventListener('change', applyModelVisibility);
+el('onTop').addEventListener('change', () => { applyDrawOrder(); saveBuilderSettings(); });
+el('opacity').addEventListener('input', applyModelVisibility);
+el('bPick').addEventListener('click', () => el('bFile').click());
+el('bFile').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; if (f) loadModelFile(f); });
+const drop = el('bDrop');
+['dragenter', 'dragover'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach(t => drop.addEventListener(t, () => drop.classList.remove('over')));
+drop.addEventListener('drop', e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) loadModelFile(f); });
+
+// ================================================================ tabs and start-up
+let current = 'bPage';
+function showTab(id) {
+  current = id;
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === id));
+  document.querySelectorAll('.page').forEach(p => p.classList.toggle('on', p.id === id));
+  if (SK.view) SK.view.active = id === 'skPage';
+  if (B.view) B.view.active = id === 'bPage';
+  if (id === 'skPage') { SK.view.resize(); }
+  if (id === 'bPage') { B.view.resize(); if (B.parts && B.Tver !== libVersion) rebuild(); else drawMap(); }
+}
+document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
+window.addEventListener('resize', () => { if (current === 'skPage') SK.view.resize(); if (current === 'bPage') { B.view.resize(); drawMap(); } });
+
+window.SGB = { B, SK };   // for debugging in the browser console
+(async function start() {
+  const saved = await DB.get('library');
+  if (Array.isArray(saved) && saved.length) {
+    LIB = saved;
+    // bring a saved library up to date: the two hand-made plates were replaced by the real vanilla panels (2026-10-01),
+    // and any starting block missing from it is added
+    const seed = seedLibrary(), before = LIB.length;
+    LIB = LIB.filter(s => !((s.id === 'plate:P' || s.id === 'plate:Q') && !(s.lines && s.lines.length)));
+    seed.forEach(s => { if (!LIB.some(x => x.id === s.id)) LIB.push(s); });
+    // penalties follow the current ranking (seed.js, 2026-10-01): built-in cards take the seed's, mod blocks MOD_PENALTY
+    LIB.forEach(s => { const sd = seed.find(x => x.id === s.id); if (sd) s.penalty = sd.penalty; else if (s.id.startsWith('mesh:')) s.penalty = MOD_PENALTY; });
+    if (LIB.length !== before || seed.some(s => !saved.some(x => x.id === s.id))) libChanged();
+  }
+  else { LIB = seedLibrary(); adoptOldSketches(); libChanged(); }
+  el('bGroups').value = 'turret=turret;wheels=wheel;antennas=antenn';
+  const bs = await DB.get('builder'); if (bs) SETTINGS.forEach(id => { if (bs[id] !== undefined) el(id).value = bs[id]; });
+  initSketchView(); initBuilderView();
+  refreshSketchList(); renderLibrary(); restoreDirs();
+  showTab('bPage');                     // the Grid Builder is the working tab; the other two are reference
+  const m = await DB.get('model'); if (m && m.buf) setModel(m.name, m.buf, true);
+  el('saveState').textContent = 'saved in this browser';
+})();
+</script>
+</body>
+</html>

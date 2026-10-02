@@ -1,0 +1,1065 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SE Grid Builder</title>
+<style>
+  :root { --bg:#16191d; --panel:#20252b; --card:#1b2025; --text:#e6e8eb; --muted:#9aa3ad; --line:#353c44; --accent:#e8a33d; --ok:#66bb6a; --warn:#e57373; }
+  * { box-sizing:border-box; }
+  html, body { height:100%; }
+  body { margin:0; background:var(--bg); color:var(--text); font:13px/1.4 system-ui, sans-serif; display:flex; flex-direction:column; overflow:hidden; }
+  header { display:flex; align-items:center; gap:18px; padding:0 14px; height:42px; flex:none; background:var(--panel); border-bottom:1px solid var(--line); }
+  header h1 { font-size:15px; margin:0; }
+  .tabs { display:flex; gap:2px; height:100%; }
+  .tabs button { border:0; border-bottom:2px solid transparent; border-radius:0; background:none; padding:0 14px; font-size:13px; color:var(--muted); }
+  .tabs button.on { color:var(--text); border-bottom-color:var(--accent); }
+  .tabs button:hover { color:var(--text); }
+  #saveState { margin-left:auto; color:var(--muted); font-size:12px; }
+  .page { flex:1; min-height:0; display:none; }
+  .page.on { display:flex; }
+  .side { width:310px; flex:none; background:var(--panel); border-right:1px solid var(--line); overflow-y:auto; padding:12px 14px; }
+  .main { flex:1; display:flex; flex-direction:column; min-width:0; min-height:0; }
+  .view { flex:1; min-height:0; position:relative; }
+  h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:16px 0 6px; }
+  h2:first-child { margin-top:0; }
+  label { display:flex; align-items:center; gap:6px; margin:4px 0; }
+  input[type=number], input[type=text], input[type=search], select, textarea { background:#14181c; color:var(--text); border:1px solid var(--line); border-radius:4px; padding:3px 5px; font:12px system-ui; }
+  input[type=number] { width:76px; }
+  input[type=range] { flex:1; }
+  textarea { width:100%; }
+  button { background:#14181c; color:var(--text); border:1px solid var(--line); border-radius:4px; padding:4px 8px; cursor:pointer; font:12px system-ui; }
+  button:hover { border-color:var(--accent); }
+  button.primary { border-color:var(--accent); color:var(--accent); }
+  button:disabled { opacity:.45; cursor:default; border-color:var(--line); }
+  .btnrow { display:flex; gap:4px; margin:4px 0; flex-wrap:wrap; }
+  .btnrow button { flex:1; }
+  .hint { color:var(--muted); font-size:12px; }
+  .warn { color:var(--warn); }
+  .okc { color:var(--ok); }
+  .sw { width:12px; height:12px; border-radius:2px; display:inline-block; flex:none; }
+
+  /* library */
+  #libPage { flex-direction:column; }
+  .toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:10px 14px; border-bottom:1px solid var(--line); background:var(--panel); }
+  .toolbar .grow { flex:1; }
+  #libScroll { flex:1; overflow-y:auto; padding:12px 14px; }
+  #libGrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(190px, 1fr)); gap:10px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px; cursor:pointer; display:flex; flex-direction:column; gap:4px; }
+  .card:hover { border-color:var(--accent); }
+  .card.off { opacity:.55; }
+  .card img, .card .ph { width:100%; aspect-ratio:1; border-radius:4px; background:#101316; display:block; }
+  .card .t { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .card .k { display:inline-block; min-width:22px; padding:0 5px; border-radius:4px; color:#101316; font-weight:700; margin-right:6px; text-align:center; }
+  .card .m { color:var(--muted); font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .card label { margin:0; font-size:12px; }
+  .tag { display:inline-block; font-size:10px; padding:0 5px; border-radius:8px; background:#2b3138; color:var(--muted); margin-left:4px; }
+  #importBox { display:none; border-bottom:1px solid var(--line); background:#1c2126; padding:12px 14px; }
+  #importBox.on { display:block; }
+  #importBox .cols { display:grid; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); gap:8px 24px; }
+  .dirrow { display:flex; align-items:center; gap:8px; margin:5px 0; }
+  .dirrow button { flex:none; width:190px; text-align:left; }
+  .dirrow span { color:var(--muted); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .dirrow span.set { color:var(--ok); }
+  #importLog { max-height:150px; overflow-y:auto; font:11px ui-monospace, monospace; color:var(--muted); white-space:pre-wrap; margin-top:8px; }
+
+  /* builder */
+  #mapWrap { height:290px; flex:none; border-top:1px solid var(--line); display:flex; align-items:center; justify-content:center; background:#101316; overflow:auto; }
+  #map { cursor:pointer; }
+  #info { font-variant-numeric:tabular-nums; color:var(--muted); }
+  #info b { color:var(--text); }
+  #layerLabel { color:var(--accent); font-weight:600; }
+  #selInfo { color:var(--text); margin:6px 0; height:4.2em; overflow:hidden; }   /* fixed sizes: nothing below moves */
+  #altList { height:190px; overflow:hidden; }
+  #altList button.alt { display:flex; align-items:center; gap:6px; width:100%; margin:3px 0; text-align:left; }
+  #altList button.alt.on { border-color:var(--accent); }
+  #altList .k { display:inline-block; min-width:22px; padding:0 5px; border-radius:4px; color:#101316; font-weight:700; text-align:center; }
+  #altList .hint { margin-left:auto; }
+  .drop { border:1px dashed var(--line); border-radius:6px; padding:10px; text-align:center; color:var(--muted); }
+  .drop.over { border-color:var(--accent); color:var(--text); }
+  .empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--muted); pointer-events:none; text-align:center; padding:20px; }
+
+  /* sketch */
+  #skStatus { color:var(--accent); min-height:18px; }
+  #skResult { min-height:18px; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<header>
+  <h1>SE Grid Builder</h1>
+  <nav class="tabs">
+    <button data-tab="bPage" class="on">Grid Builder</button>
+    <button data-tab="libPage">Cube Library</button>
+    <button data-tab="skPage">Sketch</button>
+  </nav>
+  <span id="saveState"></span>
+</header>
+
+<!-- ============================== Cube Library ============================== -->
+<section id="libPage" class="page">
+  <div class="toolbar">
+    <input type="search" id="libSearch" placeholder="Search name, key, block or mod" style="width:240px">
+    <select id="libShow"><option value="all">All blocks</option><option value="on">Used in builder</option><option value="off">Not used</option></select>
+    <select id="libSource"><option value="">All sources</option></select>
+    <span id="libCount" class="hint"></span>
+    <span class="grow"></span>
+    <button id="libAllOn">Use shown</button>
+    <button id="libAllOff">Don't use shown</button>
+    <button id="libAdd" class="primary">Add block</button>
+    <button id="libImportToggle">Import from world&hellip;</button>
+    <button id="libExport">Export JSON</button>
+    <button id="libImportJson">Import JSON</button>
+    <button id="libReset">Reset</button>
+    <input type="file" id="libJsonFile" accept=".json,application/json" hidden>
+  </div>
+  <div id="importBox">
+    <div id="fsNote" class="warn" style="display:none;margin-bottom:8px">This browser can't open folders directly, so it shows an
+    "Upload" window instead. Nothing is uploaded: the files are only read on this computer. But it lists every file in a
+    folder first, which is slow for the Workshop folder (tens of thousands of files). Chrome or Edge open folders directly
+    and remember them. In Firefox, run the import as a command instead (in the se-mod-production folder):
+    <code>node tools\se-grid-builder\import_world.mjs "&lt;world save folder&gt;"</code>, then Import JSON the file it
+    writes and choose Cancel to merge.</div>
+    <div class="cols">
+      <div>
+        <h2>Folders</h2>
+        <div class="dirrow"><button data-dir="world">1. World save folder&hellip;</button><span data-dirlabel="world">not set</span></div>
+        <div class="hint" style="margin-left:4px">%APPDATA%\SpaceEngineers\Saves\&lt;id&gt;\&lt;world&gt; (holds Sandbox.sbc)</div>
+        <div class="dirrow"><button data-dir="workshop">2. Workshop mods folder&hellip;</button><span data-dirlabel="workshop">not set</span></div>
+        <div class="hint" style="margin-left:4px">Steam\steamapps\workshop\content\244850</div>
+        <div class="dirrow"><button data-dir="content">3. Game Content folder&hellip;</button><span data-dirlabel="content">optional</span></div>
+        <div class="hint" style="margin-left:4px">Steam\steamapps\common\SpaceEngineers\Content: vanilla blocks and block names</div>
+        <div class="dirrow"><button data-dir="localMods">4. Local mods folder&hellip;</button><span data-dirlabel="localMods">optional</span></div>
+        <div class="hint" style="margin-left:4px">%APPDATA%\SpaceEngineers\Mods: mods in the world that aren't from the Workshop</div>
+      </div>
+      <div>
+        <h2>What to import</h2>
+        <label>Block names matching <input type="text" id="impFilter" style="flex:1"></label>
+        <div class="hint">A regular expression on the block's id and name. Only plain structural blocks (TypeId CubeBlock) that fit in
+        one cell are imported. Armour with a game shape joins the matching vanilla card. Other blocks are read from their model
+        and grouped by shape, so blocks with the same shape share one card.</div>
+        <label><input type="checkbox" id="impVanilla" checked> include vanilla blocks (needs the Content folder)</label>
+        <div class="btnrow" style="margin-top:8px"><button id="impRun" class="primary">Import blocks</button><button id="impClose">Close</button></div>
+        <div class="hint">Blocks larger than one cell (most wings) are counted but not imported yet.</div>
+      </div>
+    </div>
+    <div id="importLog"></div>
+    <input type="file" id="dirFallback" webkitdirectory hidden>
+  </div>
+  <div id="libScroll"><div id="libGrid"></div></div>
+</section>
+
+<!-- ============================== Sketch ============================== -->
+<section id="skPage" class="page">
+  <div class="side">
+    <h2>Block</h2>
+    <label><select id="skShape" style="flex:1;max-width:100%"></select></label>
+    <label>Name <input type="text" id="skName" style="flex:1"></label>
+    <label>Key <input type="text" id="skKey" maxlength="4" style="width:70px"> <span class="hint">short label on the layer map</span></label>
+    <div id="skMeta" class="hint"></div>
+    <label><input type="checkbox" id="skUse"> use in builder</label>
+    <h2>Draw</h2>
+    <div class="hint">Click two points to draw an edge of the block. Drag to orbit, right-drag to pan, wheel to zoom. The orange
+    arrow is the block's Forward. Draw every edge of the shape, then Save.</div>
+    <label><input type="checkbox" id="skGhost" checked> show the saved shape (faint)</label>
+    <label><input type="checkbox" id="skQuarters"> quarter points (default: halves)</label>
+    <div id="skStatus">Click a point to start a line.</div>
+    <div class="btnrow"><button id="skUndo">undo line</button><button id="skClear">clear lines</button></div>
+    <div class="btnrow"><button id="skFromShape">start from saved shape</button></div>
+    <div class="btnrow"><button id="skSave" class="primary">Save to library</button></div>
+    <div id="skResult" class="hint"></div>
+    <h2>Block</h2>
+    <div class="btnrow"><button id="skDelete">delete this block</button></div>
+    <div class="hint">Saving turns the lines into a solid. If the lines close into a solid (each edge shared by two faces) that
+    exact shape is used, concave or not. If not, the shape becomes the convex hull of the points and you get a warning.</div>
+  </div>
+  <div class="main"><div class="view" id="skView"></div></div>
+</section>
+
+<!-- ============================== Grid Builder ============================== -->
+<section id="bPage" class="page on">
+  <div class="side">
+    <h2>Session</h2>
+    <div class="btnrow"><button id="sessSave">Save session</button><button id="sessOpen">Open session</button></div>
+    <input type="file" id="sessFile" accept=".json,application/json" hidden>
+    <div class="hint">One file with the model, settings, cell edits and block library, to keep or to send to someone with
+    this page.</div>
+    <h2>Model</h2>
+    <div class="drop" id="bDrop">Drop an .obj or .stl here, or <button id="bPick">choose a file</button></div>
+    <input type="file" id="bFile" accept=".obj,.stl" hidden>
+    <div id="bModelName" class="hint" style="margin-top:4px"></div>
+    <label>Real length (m) <input type="number" id="bLength" step="0.01" min="0.01" value="5"></label>
+    <div class="hint">The real length of the thing along its front axis. The model is scaled to it.</div>
+    <label>Front axis <select id="bFront"><option>+x</option><option>-x</option><option>+y</option><option>-y</option><option>+z</option><option>-z</option></select>
+      Up <select id="bUp"><option>y</option><option>z</option><option>x</option></select></label>
+    <label style="display:block">Part groups <input type="text" id="bGroups" style="width:100%"></label>
+    <div class="hint">group=words in part names, separated by ";". Everything else is "body". Parts are the model's objects.</div>
+
+    <h2>Scale and grid</h2>
+    <label>Build scale % <input type="number" id="scale" step="5" value="100"></label>
+    <label>Block size <select id="block"><option value="0.5">0.5 m (small grid)</option><option value="2.5">2.5 m (large grid)</option></select></label>
+    <label>Width centre on <select id="centre"><option value="col">a block column (odd width)</option><option value="line">a grid line (even width)</option></select></label>
+    <label>Move grid forward (blocks) <input type="number" id="offX" step="0.1" value="0"></label>
+    <label>Move grid up (blocks) <input type="number" id="offY" step="0.1" value="0"></label>
+    <label>Cells <select id="fill"><option value="solid">all filled cells</option><option value="shell">outer cells only</option></select></label>
+    <label>Min block fill <input type="number" id="minFill" min="0" max="1" step="0.05" value="0.3"></label>
+    <label>Simplify <input type="number" id="simplify" min="0" max="6" step="0.5" value="4"> <span class="hint">0 = follow the model exactly; higher = cubes, halves and slopes win more often</span></label>
+    <div class="hint">A block is considered for a cell only when the model fills at least this share of <i>the block's own</i>
+    volume (a plate: of the model's thin skin). Among those, the winner is the block whose faces best match the model's
+    surface in the cell: the surface should lie on the block's faces, and every face the block shows should have model
+    surface on it. Simpler blocks take near-ties. Thin bits of a neighbour poking through a grid line get no block.</div>
+    <div id="info"></div>
+
+    <h2>Show</h2>
+    <label><input type="checkbox" id="showModel" checked> Model, opacity <input type="range" id="opacity" min="0.05" max="1" step="0.05" value="0.3"></label>
+    <label>On top <select id="onTop"><option value="blocks">blocks (model shows through see-through blocks)</option><option value="model">model (blocks show through a see-through model)</option></select></label>
+    <label><input type="checkbox" id="showCells" checked> Blocks as <select id="cellMode"><option value="shapes">fitted shapes</option><option value="cubes">cubes</option></select></label>
+    <label>Block opacity <input type="range" id="cellOpacity" min="0.05" max="1" step="0.05" value="0.75"></label>
+    <label><input type="checkbox" id="showGrid" checked> Grid lines on the layer</label>
+    <div id="groups"></div>
+
+    <h2>Edit a cell</h2>
+    <div class="hint">Click a cell on the layer map to select it. Edits are kept in this browser for this model and grid settings.</div>
+    <div class="btnrow"><button data-act="prev">&#9664; shape</button><button data-act="next">shape &#9654;</button><button data-act="none">no block</button></div>
+    <div class="btnrow"><button data-act="ry">turn vertical</button><button data-act="rx">turn length</button><button data-act="rz">turn width</button></div>
+    <div class="btnrow"><button data-act="reset">auto</button><button data-act="resetAll">clear all edits</button></div>
+    <div id="selInfo" class="hint">No cell selected.</div>
+    <div id="altList"></div>
+    <div class="btnrow"><button id="cellReport">Copy cell report for Claude</button></div>
+    <div class="btnrow"><button id="editsExport">Export my edits for Claude</button></div>
+    <div class="hint">Saves every cell you've edited (for this model and grid settings) with what the tool had picked, so
+    the fitting can be tuned towards your choices. Send Claude the file's location.</div>
+    <div class="hint">Select a cell the tool got wrong, click this, and paste it into the chat with the block you would use.</div>
+
+    <h2>Layer</h2>
+    <label>Mode <select id="layerMode"><option value="only">only the layer</option><option value="upto" selected>up to the layer</option><option value="all">all layers</option></select></label>
+    <label><input type="range" id="layer" min="1" max="1" value="1"> <span id="layerLabel"></span></label>
+    <div class="hint">The map is the selected layer seen from above: front on the right, columns numbered from the rear, rows from
+    the -Z side (row 1 at the top). Letters are block keys (click a cell for the full name); a dot is a cell the model touches
+    where no block passes the fill rule.</div>
+  </div>
+  <div class="main">
+    <div class="view" id="bView"><div class="empty" id="bEmpty">Load an .obj or .stl model to start.</div></div>
+    <div id="mapWrap"><canvas id="map"></canvas></div>
+  </div>
+</section>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+
+/*__MODULES__*/
+
+const el = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const tick = () => new Promise(r => setTimeout(r, 0));
+
+// ---------------------------------------------------------------- storage (IndexedDB; the library can be megabytes)
+const DB = (() => {
+  let p;
+  const open = () => p ||= new Promise((res, rej) => { const r = indexedDB.open('se-grid-builder', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('kv'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+  const run = async (mode, fn) => { const db = await open(); return new Promise((res, rej) => {
+    const t = db.transaction('kv', mode), req = fn(t.objectStore('kv')); t.oncomplete = () => res(req && req.result); t.onerror = () => rej(t.error); }); };
+  return { get: k => run('readonly', s => s.get(k)).catch(() => undefined), set: (k, v) => run('readwrite', s => s.put(v, k)), del: k => run('readwrite', s => s.delete(k)),
+    keys: () => run('readonly', s => s.getAllKeys()).catch(() => []) };
+})();
+
+// ---------------------------------------------------------------- library state
+let LIB = [];
+let libVersion = 0;                    // bumps whenever shapes or their use flags change (templates rebuild)
+const stripped = s => { const { _m, _s, ...rest } = s; return rest; };   // drop caches
+let saveTimer = null;
+function libChanged(shape) {
+  if (shape) { shape._m = null; shape._s = null; shape.rev = (shape.rev || 0) + 1; thumbCache.delete(shape.id); }
+  libVersion++;
+  el('saveState').textContent = 'saving…';
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    try { await DB.set('library', LIB.map(stripped)); el('saveState').textContent = 'saved in this browser'; }
+    catch (e) { el('saveState').textContent = 'could not save: ' + e.message; }
+  }, 400);
+}
+// one colour per kind of block (the key letters and edges tell shapes apart)
+const KIND_COLORS = { armour: new THREE.Color('#8fb8de'), plate: new THREE.Color('#d8b26a'), mod: new THREE.Color('#86c08f'), mine: new THREE.Color('#c39bd3') };
+const shapeKind = s => isPlate(s) ? 'plate' : s.id.startsWith('vanilla:') ? 'armour' : s.id.startsWith('mesh:') ? 'mod' : 'mine';
+const shapeColor = s => KIND_COLORS[shapeKind(s)];
+const shapeVolume = s => { if (!s._m) s._m = shapeMask(s); return maskCount(s._m.mask) / NS; };
+const isPlate = s => { if (!s.solids || !s.solids.length) return false; if (!s._m) s._m = shapeMask(s); return s._m.plate; };
+
+// old Block shape sketch drawings (shapeSketch:v1, keyed by topology) were drawn with Forward towards the viewer;
+// the game's +Z is the other way, so they turn 180 degrees about the vertical axis (x -> 1-x, z -> 1-z)
+function adoptOldSketches() {
+  let old = {};
+  try { old = JSON.parse(localStorage.getItem('shapeSketch:v1') || '{}'); } catch (e) { return; }
+  for (const [topo, r] of Object.entries(old)) {
+    const s = LIB.find(x => x.topology === topo);
+    if (s && (!s.lines || !s.lines.length) && r.lines && r.lines.length)
+      s.lines = r.lines.map(l => l.map(p => [1 - p[0], p[1], 1 - p[2]]));
+  }
+}
+
+// ---------------------------------------------------------------- geometry of a shape (cell space 0..1)
+function solidGeometry(sol) {
+  if (sol.type === 'planes') return new ConvexGeometry(sol.verts.map(v => new THREE.Vector3(v[0], v[1], v[2])));
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(Float32Array.from(sol.tris), 3));
+  g.computeVertexNormals(); return g;
+}
+function shapeGeometry(s) {
+  const parts = (s.solids || []).map(solidGeometry).map(g => { g.deleteAttribute('uv'); if (g.index) return g.toNonIndexed(); return g; });
+  if (!parts.length) return null;
+  parts.forEach(g => { if (!g.attributes.normal) g.computeVertexNormals(); });
+  return parts.length === 1 ? parts[0] : mergeGeometries(parts);
+}
+
+// ---------------------------------------------------------------- shared scene bits
+function makeView(container, opts = {}) {
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(window.devicePixelRatio);
+  container.appendChild(renderer.domElement);
+  const scene = new THREE.Scene(); scene.background = new THREE.Color('#16191d');
+  const camera = new THREE.PerspectiveCamera(opts.fov || 40, 1, 0.02, 1000);
+  camera.position.set(4, 3, 6);          // never sit on the orbit target (orbiting there does nothing)
+  const controls = new OrbitControls(camera, renderer.domElement);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.5));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.3); sun.position.set(5, 10, 7); scene.add(sun);
+  const v = { renderer, scene, camera, controls, container, active: false,
+    resize() { const w = container.clientWidth, h = container.clientHeight; if (!w || !h) return; renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix(); } };
+  // optional overlay scene drawn on top after a depth clear (the Grid Builder's model)
+  if (opts.overlay) { v.overlay = new THREE.Scene(); v.overlay.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.5));
+    const s2 = new THREE.DirectionalLight(0xffffff, 1.3); s2.position.set(5, 10, 7); v.overlay.add(s2); renderer.autoClear = false; }
+  renderer.setAnimationLoop(() => { if (!v.active) return; controls.update();
+    if (!v.overlay) { renderer.render(scene, camera); return; }
+    renderer.clear(); renderer.render(scene, camera); renderer.clearDepth(); renderer.render(v.overlay, camera); });
+  return v;
+}
+const cellOutline = () => { const l = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)), new THREE.LineBasicMaterial({ color: 0x7a8794 })); l.position.set(.5, .5, .5); return l; };
+const forwardArrow = () => new THREE.ArrowHelper(new THREE.Vector3(0, 0, -1), new THREE.Vector3(.5, 0, -0.05), 0.6, 0xe8a33d, 0.18, 0.12);
+
+// ---------------------------------------------------------------- thumbnails
+const thumbCache = new Map();
+const thumb = (() => {
+  let r = null, scene, cam, holder;
+  return s => {
+    const key = s.id;
+    if (thumbCache.has(key)) return thumbCache.get(key);
+    if (!r) {
+      r = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true }); r.setSize(200, 200); r.setPixelRatio(1);
+      scene = new THREE.Scene(); scene.background = new THREE.Color('#101316');
+      scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.4));
+      const sun = new THREE.DirectionalLight(0xffffff, 1.4); sun.position.set(3, 5, 4); scene.add(sun);
+      cam = new THREE.PerspectiveCamera(30, 1, 0.1, 50); cam.position.set(2.4, 2.0, 2.6); cam.lookAt(.5, .45, .5);
+      const o = cellOutline(); o.material.color.set(0x55606c); scene.add(o, forwardArrow());
+      holder = new THREE.Group(); scene.add(holder);
+    }
+    holder.clear();
+    const g = shapeGeometry(s);
+    if (g) {
+      holder.add(new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color: shapeColor(s), flatShading: true, side: THREE.DoubleSide })));
+      holder.add(new THREE.LineSegments(new THREE.EdgesGeometry(g, 20), new THREE.LineBasicMaterial({ color: 0x0d1013 })));
+    }
+    r.render(scene, cam);
+    const url = r.domElement.toDataURL('image/png');
+    holder.children.forEach(c => c.geometry.dispose());
+    thumbCache.set(key, url);
+    return url;
+  };
+})();
+
+// ================================================================ Cube Library tab
+const thumbObserver = new IntersectionObserver(entries => entries.forEach(e => {
+  if (!e.isIntersecting) return;
+  const img = e.target, s = LIB.find(x => x.id === img.dataset.id);
+  if (s) img.src = thumb(s);
+  thumbObserver.unobserve(img);
+}), { root: el('libScroll'), rootMargin: '300px' });
+
+function shownShapes() {
+  const q = el('libSearch').value.trim().toLowerCase(), show = el('libShow').value, src = el('libSource').value;
+  return LIB.filter(s => (show === 'all' || (show === 'on') === !!s.use) && (!src || s.source === src) &&
+    (!q || [s.name, s.key, s.source, ...(s.blocks || []).flatMap(b => [b.subtype, b.name || '', b.mod || ''])].join(' ').toLowerCase().includes(q)));
+}
+function renderLibrary() {
+  const sources = [...new Set(LIB.map(s => s.source))];
+  const cur = el('libSource').value;
+  el('libSource').innerHTML = '<option value="">All sources</option>' + sources.map(s => `<option ${s === cur ? 'selected' : ''}>${esc(s)}</option>`).join('');
+  const list = shownShapes(), grid = el('libGrid');
+  el('libCount').textContent = `${list.length} of ${LIB.length} blocks, ${LIB.filter(s => s.use).length} used in builder`;
+  grid.innerHTML = '';
+  const frag = document.createDocumentFragment();
+  for (const s of list) {
+    const c = document.createElement('div'); c.className = 'card' + (s.use ? '' : ' off'); c.dataset.id = s.id;
+    const blocks = s.blocks || [], vol = s.solids && s.solids.length ? Math.round(shapeVolume(s) * 100) : null;
+    const bl = blocks.length ? blocks.slice(0, 2).map(b => b.name || b.subtype).join(', ') + (blocks.length > 2 ? ` +${blocks.length - 2}` : '') : 'no game blocks linked';
+    c.innerHTML = `${thumbCache.has(s.id) ? `<img src="${thumbCache.get(s.id)}">` : `<img data-id="${esc(s.id)}" alt="">`}
+      <div class="t"><span class="k" style="background:${shapeColor(s).getStyle()}">${esc(s.key)}</span>${esc(s.name)}</div>
+      <div class="m">${esc(s.source)}${vol === null ? '<span class="tag">no shape yet</span>' : isPlate(s) ? '<span class="tag">plate</span>' : ` &middot; fills ${vol}%`}</div>
+      <div class="m" title="${esc(blocks.map(b => `${b.name || b.subtype} (${b.size || '?'}${b.mod ? ', ' + b.mod : ''})`).join('\n'))}">${esc(bl)}</div>
+      <label><input type="checkbox" ${s.use ? 'checked' : ''}> use in builder</label>`;
+    const img = c.querySelector('img[data-id]'); if (img) thumbObserver.observe(img);
+    const cb = c.querySelector('input');
+    cb.addEventListener('click', e => e.stopPropagation());
+    c.querySelector('label').addEventListener('click', e => e.stopPropagation());
+    cb.addEventListener('change', () => { s.use = cb.checked; c.classList.toggle('off', !s.use); libChanged(); updateLibCount(); });
+    c.addEventListener('click', () => openSketch(s.id));
+    frag.appendChild(c);
+  }
+  grid.appendChild(frag);
+}
+function updateLibCount() { el('libCount').textContent = `${shownShapes().length} of ${LIB.length} blocks, ${LIB.filter(s => s.use).length} used in builder`; }
+['libSearch', 'libShow', 'libSource'].forEach(id => el(id).addEventListener('input', renderLibrary));
+el('libAllOn').addEventListener('click', () => { shownShapes().forEach(s => s.use = true); libChanged(); renderLibrary(); });
+el('libAllOff').addEventListener('click', () => { shownShapes().forEach(s => s.use = false); libChanged(); renderLibrary(); });
+el('libAdd').addEventListener('click', () => {
+  const name = prompt('Name of the new block:', 'New block'); if (!name) return;
+  const s = { id: 'user:' + Date.now().toString(36), key: makeKey(name, new Set(LIB.map(x => x.key))), name, source: 'My blocks', blocks: [],
+    use: true, penalty: 0.11, solids: [], lines: [], rev: 1, user: true };
+  LIB.push(s); libChanged(); renderLibrary(); openSketch(s.id);
+});
+el('libExport').addEventListener('click', () => {
+  const data = { format: 'se-grid-builder-library', version: 1, shapes: LIB.map(s => {
+    const o = stripped(s);
+    o.solids = (s.solids || []).map(sol => sol.type === 'tris' ? { type: 'tris', tris: Array.from(sol.tris, v => Math.round(v * 1e4) / 1e4) } : sol);
+    return o; }) };
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(data)], { type: 'application/json' }));
+  a.download = 'cube-library.json'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+});
+// ---------------------------------------------------------------- sessions: everything needed to see the same grid elsewhere
+const VIEW_SETTINGS = ['layerMode', 'opacity', 'cellOpacity', 'cellMode'];
+const toB64 = buf => { const u = new Uint8Array(buf); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
+const fromB64 = b => { const s = atob(b), u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u.buffer; };
+el('sessSave').addEventListener('click', async () => {
+  const m = await DB.get('model');
+  if (!m || !m.buf) { alert('Load a model first.'); return; }
+  const settings = {}; [...SETTINGS, ...VIEW_SETTINGS].forEach(id => settings[id] = el(id).value);
+  settings.layer = el('layer').value; settings.showModel = el('showModel').checked; settings.showCells = el('showCells').checked; settings.showGrid = el('showGrid').checked;
+  const edits = {};
+  for (const k of await DB.keys()) if (typeof k === 'string' && k.startsWith('ov:' + m.name + '|')) edits[k] = await DB.get(k);
+  const data = { format: 'se-grid-builder-session', version: 1, saved: new Date().toISOString(),
+    model: { name: m.name, data: toB64(m.buf) }, settings, groupsOn: [...groupOn], edits,
+    library: LIB.map(s => { const o = stripped(s);
+      o.solids = (s.solids || []).map(sol => sol.type === 'tris' ? { type: 'tris', tris: Array.from(sol.tris, v => Math.round(v * 1e4) / 1e4) } : sol); return o; }) };
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(data)], { type: 'application/json' }));
+  a.download = m.name.replace(/\.[^.]+$/, '').replace(/[^\w-]+/g, '_') + '-session.json'; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+});
+el('sessOpen').addEventListener('click', () => el('sessFile').click());
+el('sessFile').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  let d;
+  try { d = JSON.parse(await f.text()); if (d.format !== 'se-grid-builder-session') throw new Error('not an SE Grid Builder session'); }
+  catch (err) { alert('Could not open: ' + err.message); return; }
+  if (!confirm(`Open the session for ${d.model.name}? This replaces this browser's block library, model and settings (export the library first if you want to keep it).`)) return;
+  LIB = d.library.map(s => ({ ...s, solids: (s.solids || []).map(sol => sol.type === 'tris' ? { type: 'tris', tris: Float32Array.from(sol.tris) } : sol) }));
+  thumbCache.clear(); libChanged(); renderLibrary(); refreshSketchList();
+  for (const [k, v] of Object.entries(d.edits || {})) await DB.set(k, v);
+  Object.entries(d.settings || {}).forEach(([id, v]) => { const x = el(id); if (!x) return; if (x.type === 'checkbox') x.checked = !!v; else x.value = v; });
+  saveBuilderSettings(); applyDrawOrder();
+  const buf = fromB64(d.model.data);
+  await DB.set('model', { name: d.model.name, buf }).catch(() => {});
+  B.pendingGroups = d.groupsOn || null; B.ovKey = '';   // reload the edits for these settings
+  showTab('bPage');
+  await setModel(d.model.name, buf, true);
+  applyModelVisibility(); drawCells();
+});
+el('libImportJson').addEventListener('click', () => el('libJsonFile').click());
+el('libJsonFile').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  try {
+    const d = JSON.parse(await f.text());
+    if (d.format !== 'se-grid-builder-library' || !Array.isArray(d.shapes)) throw new Error('not a Cube Library export');
+    const replace = confirm(`${d.shapes.length} blocks in the file.\n\nOK: replace the library with them.\nCancel: merge them in (new cards are added; cards you already have keep their shape and settings and gain any new game blocks).`);
+    const incoming = d.shapes.map(s => ({ ...s, solids: (s.solids || []).map(sol => sol.type === 'tris' ? { type: 'tris', tris: Float32Array.from(sol.tris) } : sol) }));
+    if (replace) LIB = incoming;
+    else incoming.forEach(s => { const cur = LIB.find(x => x.id === s.id);
+      if (!cur) { LIB.push(s); return; }
+      cur.blocks ||= []; (s.blocks || []).forEach(b => { if (!cur.blocks.some(c => c.subtype === b.subtype && c.size === b.size)) cur.blocks.push(b); }); });
+    thumbCache.clear(); libChanged(); renderLibrary(); refreshSketchList();
+  } catch (err) { alert('Could not import: ' + err.message); }
+});
+el('libReset').addEventListener('click', () => {
+  if (!confirm('Reset the library to the 33 vanilla armour shapes and 18 vanilla armour panels? Imported and added blocks are removed (export first to keep them).')) return;
+  LIB = seedLibrary(); adoptOldSketches(); thumbCache.clear(); libChanged(); renderLibrary(); refreshSketchList();
+});
+
+// ---------------------------------------------------------------- import from a world
+const DIRS = {};                       // key -> folder object { name, read, list }
+async function dirChild(dir, name) {
+  try { return await dir.getDirectoryHandle(name); } catch (e) {}
+  try { return await dir.getFileHandle(name); } catch (e) {}
+  const low = name.toLowerCase();
+  for await (const [n, h] of dir.entries()) if (n.toLowerCase() === low) return h;
+  return null;
+}
+function handleFS(root) {
+  const walk = async p => { let h = root; for (const part of p.split('/').filter(Boolean)) { if (h.kind !== 'directory') return null; h = await dirChild(h, part); if (!h) return null; } return h; };
+  return { name: root.name,
+    async read(p) { const h = await walk(p); if (!h || h.kind !== 'file') return null; return (await h.getFile()).arrayBuffer(); },
+    async list(p) { const h = await walk(p); if (!h || h.kind !== 'directory') return []; const out = []; for await (const [n, c] of h.entries()) out.push({ name: n, kind: c.kind }); return out; } };
+}
+function filesFS(files) {             // fallback: a folder chosen with <input webkitdirectory>
+  const map = new Map(); let name = '';
+  for (const f of files) { const parts = f.webkitRelativePath.split('/'); name = parts[0]; map.set(parts.slice(1).join('/').toLowerCase(), f); }
+  return { name,
+    async read(p) { const f = map.get(p.split('/').filter(Boolean).join('/').toLowerCase()); return f ? f.arrayBuffer() : null; },
+    async list(p) { const pre = p.split('/').filter(Boolean).join('/').toLowerCase(), plen = pre ? pre.length + 1 : 0, seen = new Map();
+      for (const [k, f] of map) { if (pre && !k.startsWith(pre + '/')) continue; const rest = k.slice(plen).split('/');
+        if (!seen.has(rest[0])) seen.set(rest[0], rest.length > 1 ? 'directory' : 'file'); }
+      return [...seen].map(([n, kind]) => ({ name: n, kind })); } };
+}
+// let people pick a parent folder: look for the expected thing a few levels down
+async function settle(key, fs) {
+  if (key === 'world') return (await fs.read('Sandbox.sbc')) ? fs : null;
+  if (key === 'content') { for (const pre of ['', 'Content', 'SpaceEngineers/Content']) if ((await fs.list(pre + (pre ? '/' : '') + 'Data')).length) return sub(fs, pre); return null; }
+  if (key === 'workshop') { for (const pre of ['', '244850', 'content/244850', 'workshop/content/244850', 'steamapps/workshop/content/244850'])
+    if ((await fs.list(pre)).some(e => /^\d{6,}$/.test(e.name))) return sub(fs, pre); return null; }
+  return fs;
+  function sub(f, pre) { if (!pre) return f; return { name: f.name + '/' + pre, read: p => f.read(pre + '/' + p), list: p => f.list(pre + (p ? '/' + p : '')) }; }
+}
+function showDir(key) { const s = document.querySelector(`[data-dirlabel="${key}"]`); s.textContent = DIRS[key] ? DIRS[key].name : (key === 'content' || key === 'localMods' ? 'optional' : 'not set'); s.classList.toggle('set', !!DIRS[key]); }
+let fallbackKey = null;
+document.querySelectorAll('[data-dir]').forEach(btn => btn.addEventListener('click', async () => {
+  const key = btn.dataset.dir;
+  if (window.showDirectoryPicker) {
+    let h; try { h = await window.showDirectoryPicker({ id: 'sgb-' + key, mode: 'read' }); } catch (e) { return; }
+    const fs = await settle(key, handleFS(h));
+    if (!fs) { alert(key === 'world' ? 'No Sandbox.sbc in that folder. Pick the world\'s own folder.' : key === 'workshop' ? 'No Workshop mods found there. Pick ...\\steamapps\\workshop\\content\\244850.' : 'No Data folder found there. Pick ...\\SpaceEngineers\\Content.'); return; }
+    DIRS[key] = fs; DB.set('dir:' + key, h).catch(() => {}); showDir(key);
+  } else { fallbackKey = key; el('dirFallback').click(); }
+}));
+el('dirFallback').addEventListener('change', async e => {
+  const files = [...e.target.files]; e.target.value = ''; if (!files.length || !fallbackKey) return;
+  const fs = await settle(fallbackKey, filesFS(files));
+  if (!fs) { alert('That folder does not look right; see the hint under the button.'); return; }
+  DIRS[fallbackKey] = fs; showDir(fallbackKey);
+});
+async function restoreDirs() {     // folders remembered from last time (permission is asked again on Import)
+  for (const key of ['world', 'workshop', 'content', 'localMods']) {
+    const h = await DB.get('dir:' + key); if (!h) continue;
+    DIRS[key] = { pending: h, name: h.name + ' (remembered)' }; showDir(key);
+  }
+}
+async function grantDirs() {
+  for (const key of Object.keys(DIRS)) {
+    const d = DIRS[key]; if (!d.pending) continue;
+    let ok = false;
+    try { ok = (await d.pending.queryPermission({ mode: 'read' })) === 'granted' || (await d.pending.requestPermission({ mode: 'read' })) === 'granted'; } catch (e) {}
+    if (ok) { DIRS[key] = await settle(key, handleFS(d.pending)); showDir(key); }
+  }
+}
+el('libImportToggle').addEventListener('click', () => el('importBox').classList.toggle('on'));
+if (!window.showDirectoryPicker) el('fsNote').style.display = 'block';
+el('impClose').addEventListener('click', () => el('importBox').classList.remove('on'));
+el('impFilter').value = DEFAULT_FILTER;
+el('impRun').addEventListener('click', async () => {
+  await grantDirs();
+  const log = m => { el('importLog').textContent += m + '\n'; el('importLog').scrollTop = 1e9; };
+  el('importLog').textContent = '';
+  if (!DIRS.world || !DIRS.workshop) { log('Set the world save folder and the Workshop mods folder first.'); return; }
+  const waiting = Object.keys(DIRS).filter(k => DIRS[k] && DIRS[k].pending);
+  if (waiting.length) { log('The browser still needs your OK to read: ' + waiting.join(', ') + '. Click Import blocks again (or pick the folders again).'); return; }
+  try { new RegExp(el('impFilter').value); } catch (e) { log('The name filter is not a valid regular expression.'); return; }
+  el('impRun').disabled = true;
+  const before = LIB.length, t0 = performance.now();
+  try {
+    const sum = await importWorldBlocks(LIB, { world: DIRS.world, workshop: DIRS.workshop, content: DIRS.content, localMods: DIRS.localMods,
+      filter: el('impFilter').value, includeVanilla: el('impVanilla').checked, log, yieldNow: tick });
+    LIB.slice(before).forEach(s => s.rev = 1);
+    log(`\nDone in ${((performance.now() - t0) / 1000).toFixed(1)} s. ${sum.matched} matching blocks: ${sum.topology} armour joined the vanilla shapes, ` +
+      `${sum.models} read from models (${sum.newShapes} new cards, switched off: turn on the ones you build with). Skipped: ${sum.multiCell} larger than one cell, ${sum.unreadable} with unreadable models, ` +
+      `${sum.noShape} without a usable shape.`);
+    LIB.forEach(s => thumbCache.delete(s.id));
+    libChanged(); renderLibrary(); refreshSketchList();
+  } catch (e) { log('Import failed: ' + e.message); }
+  el('impRun').disabled = false;
+});
+
+// ================================================================ Sketch tab
+const SK = { view: null, shapeId: null, lines: [], pick: null };
+function sketchShape() { return LIB.find(s => s.id === SK.shapeId); }
+function refreshSketchList() {
+  const sel = el('skShape'), cur = SK.shapeId;
+  sel.innerHTML = LIB.map(s => `<option value="${esc(s.id)}">${esc(s.key)} - ${esc(s.name)}</option>`).join('');
+  if (cur && LIB.some(s => s.id === cur)) sel.value = cur; else { SK.shapeId = LIB[0] && LIB[0].id; sel.value = SK.shapeId || ''; }
+  if (SK.view) loadSketch();
+}
+function initSketchView() {
+  const v = SK.view = makeView(el('skView'), { fov: 35 });
+  v.camera.position.set(2.3, 1.9, 2.6); v.controls.target.set(.5, .45, .5);
+  v.scene.add(cellOutline(), forwardArrow());
+  v.ghost = new THREE.Group(); v.linesG = new THREE.Group(); v.points = new THREE.Group();
+  v.scene.add(v.ghost, v.linesG, v.points);
+  buildSketchPoints();
+  const ray = new THREE.Raycaster(), mouse = new THREE.Vector2(); let downAt = null;
+  v.renderer.domElement.addEventListener('pointerdown', e => { downAt = [e.clientX, e.clientY]; });
+  v.renderer.domElement.addEventListener('pointerup', e => {
+    if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 4 || e.button !== 0) return;
+    const r = v.renderer.domElement.getBoundingClientRect();
+    mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+    ray.setFromCamera(mouse, v.camera);
+    const hit = ray.intersectObjects(v.points.children)[0]; if (!hit) return;
+    const m = hit.object;
+    if (!SK.pick) { SK.pick = m; m.material = ptSel; el('skStatus').textContent = 'Now click the other end.'; return; }
+    if (SK.pick !== m) { SK.lines.push([SK.pick.userData.p, m.userData.p]); drawSketchLines(); markSketchDirty(); }
+    SK.pick.material = ptMat; SK.pick = null; el('skStatus').textContent = 'Click a point to start a line.';
+  });
+}
+const ptGeo = new THREE.SphereGeometry(0.025, 12, 8), ptMat = new THREE.MeshBasicMaterial({ color: 0xcfd6de }), ptSel = new THREE.MeshBasicMaterial({ color: 0xe8a33d });
+function buildSketchPoints() {
+  const v = SK.view; v.points.clear(); SK.pick = null;
+  const corners = [[0,0,0],[1,0,0],[0,1,0],[1,1,0],[0,0,1],[1,0,1],[0,1,1],[1,1,1]], edges = [];
+  corners.forEach((a, i) => corners.forEach((b, j) => { if (j > i && a.reduce((s, x, k) => s + Math.abs(x - b[k]), 0) === 1) edges.push([a, b]); }));
+  const n = el('skQuarters').checked ? 4 : 2, seen = new Set();
+  const add = p => { const k = p.join(','); if (seen.has(k)) return; seen.add(k); const m = new THREE.Mesh(ptGeo, ptMat); m.position.set(...p); m.userData.p = p; v.points.add(m); };
+  edges.forEach(([a, b]) => { for (let k = 0; k <= n; k++) add(a.map((x, i) => x + (b[i] - x) * k / n)); });
+  [[.5,.5,0],[.5,.5,1],[.5,0,.5],[.5,1,.5],[0,.5,.5],[1,.5,.5]].forEach(add);
+  // points the current lines use that aren't on the grid (e.g. from an imported shape) stay clickable
+  SK.lines.forEach(l => l.forEach(p => add(p)));
+}
+function drawSketchGhost() {
+  const v = SK.view, s = sketchShape(); v.ghost.clear();
+  if (!s || !el('skGhost').checked) return;
+  const g = shapeGeometry(s); if (!g) return;
+  v.ghost.add(new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color: 0xd8b26a, transparent: true, opacity: 0.2, depthWrite: false, side: THREE.DoubleSide })));
+  v.ghost.add(new THREE.LineSegments(new THREE.EdgesGeometry(g, 20), new THREE.LineBasicMaterial({ color: 0xd8b26a, transparent: true, opacity: 0.4 })));
+}
+function drawSketchLines() {
+  const v = SK.view; v.linesG.clear();
+  const pts = []; SK.lines.forEach(([a, b]) => pts.push(...a, ...b));
+  if (pts.length) { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    v.linesG.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0x4fc3f7 }))); }
+}
+let sketchDirty = false;
+function markSketchDirty() { sketchDirty = true; el('skResult').textContent = 'Lines changed; Save to update the library.'; el('skResult').className = 'hint'; }
+function loadSketch() {
+  const s = sketchShape(); if (!s) return;
+  SK.lines = (s.lines || []).map(l => l.map(p => [...p])); sketchDirty = false;
+  el('skShape').value = s.id; el('skName').value = s.name; el('skKey').value = s.key; el('skUse').checked = !!s.use;
+  const blocks = s.blocks || [];
+  el('skMeta').innerHTML = `${esc(s.source)}${blocks.length ? ' &middot; ' + blocks.length + ' game block' + (blocks.length > 1 ? 's' : '') + ': ' + esc(blocks.slice(0, 4).map(b => b.name || b.subtype).join(', ')) + (blocks.length > 4 ? '…' : '') : ''}`;
+  el('skFromShape').disabled = !(s.solids || []).some(x => x.type === 'planes');
+  el('skDelete').disabled = !(s.user || s.id.startsWith('mesh:'));
+  el('skResult').textContent = '';
+  buildSketchPoints(); drawSketchGhost(); drawSketchLines();
+}
+function openSketch(id) { SK.shapeId = id; showTab('skPage'); refreshSketchList(); }
+el('skShape').addEventListener('change', () => {
+  if (sketchDirty && !confirm('Discard the unsaved lines?')) { el('skShape').value = SK.shapeId; return; }
+  SK.shapeId = el('skShape').value; loadSketch();
+});
+el('skGhost').addEventListener('change', drawSketchGhost);
+el('skQuarters').addEventListener('change', buildSketchPoints);
+el('skUndo').addEventListener('click', () => { SK.lines.pop(); drawSketchLines(); markSketchDirty(); });
+el('skClear').addEventListener('click', () => { if (SK.lines.length && confirm('Clear all lines?')) { SK.lines = []; drawSketchLines(); markSketchDirty(); } });
+el('skFromShape').addEventListener('click', () => {
+  const s = sketchShape(); if (!s) return;
+  if (SK.lines.length && !confirm('Replace the current lines with the saved shape\'s edges?')) return;
+  SK.lines = s.solids.flatMap(solidEdges); buildSketchPoints(); drawSketchLines(); markSketchDirty();
+});
+el('skName').addEventListener('change', () => { const s = sketchShape(); if (!s) return; s.name = el('skName').value.trim() || s.name; libChanged(); refreshSketchList(); renderLibrary(); });
+el('skKey').addEventListener('change', () => { const s = sketchShape(); if (!s) return;
+  const k = el('skKey').value.trim().toUpperCase().slice(0, 4);
+  if (!k || LIB.some(x => x !== s && x.key === k)) { alert('Keys must be unique and not empty.'); el('skKey').value = s.key; return; }
+  s.key = k; libChanged(); refreshSketchList(); renderLibrary(); });
+el('skUse').addEventListener('change', () => { const s = sketchShape(); if (!s) return; s.use = el('skUse').checked; libChanged(); renderLibrary(); });
+el('skSave').addEventListener('click', () => {
+  const s = sketchShape(); if (!s) return;
+  const r = sketchToShape(SK.lines);
+  if (!r.solids) { el('skResult').textContent = 'Not saved: ' + r.reason + '.'; el('skResult').className = 'warn'; return; }
+  if (s.blocks && s.blocks.length && s.source !== 'My blocks' && !confirm(`This replaces the shape of ${s.blocks.length} game block(s) (${s.source}). Continue?`)) return;
+  s.solids = r.solids; s.lines = SK.lines.map(l => l.map(p => [...p])); sketchDirty = false;
+  libChanged(s);
+  const vol = Math.round(shapeVolume(s) * 100);
+  el('skResult').textContent = r.ok ? `Saved (${r.reason}, fills ${vol}% of the cell${isPlate(s) ? ', plate' : ''}).` : 'Saved, with a warning: ' + r.reason;
+  el('skResult').className = r.ok ? 'okc' : 'warn';
+  drawSketchGhost(); renderLibrary();
+});
+el('skDelete').addEventListener('click', () => {
+  const s = sketchShape(); if (!s || !confirm(`Delete "${s.name}" from the library?`)) return;
+  LIB = LIB.filter(x => x !== s); SK.shapeId = null; libChanged(); refreshSketchList(); renderLibrary();
+});
+
+// ================================================================ Grid Builder tab
+const B = { view: null, raw: null, model: null, parts: null, grid: null, T: null, Tver: -1, overrides: {}, ovKey: '', selected: null, modelName: '' };
+const GROUP_PRIORITY = ['turret', 'body', 'wheels', 'antennas'];
+const GROUP_COLORS = { body: '#e0606e', turret: '#d6a05a', wheels: '#8a8f96', antennas: '#b86464' };   // the model in a red no block uses (blocks: blue, tan, green)
+const colorOfGroup = g => GROUP_COLORS[g] || '#6f9a6f';
+let groupNames = [], groupOn = new Set(), modelMeshes = [];
+
+function initBuilderView() {
+  const v = B.view = makeView(el('bView'), { overlay: true });
+  v.modelGroup = new THREE.Group(); v.cellGroup = new THREE.Group(); v.gridGroup = new THREE.Group();
+  v.selGroup = new THREE.Group(); v.selGroup.renderOrder = 999; v.overlay.add(v.selGroup);   // selected cell: always on top
+  v.scene.add(v.gridGroup); applyDrawOrder();
+}
+function templates() {
+  if (B.Tver !== libVersion) { B.T = buildTemplates(LIB); B.Tver = libVersion; tplGeo.forEach(g => g && g.dispose()); tplEdges.forEach(g => g && g.dispose()); tplGeo.length = 0; tplEdges.length = 0; B.T.list.forEach(t => t.color = shapeColor(LIB[t.shape])); }
+  return B.T;
+}
+const tplGeo = [], tplEdges = [];
+const boxGeo = new THREE.BoxGeometry(1, 1, 1), boxEdges = new THREE.EdgesGeometry(boxGeo);
+// empty a group and free its GPU memory (every redraw builds new meshes; without this a long editing session piles up
+// thousands of buffers and the view starts to stutter). Cached block shapes stay.
+function disposeGroup(g) {
+  const keep = new Set([boxGeo, boxEdges, ...tplGeo, ...tplEdges]);
+  g.traverse(o => {
+    if (o.geometry && !keep.has(o.geometry)) o.geometry.dispose();
+    if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.dispose());
+    if (o.isInstancedMesh) o.dispose();
+  });
+  g.clear();
+}
+function tplGeometry(i) {
+  if (!tplGeo[i]) {
+    const t = B.T.list[i], g = shapeGeometry(LIB[t.shape]), R = ROTS[t.rot];
+    g.translate(-.5, -.5, -.5);
+    g.applyMatrix4(new THREE.Matrix4().set(R[0][0], R[0][1], R[0][2], 0, R[1][0], R[1][1], R[1][2], 0, R[2][0], R[2][1], R[2][2], 0, 0, 0, 0, 1));
+    tplGeo[i] = g; tplEdges[i] = new THREE.EdgesGeometry(g, 20);
+  }
+  return tplGeo[i];
+}
+
+async function loadModelFile(file) {
+  const buf = await file.arrayBuffer();
+  await DB.set('model', { name: file.name, buf }).catch(() => {});
+  setModel(file.name, buf, true);
+}
+function setModel(name, buf, fresh) {
+  let done = Promise.resolve();
+  try {
+    const raw = /\.stl$/i.test(name) ? parseStl(buf) : parseObj(new TextDecoder().decode(buf));
+    if (!raw.length) throw new Error('no triangles found');
+    B.raw = raw; B.modelName = name;
+    el('bModelName').textContent = `${name}: ${raw.length} part${raw.length > 1 ? 's' : ''}, ${raw.reduce((n, p) => n + p.tris.length / 9, 0)} triangles`;
+    el('bEmpty').style.display = 'none';
+    done = prepare(fresh);
+  } catch (e) { el('bModelName').innerHTML = `<span class="warn">Could not read ${esc(name)}: ${esc(e.message)}</span>`; }
+  return done;
+}
+async function prepare(frame) {
+  if (!B.raw) return;
+  let prep;
+  try { prep = prepareModel(B.raw, { up: el('bUp').value, front: el('bFront').value, length: parseFloat(el('bLength').value) || 1 }); }
+  catch (e) { el('bModelName').innerHTML = `<span class="warn">${esc(e.message)}</span>`; return; }
+  const rules = el('bGroups').value;
+  B.parts = prep.parts.map(p => ({ ...p, group: groupOf(p.name, rules) }));
+  groupNames = [...new Set(B.parts.map(p => p.group))].sort((a, b) => ((GROUP_PRIORITY.indexOf(a) + 99) % 99) - ((GROUP_PRIORITY.indexOf(b) + 99) % 99));
+  groupOn = B.pendingGroups ? new Set(B.pendingGroups.filter(g => groupNames.includes(g)))
+    : new Set(groupNames.filter(g => g !== 'antennas' && g !== 'wheels'));   // wheels: built from suspension blocks
+  B.pendingGroups = null;
+  el('groups').innerHTML = '';
+  groupNames.forEach(g => {
+    const l = document.createElement('label');
+    l.innerHTML = `<input type="checkbox" ${groupOn.has(g) ? 'checked' : ''}> <span class="sw" style="background:${colorOfGroup(g)}"></span> model: ${esc(g)}`;
+    l.querySelector('input').addEventListener('change', e => { e.target.checked ? groupOn.add(g) : groupOn.delete(g); rebuild(); });
+    el('groups').appendChild(l);
+  });
+  const v = B.view; disposeGroup(v.modelGroup); modelMeshes = [];
+  groupNames.forEach(g => {
+    const list = B.parts.filter(p => p.group === g), total = list.reduce((n, p) => n + p.tris.length, 0), arr = new Float32Array(total); let o = 0;
+    list.forEach(p => { arr.set(p.tris, o); o += p.tris.length; });
+    const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(arr, 3)); geo.computeVertexNormals();
+    // the model is an overlay drawn over the finished block view (see makeView): a depth-only pass, then colour on its
+    // nearest surface only, so the opacity slider fades it over the blocks without showing its own back faces
+    const depth = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ colorWrite: false, side: THREE.DoubleSide })); depth.renderOrder = 1;
+    const mat = new THREE.MeshLambertMaterial({ color: colorOfGroup(g), transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false, depthFunc: THREE.LessEqualDepth });
+    const color = new THREE.Mesh(geo, mat); color.renderOrder = 2;
+    modelMeshes.push({ g, depth, color, mat }); v.modelGroup.add(depth, color);
+  });
+  saveBuilderSettings();
+  await rebuild();
+  if (frame && B.grid) frameModel();
+}
+function frameModel() {
+  const g = B.grid, v = B.view, c = new THREE.Vector3(g.ox + g.nx * g.b / 2, g.oy + g.ny * g.b / 2, 0);
+  v.controls.target.copy(c); v.camera.position.set(c.x - g.nx * g.b * 0.9, c.y + g.ny * g.b * 1.4, c.z + g.nz * g.b * 2.2);
+}
+function opts() {
+  return { scale: (parseFloat(el('scale').value) || 100) / 100, block: parseFloat(el('block').value), offX: parseFloat(el('offX').value) || 0,
+    offY: parseFloat(el('offY').value) || 0, centre: el('centre').value, fill: el('fill').value, minFill: parseFloat(el('minFill').value) || 0,
+    penaltyScale: isNaN(parseFloat(el('simplify').value)) ? 4 : parseFloat(el('simplify').value),
+    groupsOn: groupOn, groupNames, groupPriority: GROUP_PRIORITY, shapes: LIB, T: templates() };
+}
+// manual edits: cell "x,y,z" -> template signature (stable when the library changes), or 'none'; per model + grid settings
+const gridSig = () => { const o = opts(); return [B.modelName, el('bLength').value, el('bFront').value, el('bUp').value, o.scale, o.block, o.centre, o.offX, o.offY].join('|'); };
+async function loadOverrides() { B.ovKey = gridSig(); B.overrides = (await DB.get('ov:' + B.ovKey)) || {}; }
+const saveOverrides = () => DB.set('ov:' + B.ovKey, B.overrides).catch(() => {});
+function effFit(x, y, z) {             // >= 0 template, -2 no block passes, -1 empty, -3 forced no block
+  const k = x + ',' + y + ',' + z;
+  if (k in B.overrides) { const v = B.overrides[k]; if (v === 'none') return -3; const ti = B.T.bySig.get(v); if (ti !== undefined) return ti; }
+  return B.grid.fit[B.grid.idx(x, y, z)];
+}
+let rebuildToken = 0;
+async function rebuild() {
+  if (!B.parts) return;
+  const token = ++rebuildToken;
+  el('info').textContent = 'Fitting…'; await tick(); if (token !== rebuildToken) return;
+  const t0 = performance.now();
+  B.grid = computeGrid(B.parts, opts());
+  B.fitMs = performance.now() - t0;
+  if (gridSig() !== B.ovKey) { await loadOverrides(); B.selected = null; }
+  showSel(); applyModelVisibility(); updateInfo(); drawCells();
+}
+function drawCells() {
+  const v = B.view; disposeGroup(v.cellGroup); disposeGroup(v.gridGroup); disposeGroup(v.selGroup);
+  const g = B.grid; if (!g) { drawMap(); return; }
+  const { nx, ny, nz, b, ox, oy, oz, cell, idx } = g, T = B.T;
+  const L = parseInt(el('layer').value) - 1, mode = el('layerMode').value;
+  const shown = y => mode === 'all' || (mode === 'upto' ? y <= L : y === L);
+  if (el('showCells').checked) {
+    const op = parseFloat(el('cellOpacity').value), shapes = el('cellMode').value === 'shapes', byGeo = new Map(), edges = [];
+    for (let y = 0; y < ny; y++) { if (!shown(y)) continue;
+      for (let z = 0; z < nz; z++) for (let x = 0; x < nx; x++) {
+        const ci = idx(x, y, z), cv = cell[ci], f = effFit(x, y, z);
+        if (f === -3 || (!cv && f < 0)) continue;
+        const c = [ox + (x + .5) * b, oy + (y + .5) * b, oz + (z + .5) * b];
+        if (shapes && f === -2) { edges.push({ geo: boxEdges, c, s: b * 0.9, faint: true }); continue; }
+        if (!shapes && !cv) continue;
+        const key = shapes ? f : 'cube';
+        if (!byGeo.has(key)) byGeo.set(key, []);
+        byGeo.get(key).push({ c, v: cv || 1 });
+      } }
+    const m = new THREE.Matrix4(), col = new THREE.Color();
+    byGeo.forEach((list, key) => {
+      const geo = key === 'cube' ? boxGeo : tplGeometry(key);
+      const inst = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: op < 1, opacity: op, flatShading: true, side: THREE.DoubleSide }), list.length);
+      list.forEach((it, n) => {
+        const sz = key === 'cube' ? b * 0.94 : b * 0.98;
+        m.makeScale(sz, sz, sz); m.setPosition(it.c[0], it.c[1], it.c[2]); inst.setMatrixAt(n, m);
+        if (key === 'cube') { col.set(colorOfGroup(groupNames[Math.abs(it.v) - 1])); if (it.v < 0) col.lerp(new THREE.Color('#ffffff'), 0.4); }
+        else col.copy(T.list[key].color);
+        inst.setColorAt(n, col);
+        edges.push({ geo: key === 'cube' ? boxEdges : tplEdges[key], c: it.c, s: sz });
+      });
+      v.cellGroup.add(inst);
+    });
+    const pts = [], faint = [];
+    edges.forEach(e => { const pa = e.geo.attributes.position, tgt = e.faint ? faint : pts;
+      for (let k = 0; k < pa.count; k++) tgt.push(e.c[0] + pa.getX(k) * e.s, e.c[1] + pa.getY(k) * e.s, e.c[2] + pa.getZ(k) * e.s); });
+    [[pts, 0x0d1013, 0.9], [faint, 0x8a96a3, 0.35]].forEach(([arr, c, o]) => { if (!arr.length) return;
+      const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.Float32BufferAttribute(arr, 3));
+      const ls = new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: c, transparent: true, opacity: o })); ls.renderOrder = 3; v.cellGroup.add(ls); });
+  }
+  if (B.selected) {
+    // selected cell: a see-through orange box plus a bright outline, drawn over everything (lines are 1 px in WebGL, so
+    // the outline is repeated slightly larger to read as a thick line)
+    const [sx, sy, sz] = B.selected, c = new THREE.Vector3(ox + (sx + .5) * b, oy + (sy + .5) * b, oz + (sz + .5) * b);
+    const fill = new THREE.Mesh(boxGeo, new THREE.MeshBasicMaterial({ color: 0xff8c1a, transparent: true, opacity: 0.22, depthTest: false, depthWrite: false }));
+    fill.position.copy(c); fill.scale.setScalar(b * 1.01); fill.renderOrder = 999; v.selGroup.add(fill);
+    for (const k of [1.02, 1.035, 1.05]) {
+      const e = new THREE.LineSegments(boxEdges, new THREE.LineBasicMaterial({ color: 0xffa040, depthTest: false, transparent: true }));
+      e.position.copy(c); e.scale.setScalar(b * k); e.renderOrder = 1000; v.selGroup.add(e);
+    }
+  }
+  v.gridGroup.add(new THREE.Box3Helper(new THREE.Box3(new THREE.Vector3(ox, oy, oz), new THREE.Vector3(ox + nx * b, oy + ny * b, oz + nz * b)), 0x55606c));
+  if (el('showGrid').checked && mode !== 'all') {
+    const y = oy + L * b, pts = [];
+    for (let x = 0; x <= nx; x++) pts.push(ox + x * b, y, oz, ox + x * b, y, oz + nz * b);
+    for (let z = 0; z <= nz; z++) pts.push(ox, y, oz + z * b, ox + nx * b, y, oz + z * b);
+    const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    v.gridGroup.add(new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: 0xe8a33d, transparent: true, opacity: 0.6 })));
+  }
+  v.gridGroup.add(new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(ox + nx * b + 0.3, oy, 0), 1.2, 0xe8a33d, 0.35, 0.2));
+  drawMap();
+}
+
+const mapGeom = { pad: 30, cs: 10 };
+el('map').addEventListener('click', e => {
+  if (!B.grid) return;
+  const r = el('map').getBoundingClientRect(), k = el('map').width / r.width;
+  const x = Math.floor(((e.clientX - r.left) * k - mapGeom.pad) / mapGeom.cs), z = Math.floor(((e.clientY - r.top) * k - mapGeom.pad) / mapGeom.cs);
+  if (x < 0 || z < 0 || x >= B.grid.nx || z >= B.grid.nz) return;
+  B.selected = [x, parseInt(el('layer').value) - 1, z]; showSel(); drawCells();
+});
+function showSel() {
+  if (!B.selected || !B.grid) { el('selInfo').textContent = 'No cell selected.'; return; }
+  const [x, y, z] = B.selected, f = effFit(x, y, z), k = x + ',' + y + ',' + z, g = B.grid;
+  let what = f === -3 ? 'no block' : f === -2 ? 'no block (nothing fits well)' : f === -1 ? 'empty' : '';
+  if (f >= 0) { const s = LIB[B.T.list[f].shape], bl = (s.blocks || []).map(b => b.name || b.subtype);
+    what = `${s.key}: ${s.name}${bl.length ? ' (' + bl.slice(0, 3).join(', ') + (bl.length > 3 ? '…' : '') + ')' : ''}`;
+    if (!(k in B.overrides)) what += `, fills ${Math.round(g.fill[g.idx(x, y, z)] * 100)}% of the block`; }
+  el('selInfo').textContent = `Column ${x + 1}, row ${z + 1}, layer ${y + 1}: ${what}${k in B.overrides ? ' (edited)' : ' (auto)'}`;
+  // the best-matching blocks for this cell, as one-click choices
+  const box = el('altList'); box.innerHTML = '';
+  const ci = g.idx(x, y, z), list = [];
+  for (let a = 0; a < g.ALT; a++) { const ti = g.alt[ci * g.ALT + a]; if (ti >= 0 && ti < B.T.list.length) list.push([ti, g.altScore[ci * g.ALT + a]]); }
+  if (!list.length) return;
+  box.insertAdjacentHTML('beforeend', '<div class="hint">Best matches (click to use):</div>');
+  list.forEach(([ti, sc]) => {
+    const s = LIB[B.T.list[ti].shape], b = document.createElement('button');
+    b.className = 'alt' + (ti === f ? ' on' : '');
+    b.innerHTML = `<span class="k" style="background:${shapeColor(s).getStyle()}">${esc(s.key)}</span>${esc(s.name)} <span class="hint">${Math.round(sc * 100)}</span>`;
+    b.addEventListener('click', () => { B.overrides[k] = B.T.list[ti].sig; saveOverrides(); showSel(); drawCells(); });
+    box.appendChild(b);
+  });
+}
+document.querySelectorAll('button[data-act]').forEach(btn => btn.addEventListener('click', () => {
+  const act = btn.dataset.act, T = B.T;
+  if (act === 'resetAll') { if (confirm('Clear all edits for these grid settings?')) { B.overrides = {}; saveOverrides(); showSel(); drawCells(); } return; }
+  if (!B.selected || !B.grid || !T.list.length) return;
+  const [x, y, z] = B.selected, k = x + ',' + y + ',' + z, f = effFit(x, y, z);
+  const used = [...new Set(T.list.map(t => t.shape))], firstOf = si => T.list.findIndex(t => t.shape === si);
+  if (act === 'reset') delete B.overrides[k];
+  else if (act === 'none') B.overrides[k] = 'none';
+  else if (act === 'next' || act === 'prev') {
+    const cur = f >= 0 ? used.indexOf(T.list[f].shape) : (act === 'next' ? -1 : used.length);
+    B.overrides[k] = T.list[firstOf(used[(cur + (act === 'next' ? 1 : -1) + used.length) % used.length])].sig;
+  } else {
+    const base = f >= 0 ? f : firstOf(used[0]);
+    B.overrides[k] = T.list[rotateTemplate(T, base, act === 'rx' ? 0 : act === 'ry' ? 1 : 2)].sig;
+  }
+  saveOverrides(); showSel(); drawCells();
+}));
+// a cell report: the settings and the top matches, so a wrong pick can be reproduced exactly (and kept as a test)
+// all edits for the current model + grid settings, with the settings and the library in use, as a file (format
+// se-grid-builder-edits v1; read by owner_cases.mjs). Template identity is its mask signature (shape + orientation).
+el('editsExport').addEventListener('click', () => {
+  if (!B.grid) { alert('Load a model first.'); return; }
+  const g = B.grid, keys = Object.keys(B.overrides);
+  if (!keys.length) { alert('No edited cells for these settings yet.'); return; }
+  const tpl = ti => ti >= 0 ? { key: LIB[B.T.list[ti].shape].key, shape: LIB[B.T.list[ti].shape].id, sig: B.T.list[ti].sig } : null;
+  const cells = keys.map(k => {
+    const [x, y, z] = k.split(',').map(Number), ci = g.idx(x, y, z), v = B.overrides[k];
+    const chosen = v === 'none' ? 'none' : tpl(B.T.bySig.has(v) ? B.T.bySig.get(v) : -1) || { sig: v, missing: true };
+    const alts = []; for (let a = 0; a < g.ALT; a++) { const ti = g.alt[ci * g.ALT + a]; if (ti >= 0) alts.push({ ...tpl(ti), score: +g.altScore[ci * g.ALT + a].toFixed(3) }); }
+    return { column: x + 1, layer: y + 1, row: z + 1, chosen, auto: g.fit[ci] >= 0 ? tpl(g.fit[ci]) : 'none', alternatives: alts };
+  });
+  const data = { format: 'se-grid-builder-edits', version: 1, exported: new Date().toISOString(),
+    model: { file: B.modelName, length: +el('bLength').value, front: el('bFront').value, up: el('bUp').value, groups: el('bGroups').value, groupsOn: [...groupOn] },
+    grid: { scale: +el('scale').value / 100, block: +el('block').value, centre: el('centre').value, offX: +el('offX').value, offY: +el('offY').value, fill: el('fill').value, minFill: +el('minFill').value, penaltyScale: +el('simplify').value },
+    library: LIB.filter(s => s.use).map(s => s.id), cells };
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }));
+  a.download = `grid-edits-${B.modelName.replace(/\.[^.]+$/, '').replace(/[^\w-]+/g, '_')}.json`; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+});
+el('cellReport').addEventListener('click', async () => {
+  if (!B.selected || !B.grid) { alert('Select a cell on the layer map first.'); return; }
+  const [x, y, z] = B.selected, g = B.grid, ci = g.idx(x, y, z), f = effFit(x, y, z), name = ti => LIB[B.T.list[ti].shape].key;
+  const alts = [];
+  for (let a = 0; a < g.ALT; a++) { const ti = g.alt[ci * g.ALT + a]; if (ti >= 0) alts.push(`${name(ti)} ${g.altScore[ci * g.ALT + a].toFixed(2)}`); }
+  const used = LIB.filter(s => s.use), mods = used.filter(s => s.id.startsWith('mesh:'));
+  const text = [`SE Grid Builder cell report`,
+    `model: ${B.modelName}; length ${el('bLength').value} m; front ${el('bFront').value}; up ${el('bUp').value}; groups "${el('bGroups').value}"; on: ${[...groupOn].join(', ')}`,
+    `grid: scale ${el('scale').value}%; block ${el('block').value} m; centre ${el('centre').value}; forward ${el('offX').value}; up ${el('offY').value}; cells ${el('fill').value}; min fill ${el('minFill').value}; simplify ${el('simplify').value}`,
+    `library: ${used.length} blocks in use (${mods.length} mod blocks${mods.length ? ': ' + mods.slice(0, 12).map(s => s.key).join(' ') + (mods.length > 12 ? ' ...' : '') : ''})`,
+    `cell: column ${x + 1}, layer ${y + 1}, row ${z + 1}; shown: ${f >= 0 ? name(f) : f === -3 ? 'no block (edited)' : 'no block'}${(x + ',' + y + ',' + z) in B.overrides ? ' (edited)' : ''}`,
+    `best matches: ${alts.join(', ') || 'none'}`,
+    `I would use: `].join('\n');
+  try { await navigator.clipboard.writeText(text); el('cellReport').textContent = 'Copied: paste it in the chat'; setTimeout(() => el('cellReport').textContent = 'Copy cell report for Claude', 2500); }
+  catch (e) { prompt('Copy this:', text); }
+});
+function drawMap() {
+  const cv = el('map'), wrap = el('mapWrap'), g = B.grid;
+  if (!g) { cv.width = cv.height = 1; return; }
+  const { nx, nz, cell, idx } = g, L = parseInt(el('layer').value) - 1, T = B.T;
+  const pad = 30, cs = mapGeom.cs = Math.max(8, Math.min(Math.floor((wrap.clientWidth - 2 * pad) / nx), Math.floor((wrap.clientHeight - 2 * pad) / nz)));
+  cv.width = nx * cs + 2 * pad; cv.height = nz * cs + 2 * pad;
+  const c = cv.getContext('2d');
+  c.fillStyle = '#101316'; c.fillRect(0, 0, cv.width, cv.height);
+  for (let z = 0; z < nz; z++) for (let x = 0; x < nx; x++) {
+    const f = effFit(x, L, z), v = cell[idx(x, L, z)] || f >= 0, edited = (x + ',' + L + ',' + z) in B.overrides;
+    const px = pad + x * cs, py = pad + z * cs;
+    if (v && f !== -3) { c.fillStyle = f >= 0 ? T.list[f].color.getStyle() : '#2a3038'; c.fillRect(px, py, cs, cs); }
+    c.strokeStyle = '#353c44'; c.strokeRect(px + 0.5, py + 0.5, cs, cs);
+    if (edited) { c.fillStyle = '#ff8c1a'; c.fillRect(px + cs - 6, py + 1, 5, 5); }
+    if (B.selected && B.selected[0] === x && B.selected[1] === L && B.selected[2] === z) { c.strokeStyle = '#ff8c1a'; c.lineWidth = 3; c.strokeRect(px + 1.5, py + 1.5, cs - 3, cs - 3); c.lineWidth = 1; }
+    if (f === -3 && cs >= 14) { c.fillStyle = '#8a96a3'; c.font = 'bold ' + Math.floor(cs * 0.5) + 'px system-ui'; c.textAlign = 'center'; c.fillText('×', px + cs / 2, py + cs * 0.68); }
+    if (v && f !== -3 && cs >= 14) { const lab = f >= 0 ? LIB[T.list[f].shape].key : '·'; c.fillStyle = f >= 0 ? '#101316' : '#8a96a3';
+      c.font = 'bold ' + Math.floor(cs * (lab.length > 2 ? 0.3 : lab.length > 1 ? 0.38 : 0.5)) + 'px system-ui'; c.textAlign = 'center';
+      c.fillText(lab, px + cs / 2, py + cs * 0.64); }
+  }
+  c.fillStyle = '#9aa3ad'; c.font = '11px system-ui'; c.textAlign = 'center';
+  for (let x = 0; x < nx; x++) c.fillText(x + 1, pad + x * cs + cs / 2, pad - 8);
+  c.textAlign = 'right';
+  for (let z = 0; z < nz; z++) c.fillText(z + 1, pad - 6, pad + z * cs + cs / 2 + 4);
+  c.fillStyle = '#e8a33d'; c.textAlign = 'left'; c.fillText('FRONT →', cv.width - pad + 2, cv.height / 2);
+}
+function updateInfo() {
+  const g = B.grid;
+  if (!g) { el('info').textContent = B.parts ? 'No model parts selected.' : ''; return; }
+  const { nx, ny, nz, b, cell, fit } = g;
+  let blocks = 0, none = 0; for (let i = 0; i < cell.length; i++) if (cell[i]) { if (fit[i] >= 0) blocks++; else none++; }
+  el('info').innerHTML = `Grid <b>${nx}</b> long x <b>${nz}</b> wide x <b>${ny}</b> high blocks<br>= ${(nx * b).toFixed(1)} x ${(nz * b).toFixed(1)} x ${(ny * b).toFixed(1)} m<br>` +
+    `<b>${blocks}</b> blocks, ${none} cells with no block passing<br><span class="hint">${B.T.list.length} block orientations from ${LIB.filter(s => s.use).length} library blocks, fitted in ${Math.round(B.fitMs)} ms</span>`;
+  const lay = el('layer'); lay.max = ny; if (parseInt(lay.value) > ny) lay.value = ny;
+  el('layerLabel').textContent = `layer ${lay.value} of ${ny}`;
+}
+function applyModelVisibility() {
+  const on = el('showModel').checked, op = parseFloat(el('opacity').value);
+  B.view.modelGroup.scale.setScalar(opts().scale);
+  modelMeshes.forEach(m => { const vis = on && groupOn.has(m.g); m.depth.visible = vis; m.color.visible = vis; m.mat.opacity = op; });
+}
+// what is drawn on top: the overlay scene is drawn after a depth clear, so whatever is in it is never hidden by the other
+function applyDrawOrder() {
+  const v = B.view; if (!v) return;
+  const blocksOnTop = el('onTop').value !== 'model';
+  v.scene.remove(v.cellGroup, v.modelGroup); v.overlay.remove(v.cellGroup, v.modelGroup);
+  if (blocksOnTop) { v.scene.add(v.modelGroup); v.overlay.add(v.cellGroup); } else { v.scene.add(v.cellGroup); v.overlay.add(v.modelGroup); }
+}
+const SETTINGS = ['bLength', 'bFront', 'bUp', 'bGroups', 'scale', 'block', 'centre', 'offX', 'offY', 'fill', 'minFill', 'simplify', 'onTop'];
+function saveBuilderSettings() { const s = {}; SETTINGS.forEach(id => s[id] = el(id).value); DB.set('builder', s).catch(() => {}); }
+['bLength', 'bFront', 'bUp', 'bGroups'].forEach(id => el(id).addEventListener('change', () => prepare(true)));
+['scale', 'block', 'centre', 'offX', 'offY', 'fill', 'minFill', 'simplify'].forEach(id => el(id).addEventListener('change', () => { saveBuilderSettings(); rebuild(); }));
+['showCells', 'showGrid', 'layerMode', 'cellMode'].forEach(id => el(id).addEventListener('change', drawCells));
+el('cellOpacity').addEventListener('input', drawCells);
+el('layer').addEventListener('input', () => { if (B.selected) B.selected[1] = parseInt(el('layer').value) - 1; updateInfo(); showSel(); drawCells(); });
+el('showModel').addEventListener('change', applyModelVisibility);
+el('onTop').addEventListener('change', () => { applyDrawOrder(); saveBuilderSettings(); });
+el('opacity').addEventListener('input', applyModelVisibility);
+el('bPick').addEventListener('click', () => el('bFile').click());
+el('bFile').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; if (f) loadModelFile(f); });
+const drop = el('bDrop');
+['dragenter', 'dragover'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach(t => drop.addEventListener(t, () => drop.classList.remove('over')));
+drop.addEventListener('drop', e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) loadModelFile(f); });
+
+// ================================================================ tabs and start-up
+let current = 'bPage';
+function showTab(id) {
+  current = id;
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === id));
+  document.querySelectorAll('.page').forEach(p => p.classList.toggle('on', p.id === id));
+  if (SK.view) SK.view.active = id === 'skPage';
+  if (B.view) B.view.active = id === 'bPage';
+  if (id === 'skPage') { SK.view.resize(); }
+  if (id === 'bPage') { B.view.resize(); if (B.parts && B.Tver !== libVersion) rebuild(); else drawMap(); }
+}
+document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
+window.addEventListener('resize', () => { if (current === 'skPage') SK.view.resize(); if (current === 'bPage') { B.view.resize(); drawMap(); } });
+
+window.SGB = { B, SK };   // for debugging in the browser console
+(async function start() {
+  const saved = await DB.get('library');
+  if (Array.isArray(saved) && saved.length) {
+    LIB = saved;
+    // bring a saved library up to date: the two hand-made plates were replaced by the real vanilla panels (2026-10-01),
+    // and any starting block missing from it is added
+    const seed = seedLibrary(), before = LIB.length;
+    LIB = LIB.filter(s => !((s.id === 'plate:P' || s.id === 'plate:Q') && !(s.lines && s.lines.length)));
+    seed.forEach(s => { if (!LIB.some(x => x.id === s.id)) LIB.push(s); });
+    // penalties follow the current ranking (seed.js, 2026-10-01): built-in cards take the seed's, mod blocks MOD_PENALTY
+    LIB.forEach(s => { const sd = seed.find(x => x.id === s.id); if (sd) s.penalty = sd.penalty; else if (s.id.startsWith('mesh:')) s.penalty = MOD_PENALTY; });
+    if (LIB.length !== before || seed.some(s => !saved.some(x => x.id === s.id))) libChanged();
+  }
+  else { LIB = seedLibrary(); adoptOldSketches(); libChanged(); }
+  el('bGroups').value = 'turret=turret;wheels=wheel;antennas=antenn';
+  const bs = await DB.get('builder'); if (bs) SETTINGS.forEach(id => { if (bs[id] !== undefined) el(id).value = bs[id]; });
+  initSketchView(); initBuilderView();
+  refreshSketchList(); renderLibrary(); restoreDirs();
+  showTab('bPage');                     // the Grid Builder is the working tab; the other two are reference
+  const m = await DB.get('model'); if (m && m.buf) setModel(m.name, m.buf, true);
+  el('saveState').textContent = 'saved in this browser';
+})();
+</script>
+</body>
+</html>
