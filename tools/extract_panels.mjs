@@ -5,7 +5,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
-const here = path.dirname(fileURLToPath(import.meta.url));
+const here = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');   // repo root
 const C = await import(pathToFileURL(path.join(here, 'core.js')));
 const { readMwm } = await import(pathToFileURL(path.join(here, 'mwm.js')));
 
