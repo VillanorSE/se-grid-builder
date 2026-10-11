@@ -249,6 +249,17 @@
   </div>
 </section>
 
+<div id="errBar" style="display:none;position:fixed;left:0;right:0;bottom:0;z-index:99;background:#7a1d1d;color:#fff;font:13px/1.4 sans-serif;padding:8px 12px;white-space:pre-wrap"></div>
+<script>
+// Problems are shown on the page instead of only in the browser console: a failed start (e.g. three.js not
+// loading from the internet) used to leave every button silently dead.
+window.sgbError = msg => { const b = document.getElementById('errBar'); b.textContent = (b.textContent ? b.textContent + '\n' : '') + msg; b.style.display = 'block'; };
+window.addEventListener('error', e => sgbError('Error: ' + e.message + (e.lineno ? ' (line ' + e.lineno + ')' : '')));
+window.addEventListener('unhandledrejection', e => sgbError('Error: ' + ((e.reason && (e.reason.message || e.reason)) || 'unknown')));
+setTimeout(() => { if (!window.sgbModule) sgbError('The page did not finish starting. It loads its 3D library from cdn.jsdelivr.net: check the internet connection and reload. If this stays, send Claude this message and the browser console (F12).'); }, 10000);
+</script>
+<!-- the fit worker's source (core.js + fit_worker.js, inlined by build.py); started from a Blob URL -->
+<script type="text/plain" id="sgbWorker">/*__WORKER__*/</script>
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -257,6 +268,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 /*__MODULES__*/
 
+window.sgbModule = true;   // the imports (three.js) loaded; start-up itself can take a while with a big saved model
 const el = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const tick = () => new Promise(r => setTimeout(r, 0));
@@ -459,6 +471,8 @@ el('sessFile').addEventListener('change', async e => {
   try { d = JSON.parse(await f.text()); if (d.format !== 'se-grid-builder-session') throw new Error('not an SE Grid Builder session'); }
   catch (err) { alert('Could not open: ' + err.message); return; }
   if (!confirm(`Open the session for ${d.model.name}? This replaces this browser's block library, model and settings (export the library first if you want to keep it).`)) return;
+  el('saveState').textContent = 'opening session...';
+  try {
   LIB = d.library.map(s => ({ ...s, solids: (s.solids || []).map(sol => sol.type === 'tris' ? { type: 'tris', tris: Float32Array.from(sol.tris) } : sol) }));
   thumbCache.clear(); libChanged(); renderLibrary(); refreshSketchList();
   for (const [k, v] of Object.entries(d.edits || {})) await DB.set(k, v);
@@ -470,6 +484,8 @@ el('sessFile').addEventListener('change', async e => {
   showTab('bPage');
   await setModel(d.model.name, buf, true);
   applyModelVisibility(); drawCells();
+  el('saveState').textContent = 'saved in this browser';
+  } catch (err) { el('saveState').textContent = 'session not opened'; sgbError('Could not open the session: ' + (err && err.message || err)); }
 });
 el('libImportJson').addEventListener('click', () => el('libJsonFile').click());
 el('libJsonFile').addEventListener('change', async e => {
@@ -701,9 +717,11 @@ function initBuilderView() {
   v.selGroup = new THREE.Group(); v.selGroup.renderOrder = 999; v.overlay.add(v.selGroup);   // selected cell: always on top
   v.scene.add(v.gridGroup); applyDrawOrder();
 }
-function templates() {
-  if (B.Tver !== libVersion) { B.T = buildTemplates(LIB); B.Tver = libVersion; tplGeo.forEach(g => g && g.dispose()); tplEdges.forEach(g => g && g.dispose()); tplGeo.length = 0; tplEdges.length = 0; B.T.list.forEach(t => t.color = shapeColor(LIB[t.shape])); }
-  return B.T;
+// B.T always belongs to B.grid: a fit for a changed library builds its templates first and installs them with its grid
+function installTemplates(T, ver) {
+  if (T === B.T) return;
+  B.T = T; B.Tver = ver; tplGeo.forEach(g => g && g.dispose()); tplEdges.forEach(g => g && g.dispose()); tplGeo.length = 0; tplEdges.length = 0;
+  B.T.list.forEach(t => t.color = shapeColor(LIB[t.shape]));
 }
 const tplGeo = [], tplEdges = [];
 const boxGeo = new THREE.BoxGeometry(1, 1, 1), boxEdges = new THREE.EdgesGeometry(boxGeo);
@@ -751,7 +769,7 @@ async function prepare(frame) {
   try { prep = prepareModel(B.raw, { up: el('bUp').value, front: el('bFront').value, length: parseFloat(el('bLength').value) || 1 }); }
   catch (e) { el('bModelName').innerHTML = `<span class="warn">${esc(e.message)}</span>`; return; }
   const rules = el('bGroups').value;
-  B.parts = prep.parts.map(p => ({ ...p, group: groupOf(p.name, rules) }));
+  B.parts = prep.parts.map(p => ({ ...p, group: groupOf(p.name, rules) })); B.partsVer = (B.partsVer || 0) + 1;
   groupNames = [...new Set(B.parts.map(p => p.group))].sort((a, b) => ((GROUP_PRIORITY.indexOf(a) + 99) % 99) - ((GROUP_PRIORITY.indexOf(b) + 99) % 99));
   groupOn = B.pendingGroups ? new Set(B.pendingGroups.filter(g => groupNames.includes(g)))
     : new Set(groupNames.filter(g => g !== 'antennas' && g !== 'wheels'));   // wheels: built from suspension blocks
@@ -787,7 +805,7 @@ function opts() {
   return { scale: (parseFloat(el('scale').value) || 100) / 100, block: parseFloat(el('block').value), offX: parseFloat(el('offX').value) || 0,
     offY: parseFloat(el('offY').value) || 0, centre: el('centre').value, fill: el('fill').value, minFill: parseFloat(el('minFill').value) || 0,
     penaltyScale: isNaN(parseFloat(el('simplify').value)) ? 4 : parseFloat(el('simplify').value),
-    groupsOn: groupOn, groupNames, groupPriority: GROUP_PRIORITY, shapes: LIB, T: templates() };
+    groupsOn: groupOn, groupNames, groupPriority: GROUP_PRIORITY };
 }
 // manual edits: cell "x,y,z" -> template signature (stable when the library changes), or 'none'; per model + grid settings
 const gridSig = () => { const o = opts(); return [B.modelName, el('bLength').value, el('bFront').value, el('bUp').value, o.scale, o.block, o.centre, o.offX, o.offY].join('|'); };
@@ -798,14 +816,92 @@ function effFit(x, y, z) {             // >= 0 template, -2 no block passes, -1 
   if (k in B.overrides) { const v = B.overrides[k]; if (v === 'none') return -3; const ti = B.T.bySig.get(v); if (ti !== undefined) return ti; }
   return B.grid.fit[B.grid.idx(x, y, z)];
 }
+// ---------------------------------------------------------------- fitting, off the main thread
+// The fit runs in Web Workers, so the page stays usable while it works (a big library takes seconds). A fit with no
+// stored surface scores for its grid is split over several workers by cell, then one worker does the full fit with all
+// the scores; a refit of the same grid (Min block fill, Simplify, Fill) reuses the stored scores. A new fit request
+// stops the running one (its workers are restarted; scores they already sent are kept). Without Workers, or if they
+// fail, the fit runs on the main thread. The result is the same either way.
+const Fit = (() => {
+  let url = null;
+  try { const src = el('sgbWorker').textContent; if (window.Worker && window.Blob && src.includes('computeGrid')) url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' })); }
+  catch (e) { url = null; }
+  const N = Math.max(1, Math.min(6, (navigator.hardwareConcurrency || 4) - 1));   // more than about 6 gains little
+  let pool = [], current = null;
+  const stores = new Map();                // surface scores per grid key, most recent last (a few kept: settings get toggled back)
+  const store = key => { let c = stores.get(key); if (c) stores.delete(key); else c = newSurfCache(); stores.set(key, c);
+    while (stores.size > 6) stores.delete(stores.keys().next().value); return c; };
+  const stop = () => { pool.forEach(x => x.w.terminate()); pool = []; };
+  const plainOpts = o => { const { shapes, T, groupsOn, ...rest } = o; return { ...rest, groupsOn: [...groupsOn] }; };
+  // shapes not in use go as stubs (the worker's templates must match the page's, so every index is kept)
+  const libMsg = (shapes, ver) => ({ ver, shapes: shapes.map(s => s.use ? { use: true, solids: s.solids, plate: s.plate, penalty: s.penalty } : { use: false }) });
+  // one message to one worker; resolves with its 'done' reply (null if the job is cancelled)
+  function ask(x, msg, job, onProgress) {
+    return new Promise((resolve, reject) => {
+      x.w.onmessage = e => { const m = e.data; if (m.job !== job.id) return;
+        if (m.scores && m.scores.key) addSurfScores(job.cache, m.scores);
+        if (m.type === 'progress') onProgress(m.done);
+        else if (m.type === 'done') resolve(m);
+        else if (m.type === 'error') reject(new Error('fit worker: ' + m.message)); };
+      x.w.onerror = e => { e.preventDefault(); reject(new Error('fit worker failed: ' + (e.message || 'unknown error'))); };
+      const prev = job.cancel; job.cancel = () => { if (prev) prev(); resolve(null); };
+      x.w.postMessage(msg);
+    });
+  }
+  async function viaWorkers(job, parts, partsVer, o, libVer, onProgress) {
+    // the grid's scores all stored (an earlier fit finished): one worker does the fit; otherwise split the scoring first
+    const shares = job.cache.complete ? 1 : (window.sgbFitWorkers || N);
+    while (pool.length < shares) pool.push({ w: new Worker(url), libVer: -1, partsVer: -1 });
+    const base = x => { const m = { type: 'fit', job: job.id, opts: plainOpts(o), tag: job.tag };
+      if (x.libVer !== libVer) { m.lib = libMsg(o.shapes, libVer); x.libVer = libVer; }
+      if (x.partsVer !== partsVer) { m.parts = { ver: partsVer, parts: parts.map(p => ({ name: p.name, group: p.group, tris: p.tris })) }; x.partsVer = partsVer; }
+      return m; };
+    if (shares > 1) {
+      const done = new Array(shares).fill(0);
+      const r = await Promise.all(pool.slice(0, shares).map((x, k) =>
+        ask(x, { ...base(x), share: { k, n: shares }, scores: job.cache.map.size ? allSurfScores(job.cache) : null }, job, f => { done[k] = f; onProgress(0.85 * done.reduce((a, b) => a + b, 0) / shares); })));
+      if (job.cancelled || r.some(m => !m)) return undefined;
+    }
+    const x = pool[0];
+    const m = await ask(x, { ...base(x), scores: allSurfScores(job.cache) }, job, f => onProgress(shares > 1 ? 0.85 + 0.15 * f : f));
+    if (!m || job.cancelled) return undefined;
+    if (m.tplCount !== o.T.list.length) throw new Error(`fit worker built ${m.tplCount} block orientations, the page ${o.T.list.length}`);
+    job.cache.complete = true;
+    const g = m.grid; if (g) g.idx = (X, Y, Z) => (Y * g.nz + Z) * g.nx + X;
+    return g;
+  }
+  // the grid for these parts and options (o includes shapes and T); undefined when a newer request replaced this one
+  async function run(parts, partsVer, o, libVer, onProgress) {
+    if (current) { current.cancelled = true; if (current.cancel) current.cancel(); stop(); }
+    const tag = libVer + ':' + partsVer, job = current = { id: Math.random(), tag, cancelled: false, cancel: null };
+    job.cache = store(surfCacheKey(parts, { ...o, surfTag: tag }));
+    try {
+      if (url) {
+        try { return await viaWorkers(job, parts, partsVer, o, libVer, onProgress); }
+        catch (e) { if (job.cancelled) return undefined; stop(); url = null; console.warn('Fitting on the main thread instead:', e); }
+      }
+      await tick(); if (job.cancelled) return undefined;
+      return computeGrid(parts, { ...o, surfTag: tag, surfCache: job.cache });
+    } finally { if (current === job) current = null; }
+  }
+  return { run, get workers() { return url ? N : 0; } };
+})();
 let rebuildToken = 0;
 async function rebuild() {
   if (!B.parts) return;
   const token = ++rebuildToken;
-  el('info').textContent = 'Fitting…'; await tick(); if (token !== rebuildToken) return;
+  el('info').textContent = 'Fitting…';
+  const ver = libVersion, T = B.Tver === ver ? B.T : buildTemplates(LIB); B.fitLibVer = ver;
+  const state = el('saveState'), before = /^fitting/.test(state.textContent) ? B.stateBeforeFit : state.textContent;
+  B.stateBeforeFit = before; state.textContent = 'fitting 0%';
   const t0 = performance.now();
-  B.grid = computeGrid(B.parts, opts());
-  B.fitMs = performance.now() - t0;
+  let grid;
+  try { grid = await Fit.run(B.parts, B.partsVer, { ...opts(), shapes: LIB, T }, ver, f => { if (token === rebuildToken) state.textContent = `fitting ${Math.round(100 * f)}%`; }); }
+  catch (e) { if (token === rebuildToken) { state.textContent = before; el('info').textContent = 'The fit failed.'; } throw e; }
+  if (token !== rebuildToken || grid === undefined) return;   // a newer fit replaced this one
+  if (/^fitting/.test(state.textContent)) state.textContent = before;
+  installTemplates(T, ver);
+  B.grid = grid; B.fitMs = performance.now() - t0;
   if (gridSig() !== B.ovKey) { await loadOverrides(); B.selected = null; }
   showSel(); applyModelVisibility(); updateInfo(); drawCells();
 }
@@ -831,7 +927,16 @@ function drawCells() {
     const m = new THREE.Matrix4(), col = new THREE.Color();
     byGeo.forEach((list, key) => {
       const geo = key === 'cube' ? boxGeo : tplGeometry(key);
-      const inst = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: op < 1, opacity: op, flatShading: true, side: THREE.DoubleSide }), list.length);
+      // see-through blocks show only their nearest surface (a depth-only pass first, like the model), so the opacity
+      // slider is the real see-through amount instead of many stacked faces adding up to nearly solid
+      const see = op < 1;
+      const inst = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: see, opacity: op, flatShading: true,
+        side: THREE.DoubleSide, depthWrite: !see, depthFunc: THREE.LessEqualDepth }), list.length);
+      inst.renderOrder = 2;
+      if (see) {
+        const depth = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({ colorWrite: false, side: THREE.DoubleSide }), list.length);
+        depth.instanceMatrix = inst.instanceMatrix; depth.renderOrder = 1; v.cellGroup.add(depth);
+      }
       list.forEach((it, n) => {
         const sz = key === 'cube' ? b * 0.94 : b * 0.98;
         m.makeScale(sz, sz, sz); m.setPosition(it.c[0], it.c[1], it.c[2]); inst.setMatrixAt(n, m);
@@ -905,7 +1010,9 @@ function showSel() {
 document.querySelectorAll('button[data-act]').forEach(btn => btn.addEventListener('click', () => {
   const act = btn.dataset.act, T = B.T;
   if (act === 'resetAll') { if (confirm('Clear all edits for these grid settings?')) { B.overrides = {}; saveOverrides(); showSel(); drawCells(); } return; }
-  if (!B.selected || !B.grid || !T.list.length) return;
+  if (!B.grid) { el('selInfo').textContent = 'Load a model first.'; return; }
+  if (!B.selected) { el('selInfo').textContent = 'Select a cell on the layer map first, then use these buttons.'; return; }
+  if (!T.list.length) { el('selInfo').textContent = 'No library blocks are in use (Cube Library: Use shown).'; return; }
   const [x, y, z] = B.selected, k = x + ',' + y + ',' + z, f = effFit(x, y, z);
   const used = [...new Set(T.list.map(t => t.shape))], firstOf = si => T.list.findIndex(t => t.shape === si);
   if (act === 'reset') delete B.overrides[k];
@@ -1032,13 +1139,14 @@ function showTab(id) {
   if (SK.view) SK.view.active = id === 'skPage';
   if (B.view) B.view.active = id === 'bPage';
   if (id === 'skPage') { SK.view.resize(); }
-  if (id === 'bPage') { B.view.resize(); if (B.parts && B.Tver !== libVersion) rebuild(); else drawMap(); }
+  if (id === 'bPage') { B.view.resize(); if (B.parts && B.Tver !== libVersion && B.fitLibVer !== libVersion) rebuild(); else drawMap(); }
 }
 document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
 window.addEventListener('resize', () => { if (current === 'skPage') SK.view.resize(); if (current === 'bPage') { B.view.resize(); drawMap(); } });
 
 window.SGB = { B, SK };   // for debugging in the browser console
 (async function start() {
+  el('saveState').textContent = 'loading the saved library and model...';
   const saved = await DB.get('library');
   if (Array.isArray(saved) && saved.length) {
     LIB = saved;
@@ -1057,9 +1165,10 @@ window.SGB = { B, SK };   // for debugging in the browser console
   initSketchView(); initBuilderView();
   refreshSketchList(); renderLibrary(); restoreDirs();
   showTab('bPage');                     // the Grid Builder is the working tab; the other two are reference
-  const m = await DB.get('model'); if (m && m.buf) setModel(m.name, m.buf, true);
+  const m = await DB.get('model'); if (m && m.buf) await setModel(m.name, m.buf, true);
   el('saveState').textContent = 'saved in this browser';
-})();
+  window.sgbReady = true;
+})().catch(err => sgbError('Could not start: ' + (err && err.message || err)));
 </script>
 </body>
 </html>

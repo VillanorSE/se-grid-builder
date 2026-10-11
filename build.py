@@ -42,6 +42,10 @@ def main():
     marker = "/*__MODULES__*/"
     assert app.count(marker) == 1
     out = app.replace(marker, bundle)
+    worker = "\n".join(module_body(m) for m in ("core.js", "fit_worker.js"))
+    wmarker = "/*__WORKER__*/"
+    assert out.count(wmarker) == 1 and "</script" not in worker.lower()
+    out = out.replace(wmarker, worker)
     Path(a.out).write_text(out, encoding="utf-8", newline="\n")
     print(f"{n} armour shapes; wrote {a.out} ({len(out) // 1024} KB)")
 

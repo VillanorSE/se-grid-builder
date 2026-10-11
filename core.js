@@ -353,46 +353,112 @@ export function shapeSurface(shape) {
   let inner = 0; for (let i = 6; i < P.length; i += 7) if (!P[i]) inner++;
   return (shape._s = { pts: P, hash: makeHash(P, 7, -0.01, 1.02), inner, tol: SURF_D, step: SURF_STEP });
 }
-// spatial hash over samples (stride floats each) in the cube [lo, lo+size]^3, buckets of SURF_D
+// spatial hash over samples (stride floats each) in the cube [lo, lo+size]^3, buckets of SURF_D / 2 (points outside
+// the range go in the edge buckets, which reach to infinity). Each bucket is split three ways by the normal's largest
+// component, and each part keeps the largest |normal component| per axis, so a lookup can skip parts whose normals
+// can't line up with the query's. Samples are packed part by part into one Float64Array (x, y, z, nx, ny, nz).
+const HASH_DIV = 1;
 function makeHash(pts, stride, lo, size) {
-  const G = Math.max(1, Math.ceil(size / SURF_D)), n = pts.length / stride, cellOf = new Int32Array(n), count = new Int32Array(G ** 3 + 1);
-  const b = v => Math.min(G - 1, Math.max(0, Math.floor((v - lo) / SURF_D)));
-  for (let i = 0; i < n; i++) { const o = i * stride, c = (b(pts[o + 1]) * G + b(pts[o + 2])) * G + b(pts[o]); cellOf[i] = c; count[c + 1]++; }
-  for (let c = 0; c < G ** 3; c++) count[c + 1] += count[c];
-  const items = new Int32Array(n), fillAt = count.slice(0, G ** 3);
-  for (let i = 0; i < n; i++) items[fillAt[cellOf[i]]++] = i * stride;
-  return { G, lo, start: count, items, pts };
+  const h = SURF_D / HASH_DIV, G = Math.max(1, Math.ceil(size / h)), NB = G * G * G * 3, n = pts.length / stride;
+  const partOf = new Int32Array(n), start = new Int32Array(NB + 1), maxN = new Float64Array(NB * 3);
+  const b = v => Math.min(G - 1, Math.max(0, Math.floor((v - lo) / h)));
+  for (let i = 0; i < n; i++) {
+    const o = i * stride, ax = Math.abs(pts[o + 3]), ay = Math.abs(pts[o + 4]), az = Math.abs(pts[o + 5]);
+    const p = ((b(pts[o + 1]) * G + b(pts[o + 2])) * G + b(pts[o])) * 3 + (ax >= ay && ax >= az ? 0 : ay >= az ? 1 : 2);
+    partOf[i] = p; start[p + 1]++;
+    if (ax > maxN[p * 3]) maxN[p * 3] = ax; if (ay > maxN[p * 3 + 1]) maxN[p * 3 + 1] = ay; if (az > maxN[p * 3 + 2]) maxN[p * 3 + 2] = az;
+  }
+  for (let p = 0; p < NB; p++) start[p + 1] += start[p];
+  const packed = new Float64Array(n * 6), fillAt = start.slice(0, NB);
+  for (let i = 0; i < n; i++) { const o = i * stride, q = 6 * fillAt[partOf[i]]++;
+    packed[q] = pts[o]; packed[q + 1] = pts[o + 1]; packed[q + 2] = pts[o + 2]; packed[q + 3] = pts[o + 3]; packed[q + 4] = pts[o + 4]; packed[q + 5] = pts[o + 5]; }
+  return { G, lo, h, start, maxN, packed };
 }
-// best match for a point among hashed samples within SURF_D: max of closeness x |normal agreement|
+// the best score among packed samples k0..k1 (see bestMatch), starting from best
+function scanSamples(packed, k0, k1, x, y, z, nx, ny, nz, best) {
+  const D = SURF_D, D2 = D * D, P1 = NORMAL_POW === 1;
+  let r = (1 - best) * D + 1e-9, lim2 = r * r;
+  for (let k = k0; k < k1; k++) {
+    const o = 6 * k, dx = packed[o] - x, dy = packed[o + 1] - y, dz = packed[o + 2] - z, d2 = dx * dx + dy * dy + dz * dz;
+    if (d2 >= D2 || d2 > lim2) continue;       // too far to count, or to beat best
+    const al = Math.abs(packed[o + 3] * nx + packed[o + 4] * ny + packed[o + 5] * nz), al2 = al * al;
+    let an = al2 * al2; for (let q = 4; q < NORMAL_POW; q *= 2) an *= an;          // agreement^NORMAL_POW (4, 8, 16)
+    const fac = P1 ? al : an;
+    if (fac <= best) continue;
+    const s = (1 - Math.sqrt(d2) / D) * fac;   // parallel faces matter most
+    if (s > best) { best = s; r = (1 - best) * D + 1e-9; lim2 = r * r; }
+  }
+  return best;
+}
+// best match for a point among hashed samples within SURF_D: max of closeness x |normal agreement|.
+// Exact (the same value as checking every sample), but skips what can't beat the best so far: a sample at distance d
+// scores at most 1 - d / SURF_D, and at most its normal agreement (bounded per bucket part by its largest components).
+const BM_G = new Float64Array(3 * 8), BM_I = new Int32Array(3 * 8), BM_N = new Int32Array(3), BM_Q = new Float64Array(3);
 function bestMatch(H, x, y, z, nx, ny, nz) {
-  const { G, lo, start, items, pts } = H;
-  const bx = Math.floor((x - lo) / SURF_D), by = Math.floor((y - lo) / SURF_D), bz = Math.floor((z - lo) / SURF_D);
+  const { G, lo, h, start, maxN, packed } = H, D = SURF_D, P1 = NORMAL_POW === 1;
+  const anx = Math.abs(nx), any = Math.abs(ny), anz = Math.abs(nz);
+  BM_Q[0] = x; BM_Q[1] = y; BM_Q[2] = z;
+  // per axis: the bucket indices that can hold samples within D, and the squared gap from the point to each
+  for (let a = 0; a < 3; a++) {
+    const v = BM_Q[a], f = (v - lo) / h;
+    const i0 = Math.max(0, Math.floor(f - HASH_DIV - 1e-6)), i1 = Math.min(G - 1, Math.floor(f + HASH_DIV + 1e-6));
+    let n = 0;
+    for (let i = i0; i <= i1; i++) {
+      const bl = i === 0 ? -Infinity : lo + i * h, bh = i === G - 1 ? Infinity : lo + (i + 1) * h;
+      const g = v < bl ? bl - v : v > bh ? v - bh : 0;
+      BM_I[a * 8 + n] = i; BM_G[a * 8 + n] = g * g; n++;
+    }
+    BM_N[a] = n;
+  }
+  const c0 = ((Math.min(G - 1, Math.max(0, Math.floor((y - lo) / h))) * G + Math.min(G - 1, Math.max(0, Math.floor((z - lo) / h)))) * G
+    + Math.min(G - 1, Math.max(0, Math.floor((x - lo) / h))));
   let best = 0;
-  for (let cy = by - 1; cy <= by + 1; cy++) { if (cy < 0 || cy >= G) continue;
-    for (let cz = bz - 1; cz <= bz + 1; cz++) { if (cz < 0 || cz >= G) continue;
-      for (let cx = bx - 1; cx <= bx + 1; cx++) { if (cx < 0 || cx >= G) continue;
-        const c = (cy * G + cz) * G + cx;
-        for (let k = start[c]; k < start[c + 1]; k++) {
-          const o = items[k], dx = pts[o] - x, dy = pts[o + 1] - y, dz = pts[o + 2] - z, d2 = dx * dx + dy * dy + dz * dz;
-          if (d2 >= SURF_D * SURF_D) continue;
-          const al = Math.abs(pts[o + 3] * nx + pts[o + 4] * ny + pts[o + 5] * nz), al2 = al * al;
-          let an = al2 * al2; for (let q = 4; q < NORMAL_POW; q *= 2) an *= an;          // agreement^NORMAL_POW (4, 8, 16)
-          const s = (1 - Math.sqrt(d2) / SURF_D) * (NORMAL_POW === 1 ? al : an);   // parallel faces matter most
-          if (s > best) best = s;
-        } } } }
+  // pass 0: the bucket holding the point (it usually holds the best match); pass 1: the rest
+  for (let pass = 0; pass < 2; pass++)
+  for (let iy = 0; iy < BM_N[1]; iy++) {
+    for (let iz = 0; iz < BM_N[2]; iz++) {
+      for (let ix = 0; ix < BM_N[0]; ix++) {
+        const c = (BM_I[8 + iy] * G + BM_I[16 + iz]) * G + BM_I[ix];
+        if ((c === c0) !== (pass === 0)) continue;
+        const r = (1 - best) * D + 1e-9;
+        if (BM_G[8 + iy] + BM_G[16 + iz] + BM_G[ix] > r * r) continue;      // the whole bucket is too far
+        for (let p = c * 3; p < c * 3 + 3; p++) {
+          const k0 = start[p], k1 = start[p + 1]; if (k0 === k1) continue;
+          const bn = anx * maxN[p * 3] + any * maxN[p * 3 + 1] + anz * maxN[p * 3 + 2];
+          if (bn === 0) continue;               // every normal here is square to the query's: all score 0
+          const bb = bn * (1 + 1e-9), b2 = bb * bb; let bf = b2 * b2; for (let q = 4; q < NORMAL_POW; q *= 2) bf *= bf;
+          if ((P1 ? bb : bf) <= best) continue;  // no normal here lines up well enough to beat best
+          best = scanSamples(packed, k0, k1, x, y, z, nx, ny, nz, best);
+        }
+      } } }
   return best;
 }
 export let SURF_D = 0.25;                  // a surface point this close (cells) to the other surface counts as on it
 export const setSurfTolerance = d => { SURF_D = d; };   // for tuning (bench_fit.mjs); shape hashes are per tolerance
 export let NORMAL_POW = 8;                 // how strictly the faces must be parallel: agreement^8 (owner check 2026-10-01)
 export const setNormalPow = n => { NORMAL_POW = n; };
-// surface agreement of one candidate (shape sh turned by R) with a cell's model samples.
+// a shape's surface samples turned by rotation ri, into the cell: x, y, z, nx, ny, nz per sample and the cell wall
+// each lies on (-1: none). Cached on the shape's surface per rotation (the same for every cell and every refit).
+function turnedSurface(S, ri) {
+  const cache = S.turned || (S.turned = []);
+  if (cache[ri]) return cache[ri];
+  const R = ROTS[ri], P = S.pts, n = P.length / 7, pts = new Float64Array(n * 6), wall = new Int8Array(n);
+  for (let j = 0, i = 0; i < P.length; i += 7, j++) {
+    const x = P[i] - .5, y = P[i + 1] - .5, z = P[i + 2] - .5, a = P[i + 3], b = P[i + 4], c = P[i + 5];
+    const X = R[0][0] * x + R[0][1] * y + R[0][2] * z + .5, Y = R[1][0] * x + R[1][1] * y + R[1][2] * z + .5, Z = R[2][0] * x + R[2][1] * y + R[2][2] * z + .5;
+    pts[j * 6] = X; pts[j * 6 + 1] = Y; pts[j * 6 + 2] = Z;
+    pts[j * 6 + 3] = R[0][0] * a + R[0][1] * b + R[0][2] * c; pts[j * 6 + 4] = R[1][0] * a + R[1][1] * b + R[1][2] * c; pts[j * 6 + 5] = R[2][0] * a + R[2][1] * b + R[2][2] * c;
+    wall[j] = P[i + 6] ? (X < .01 ? 0 : X > .99 ? 1 : Y < .01 ? 2 : Y > .99 ? 3 : Z < .01 ? 4 : 5) : -1;
+  }
+  return (cache[ri] = { pts, wall });
+}
+// surface agreement of one candidate (shape sh turned by rotation ri) with a cell's model samples.
 // own: the cell's samples (x,y,z,nx,ny,nz,w, cell-local), wsum their total weight; nearH: hash of samples around it.
 // exposed[w]: cell wall w (x-, x+, y-, y+, z-, z+) has an empty neighbour, so a block face there must be model surface.
 // Returns [model surface lying on the block's faces, block's faces inside the cell or on exposed walls lying on model
 // surface], each 0..1 (1 when there is nothing to check).
-function surfaceScore(sh, R, own, wsum, nearH, exposed, wallWeight = 1) {
-  const S = shapeSurface(sh);
+function surfaceScore(sh, ri, own, wsum, nearH, exposed, wallWeight = 1) {
+  const S = shapeSurface(sh), R = ROTS[ri];
   let m2b = 1;
   if (wsum > 0) {
     let acc = 0;
@@ -406,17 +472,15 @@ function surfaceScore(sh, R, own, wsum, nearH, exposed, wallWeight = 1) {
     m2b = acc / wsum;
   }
   let ok = 0, n = 0;
-  const P = S.pts;
-  for (let i = 0; i < P.length; i += 7) {
-    const x = P[i] - .5, y = P[i + 1] - .5, z = P[i + 2] - .5, a = P[i + 3], b = P[i + 4], c = P[i + 5];
-    const X = R[0][0] * x + R[0][1] * y + R[0][2] * z + .5, Y = R[1][0] * x + R[1][1] * y + R[1][2] * z + .5, Z = R[2][0] * x + R[2][1] * y + R[2][2] * z + .5;
+  const { pts: Q, wall } = turnedSurface(S, ri);
+  for (let j = 0; j < wall.length; j++) {
     let wt = 1;
-    if (P[i + 6]) {                         // on a cell wall: only counts where that wall is exposed (the outside skin)
-      const w = X < .01 ? 0 : X > .99 ? 1 : Y < .01 ? 2 : Y > .99 ? 3 : Z < .01 ? 4 : 5;
-      if (!exposed[w]) continue;
+    if (wall[j] >= 0) {                     // on a cell wall: only counts where that wall is exposed (the outside skin)
+      if (!exposed[wall[j]]) continue;
       wt = wallWeight;                      // the owner builds the outside skin first (2026-10-01 edits)
     }
-    ok += wt * bestMatch(nearH, X, Y, Z, R[0][0] * a + R[0][1] * b + R[0][2] * c, R[1][0] * a + R[1][1] * b + R[1][2] * c, R[2][0] * a + R[2][1] * b + R[2][2] * c);
+    const o = j * 6;
+    ok += wt * bestMatch(nearH, Q[o], Q[o + 1], Q[o + 2], Q[o + 3], Q[o + 4], Q[o + 5]);
     n += wt;
   }
   const b2m = n ? ok / n : 1;
@@ -488,12 +552,9 @@ function partSolid(tris, org, fb, fn, out, gi, prio) {
 // volume (solid blocks against the model's inside samples; plates, in thin-skin cells, against its surface samples).
 // Among the allowed blocks, the best overlap (IoU with the cell's model samples) minus the shape's penalty wins.
 // fit per cell: template index, -2 = model there but no block passes, -1 = empty.
-export function computeGrid(parts, o) {
-  const s = o.scale, b = o.block, use = parts.filter(p => o.groupsOn.has(p.group));
-  if (!use.length) return null;
-  const scaled = use.map(p => ({ group: p.group, tris: Float32Array.from(p.tris, x => x * s) }));
-  const mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
-  scaled.forEach(p => { for (let i = 0; i < p.tris.length; i += 3) for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], p.tris[i + k]); mx[k] = Math.max(mx[k], p.tris[i + k]); } });
+// the grid's placement from the scaled model's bounds
+function gridFrame(mn, mx, o) {
+  const b = o.block;
   let ox = mn[0] + o.offX * b; while (ox > mn[0] + 1e-9) ox -= b;
   let oy = mn[1] + o.offY * b; while (oy > mn[1] + 1e-9) oy -= b;
   const halfW = Math.max(-mn[2], mx[2]);
@@ -501,61 +562,125 @@ export function computeGrid(parts, o) {
   if (o.centre === 'col') { const k = Math.ceil(halfW / b - 0.5); nz = 2 * k + 1; oz = -(k + 0.5) * b; }
   else { const k = Math.ceil(halfW / b); nz = 2 * k; oz = -k * b; }
   const nx = Math.ceil((mx[0] - ox) / b - 1e-6), ny = Math.ceil((mx[1] - oy) / b - 1e-6);
+  return { ox, oy, oz, nx, ny, nz };
+}
+// everything a cell's surface scores depend on besides the cell and the block: the model and library (o.surfTag, the
+// caller's version of both), the parts in use, scale and grid placement, and the scoring constants
+const frameKey = (o, ox, oy, oz, nx, ny, nz) => [o.surfTag || '', o.scale, o.block, ox, oy, oz, nx, ny, nz, [...o.groupsOn].sort().join(','),
+  SURF_D, SURF_STEP, NORMAL_POW, o.wallWeight ?? 2].join('|');
+// a cache of surface scores for computeGrid (o.surfCache): fits of the same model, library and grid placement reuse
+// them, so changing Min block fill or Simplify refits in a fraction of the time. Results are identical either way.
+export const newSurfCache = () => ({ key: null, parts: null, T: null, map: new Map(), fresh: [], complete: false, prep: null, prepKey: null });
+// the cache key computeGrid will use for these parts and options (lets a caller pick stored scores before fitting)
+export function surfCacheKey(parts, o) {
+  const s = o.scale, mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
+  parts.forEach(p => { if (!o.groupsOn.has(p.group)) return;
+    for (let i = 0; i < p.tris.length; i += 3) for (let k = 0; k < 3; k++) { const v = Math.fround(p.tris[i + k] * s); mn[k] = Math.min(mn[k], v); mx[k] = Math.max(mx[k], v); } });
+  const f = gridFrame(mn, mx, o);
+  return frameKey(o, f.ox, f.oy, f.oz, f.nx, f.ny, f.nz);
+}
+// scores computed since the last call, as flat arrays (to pass between workers); clears the list
+export function takeSurfScores(cache) {
+  const n = cache.fresh.length, keys = new Float64Array(n), m2b = new Float64Array(n), b2m = new Float64Array(n);
+  cache.fresh.forEach((k, i) => { const r = cache.map.get(k); keys[i] = k; m2b[i] = r[0]; b2m[i] = r[1]; });
+  cache.fresh.length = 0;
+  return { key: cache.key, keys, m2b, b2m };
+}
+// every stored score, in the same form
+export function allSurfScores(cache) {
+  const n = cache.map.size, keys = new Float64Array(n), m2b = new Float64Array(n), b2m = new Float64Array(n); let i = 0;
+  cache.map.forEach((r, k) => { keys[i] = k; m2b[i] = r[0]; b2m[i] = r[1]; i++; });
+  return { key: cache.key, keys, m2b, b2m };
+}
+// add scores (from takeSurfScores / allSurfScores) to a cache; scores for another grid replace what it holds
+export function addSurfScores(cache, d) {
+  if (!d || !d.key) return;
+  if (cache.key !== d.key) { cache.map.clear(); cache.fresh.length = 0; cache.key = d.key; cache.complete = false; cache.prep = null; }
+  for (let i = 0; i < d.keys.length; i++) cache.map.set(d.keys[i], [d.m2b[i], d.b2m[i]]);
+}
+
+export function computeGrid(parts, o) {
+  const s = o.scale, b = o.block, use = parts.filter(p => o.groupsOn.has(p.group));
+  if (!use.length) return null;
+  const scaled = use.map(p => ({ group: p.group, tris: Float32Array.from(p.tris, x => x * s) }));
+  const mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
+  scaled.forEach(p => { for (let i = 0; i < p.tris.length; i += 3) for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], p.tris[i + k]); mx[k] = Math.max(mx[k], p.tris[i + k]); } });
+  const { ox, oy, oz, nx, ny, nz } = gridFrame(mn, mx, o);
   const fb = b / SUB, fn = [nx * SUB, ny * SUB, nz * SUB];
-  const prio = {}; o.groupNames.forEach((g, i) => { const p = (o.groupPriority || []).indexOf(g); prio[i + 1] = p < 0 ? 50 + i : p; });
-  const fine = { g: new Uint16Array(fn[0] * fn[1] * fn[2]), s: new Uint16Array(fn[0] * fn[1] * fn[2]) };
+  const surface = o.scoring !== 'volume', N = nx * ny * nz;
   const fidx = (x, y, z) => (y * fn[2] + z) * fn[0] + x, idx = (x, y, z) => (y * nz + z) * nx + x;
-  scaled.forEach(p => partSolid(p.tris, [ox, oy, oz], fb, fn, fine, o.groupNames.indexOf(p.group) + 1, prio));
   // hidden groups keep their space clear (owner: wheels are left off because suspension blocks go there): a block may
   // not take more than reserveOverlap of its own volume from a hidden part (inside or surface: tyres are open meshes).
   // A panel lying on top of a wheel arch is fine; a block through the wheel is not.
   const reserveOverlap = o.reserveOverlap ?? 0.1;
-  const hid = { g: new Uint16Array(fn[0] * fn[1] * fn[2]), s: new Uint16Array(fn[0] * fn[1] * fn[2]) };
-  let anyHidden = false;
-  // each hidden part is filled solid between its outer surfaces along all three axes (its "visual hull"), so an open
-  // tyre shell counts as a whole wheel; parts are filled one at a time so the gap between two wheels stays open
-  if (reserveOverlap < 1) parts.filter(p => !o.groupsOn.has(p.group)).forEach(p => { anyHidden = true;
-    const one = { g: new Uint16Array(fn[0] * fn[1] * fn[2]), s: new Uint16Array(fn[0] * fn[1] * fn[2]) };
-    partSolid(Float32Array.from(p.tris, v => v * s), [ox, oy, oz], fb, fn, one, 1, { 1: 0 });
-    const lo = [1e9, 1e9, 1e9], hi = [-1, -1, -1];
-    for (let fy = 0; fy < fn[1]; fy++) for (let fz = 0; fz < fn[2]; fz++) for (let fx = 0; fx < fn[0]; fx++) if (one.s[fidx(fx, fy, fz)] || one.g[fidx(fx, fy, fz)]) {
-      lo[0] = Math.min(lo[0], fx); lo[1] = Math.min(lo[1], fy); lo[2] = Math.min(lo[2], fz); hi[0] = Math.max(hi[0], fx); hi[1] = Math.max(hi[1], fy); hi[2] = Math.max(hi[2], fz); }
-    if (hi[0] < 0) return;
-    const on = (fx, fy, fz) => one.s[fidx(fx, fy, fz)] || one.g[fidx(fx, fy, fz)];
-    for (let fy = lo[1]; fy <= hi[1]; fy++) for (let fz = lo[2]; fz <= hi[2]; fz++) for (let fx = lo[0]; fx <= hi[0]; fx++) {
-      if (on(fx, fy, fz)) { hid.s[fidx(fx, fy, fz)] = 1; continue; }
-      // inside the span along x, y and z: surface on both sides in every axis
-      let ok = true;
-      for (const [dx, dy, dz] of [[1, 0, 0], [0, 1, 0], [0, 0, 1]]) {
-        let a = false, b = false;
-        for (let k = 1; !a; k++) { const X = fx - dx * k, Y = fy - dy * k, Z = fz - dz * k; if (X < lo[0] || Y < lo[1] || Z < lo[2]) break; if (on(X, Y, Z)) a = true; }
-        for (let k = 1; !b; k++) { const X = fx + dx * k, Y = fy + dy * k, Z = fz + dz * k; if (X > hi[0] || Y > hi[1] || Z > hi[2]) break; if (on(X, Y, Z)) b = true; }
-        if (!a || !b) { ok = false; break; }
+  // surface scores kept from earlier fits of the same grid (o.surfCache from newSurfCache(); see surfCacheKey)
+  const scache = o.surfCache && surface ? o.surfCache : null;
+  if (scache) {
+    const key = frameKey(o, ox, oy, oz, nx, ny, nz);
+    if (scache.key !== key || (!o.surfTag && (scache.parts !== parts || scache.T !== o.T))) {
+      scache.map.clear(); scache.fresh.length = 0; scache.key = key; scache.complete = false; scache.prep = null; }
+    scache.parts = parts; scache.T = o.T;
+  }
+  // the voxelised model, its surface samples per cell and per-cell sample counts: kept with the surface scores, since
+  // they depend only on the model and the grid placement
+  const prepKey = [o.groupNames.join(','), (o.groupPriority || []).join(','), o.reserveOverlap ?? 0.1].join('|');
+  let P = scache && scache.prep && scache.prepKey === prepKey ? scache.prep : null;
+  if (!P) {
+    const n3 = fn[0] * fn[1] * fn[2];
+    P = { fine: { g: new Uint16Array(n3), s: new Uint16Array(n3) }, hid: { g: new Uint16Array(n3), s: new Uint16Array(n3) }, anyHidden: false,
+      bins: new Map(), hidden: 0, seen: 0, niOf: new Uint16Array(N), matOf: new Uint16Array(N) };
+    const { fine, hid, bins, niOf, matOf } = P;
+    const prio = {}; o.groupNames.forEach((g, i) => { const p = (o.groupPriority || []).indexOf(g); prio[i + 1] = p < 0 ? 50 + i : p; });
+    scaled.forEach(p => partSolid(p.tris, [ox, oy, oz], fb, fn, fine, o.groupNames.indexOf(p.group) + 1, prio));
+    // each hidden part is filled solid between its outer surfaces along all three axes (its "visual hull"), so an open
+    // tyre shell counts as a whole wheel; parts are filled one at a time so the gap between two wheels stays open
+    if (reserveOverlap < 1) parts.filter(p => !o.groupsOn.has(p.group)).forEach(p => { P.anyHidden = true;
+      const one = { g: new Uint16Array(fn[0] * fn[1] * fn[2]), s: new Uint16Array(fn[0] * fn[1] * fn[2]) };
+      partSolid(Float32Array.from(p.tris, v => v * s), [ox, oy, oz], fb, fn, one, 1, { 1: 0 });
+      const lo = [1e9, 1e9, 1e9], hi = [-1, -1, -1];
+      for (let fy = 0; fy < fn[1]; fy++) for (let fz = 0; fz < fn[2]; fz++) for (let fx = 0; fx < fn[0]; fx++) if (one.s[fidx(fx, fy, fz)] || one.g[fidx(fx, fy, fz)]) {
+        lo[0] = Math.min(lo[0], fx); lo[1] = Math.min(lo[1], fy); lo[2] = Math.min(lo[2], fz); hi[0] = Math.max(hi[0], fx); hi[1] = Math.max(hi[1], fy); hi[2] = Math.max(hi[2], fz); }
+      if (hi[0] < 0) return;
+      const on = (fx, fy, fz) => one.s[fidx(fx, fy, fz)] || one.g[fidx(fx, fy, fz)];
+      for (let fy = lo[1]; fy <= hi[1]; fy++) for (let fz = lo[2]; fz <= hi[2]; fz++) for (let fx = lo[0]; fx <= hi[0]; fx++) {
+        if (on(fx, fy, fz)) { hid.s[fidx(fx, fy, fz)] = 1; continue; }
+        // inside the span along x, y and z: surface on both sides in every axis
+        let ok = true;
+        for (const [dx, dy, dz] of [[1, 0, 0], [0, 1, 0], [0, 0, 1]]) {
+          let a = false, b = false;
+          for (let k = 1; !a; k++) { const X = fx - dx * k, Y = fy - dy * k, Z = fz - dz * k; if (X < lo[0] || Y < lo[1] || Z < lo[2]) break; if (on(X, Y, Z)) a = true; }
+          for (let k = 1; !b; k++) { const X = fx + dx * k, Y = fy + dy * k, Z = fz + dz * k; if (X > hi[0] || Y > hi[1] || Z > hi[2]) break; if (on(X, Y, Z)) b = true; }
+          if (!a || !b) { ok = false; break; }
+        }
+        if (ok) hid.g[fidx(fx, fy, fz)] = 1;
       }
-      if (ok) hid.g[fidx(fx, fy, fz)] = 1;
-    }
-  });
+    });
+    // model surface samples binned per cell, cell-local (0..1); weights are areas in cell units
+    // only surface facing open air counts: a sample with solid on both sides (a face buried inside another part, or between
+    // overlapping parts) is hidden geometry a builder ignores
+    const solidAt = (x, y, z) => { const fx = Math.floor((x - ox) / fb), fy = Math.floor((y - oy) / fb), fz = Math.floor((z - oz) / fb);
+      return fx >= 0 && fy >= 0 && fz >= 0 && fx < fn[0] && fy < fn[1] && fz < fn[2] && fine.g[fidx(fx, fy, fz)] > 0; };
+    if (surface) scaled.forEach(p => sampleTris(p.tris, SURF_STEP * b, (x, y, z, a, bb, c, w) => {
+      const cx = Math.floor((x - ox) / b), cy = Math.floor((y - oy) / b), cz = Math.floor((z - oz) / b);
+      if (cx < 0 || cy < 0 || cz < 0 || cx >= nx || cy >= ny || cz >= nz) return;
+      P.seen++;
+      const e = fb * 1.5;
+      if (solidAt(x + a * e, y + bb * e, z + c * e) && solidAt(x - a * e, y - bb * e, z - c * e)) { P.hidden++; return; }
+      const k = idx(cx, cy, cz); let arr = bins.get(k); if (!arr) bins.set(k, arr = []);
+      arr.push((x - ox) / b - cx, (y - oy) / b - cy, (z - oz) / b - cz, a, bb, c, w / (b * b));
+    }));
+    for (let y = 0; y < ny; y++) for (let z = 0; z < nz; z++) for (let x = 0; x < nx; x++) { let n = 0, m = 0;
+      for (let sy = 0; sy < SUB; sy++) for (let sz = 0; sz < SUB; sz++) for (let sx = 0; sx < SUB; sx++) {
+        const f = fidx(x * SUB + sx, y * SUB + sy, z * SUB + sz); if (fine.g[f]) n++; if (fine.g[f] || fine.s[f]) m++; }
+      niOf[idx(x, y, z)] = n; matOf[idx(x, y, z)] = m; }
+    if (scache) { scache.prep = P; scache.prepKey = prepKey; }
+  }
+  const { fine, hid, anyHidden, bins, niOf, matOf, hidden, seen } = P;   // niOf, matOf: inside samples; inside or surface samples
   const mh = newMask();
-  const N = nx * ny * nz, cell = new Int16Array(N), fit = new Int32Array(N).fill(-1), fill = new Float32Array(N);
+  const cell = new Int16Array(N), fit = new Int32Array(N).fill(-1), fill = new Float32Array(N);
   const T = o.T.list, pen = T.map(tp => o.shapes[tp.shape].penalty ?? 0.11);
-  const surface = o.scoring !== 'volume', K = o.candidates || 12, ALT = 5, PEN_SCALE = o.penaltyScale ?? 4;   // simplicity penalties (seed.js) break near-ties
+  const K = o.candidates || 12, ALT = 5, PEN_SCALE = o.penaltyScale ?? 4;   // simplicity penalties (seed.js) break near-ties
   const WV = o.weights ? o.weights[0] : 0.3, WM = o.weights ? o.weights[1] : 0.35, WB = o.weights ? o.weights[2] : 0.35;
-  // model surface samples binned per cell, cell-local (0..1); weights are areas in cell units
-  const bins = new Map();
-  // only surface facing open air counts: a sample with solid on both sides (a face buried inside another part, or between
-  // overlapping parts) is hidden geometry a builder ignores
-  const solidAt = (x, y, z) => { const fx = Math.floor((x - ox) / fb), fy = Math.floor((y - oy) / fb), fz = Math.floor((z - oz) / fb);
-    return fx >= 0 && fy >= 0 && fz >= 0 && fx < fn[0] && fy < fn[1] && fz < fn[2] && fine.g[fidx(fx, fy, fz)] > 0; };
-  let hidden = 0, seen = 0;
-  if (surface) scaled.forEach(p => sampleTris(p.tris, SURF_STEP * b, (x, y, z, a, bb, c, w) => {
-    const cx = Math.floor((x - ox) / b), cy = Math.floor((y - oy) / b), cz = Math.floor((z - oz) / b);
-    if (cx < 0 || cy < 0 || cz < 0 || cx >= nx || cy >= ny || cz >= nz) return;
-    seen++;
-    const e = fb * 1.5;
-    if (solidAt(x + a * e, y + bb * e, z + c * e) && solidAt(x - a * e, y - bb * e, z - c * e)) { hidden++; return; }
-    const k = idx(cx, cy, cz); let arr = bins.get(k); if (!arr) bins.set(k, arr = []);
-    arr.push((x - ox) / b - cx, (y - oy) / b - cy, (z - oz) / b - cz, a, bb, c, w / (b * b));
-  }));
   // model samples in and around a cell (neighbours within a margin), cell-local
   const nearPts = (x, y, z, m) => {
     const out = [];
@@ -568,11 +693,6 @@ export function computeGrid(parts, o) {
     return out;
   };
   const alt = new Int32Array(N * ALT).fill(-1), altScore = new Float32Array(N * ALT), keep = new Map();
-  const niOf = new Uint16Array(N), matOf = new Uint16Array(N);   // inside samples; inside or surface samples
-  for (let y = 0; y < ny; y++) for (let z = 0; z < nz; z++) for (let x = 0; x < nx; x++) { let n = 0, m = 0;
-    for (let sy = 0; sy < SUB; sy++) for (let sz = 0; sz < SUB; sz++) for (let sx = 0; sx < SUB; sx++) {
-      const f = fidx(x * SUB + sx, y * SUB + sy, z * SUB + sz); if (fine.g[f]) n++; if (fine.g[f] || fine.s[f]) m++; }
-    niOf[idx(x, y, z)] = n; matOf[idx(x, y, z)] = m; }
   // owner's style (2026-10-01 edits): shaped blocks only on the outside. A cell with model material in all six
   // neighbours and at least interiorFill of its own volume filled is part of the solid core: a cube.
   const interiorFill = o.interiorFill ?? 0.5, occupied = (o.occupiedFill ?? 0.1) * NS;
@@ -599,6 +719,7 @@ export function computeGrid(parts, o) {
       return m >= 0.5 * layer[k];
     });
   };
+  let nextProgress = 0;
   const mi = newMask(), ms = newMask(), cnt = new Uint32Array(o.groupNames.length + 1), cand = [];
   for (let y = 0; y < ny; y++) for (let z = 0; z < nz; z++) for (let x = 0; x < nx; x++) {
     cnt.fill(0); mi.fill(0); ms.fill(0); let ni = 0, ns = 0;
@@ -643,6 +764,9 @@ export function computeGrid(parts, o) {
     for (let ti = 0; ti < T.length; ti++) {
       const tp = T[ti];
       if (tp.plate && (!thin || poke)) continue;
+      // cheap bound first: the overlap can't exceed the cell's own sample count, so too small a cell for this block's
+      // volume fails the fill rule without counting bits (unless the skin rule lets it skip the fill rule)
+      if ((tp.plate ? ns : ni) / tp.n < o.minFill && !(anySkin && !tp.plate && tp.walls.some((c, w) => c && skin[w]))) continue;
       const M = tp.plate ? ms : mi, tm = tp.mask;
       let inter = 0, uni = 0;
       for (let w = 0; w < W; w++) { inter += pop(tm[w] & M[w]); uni += pop(tm[w] | M[w]); }
@@ -660,17 +784,27 @@ export function computeGrid(parts, o) {
       cand.length = n; }
     // 2. surface: the model's surface in the cell should run along the block's faces (model -> block), and every face
     //    the block adds inside the cell should have model surface on it (block -> model)
-    if (surface) {
-      const own = bins.get(ci) || [], nearH = makeHash(nearPts(x, y, z, SURF_D), 7, -SURF_D, 1 + 2 * SURF_D);
-      const exposed = [[x - 1, y, z], [x + 1, y, z], [x, y - 1, z], [x, y + 1, z], [x, y, z - 1], [x, y, z + 1]]
-        .map(([X, Y, Z]) => X < 0 || Y < 0 || Z < 0 || X >= nx || Y >= ny || Z >= nz || niOf[idx(X, Y, Z)] < NS / 4);
-      let wsum = 0; for (let i = 6; i < own.length; i += 7) wsum += own[i];
+    if (surface && (!o.onlyCell || o.onlyCell(ci))) {
+      let own = null, nearH = null, exposed = null, wsum = 0;
       for (const c of cand) {
-        const [m2b, b2m] = surfaceScore(o.shapes[T[c.ti].shape], ROTS[T[c.ti].rot], own, wsum, nearH, exposed, o.wallWeight ?? 2);
+        // the scores depend only on the model around the cell and the block, so they are kept across refits
+        let r = scache ? scache.map.get(ci * T.length + c.ti) : undefined;
+        if (!r) {
+          if (!own) {
+            own = bins.get(ci) || []; nearH = makeHash(nearPts(x, y, z, SURF_D), 7, -SURF_D, 1 + 2 * SURF_D);
+            exposed = [[x - 1, y, z], [x + 1, y, z], [x, y - 1, z], [x, y + 1, z], [x, y, z - 1], [x, y, z + 1]]
+              .map(([X, Y, Z]) => X < 0 || Y < 0 || Z < 0 || X >= nx || Y >= ny || Z >= nz || niOf[idx(X, Y, Z)] < NS / 4);
+            for (let i = 6; i < own.length; i += 7) wsum += own[i];
+          }
+          r = surfaceScore(o.shapes[T[c.ti].shape], T[c.ti].rot, own, wsum, nearH, exposed, o.wallWeight ?? 2);
+          if (scache) { scache.map.set(ci * T.length + c.ti, r); scache.fresh.push(ci * T.length + c.ti); }
+        }
+        const [m2b, b2m] = r;
         c.m2b = m2b; c.b2m = b2m; c.raw = WV * c.iou + WM * m2b + WB * b2m; c.sc = c.raw - PEN_SCALE * pen[c.ti];
       }
       cand.sort((p, q) => q.sc - p.sc);
     }
+    if (o.progress && ci >= nextProgress) { o.progress(ci / N); nextProgress = ci + Math.max(1, N >> 6); }
     if (o.debug) o.debug(x, y, z, cand, ni, ns);
     if (interiorFill < 1 && cubeTi >= 0 && ni >= interiorFill * NS && isInterior(x, y, z) && T[cand[0].ti] !== T[cubeTi]) {
       const c = cand.find(c => c.ti === cubeTi) || { ti: cubeTi, sc: cand[0].sc, bfill: ni / NS };

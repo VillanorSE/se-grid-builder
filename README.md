@@ -52,6 +52,7 @@ counted but not imported yet (see `design/multicell-blocks.md`).
 |---|---|
 | `app.html` | The page (UI, three.js rendering) |
 | `core.js` | Shapes, masks, rotations, sketch-to-solid, OBJ/STL, voxelising, fitting, `.sbc` parsing (no DOM) |
+| `fit_worker.js` | The fit running in Web Workers (inlined with `core.js` by `build.py` and started from a Blob URL) |
 | `mwm.js` | Reads triangles from Space Engineers `.mwm` models (classic tagged layout) |
 | `importer.js` | World import (mods -> block definitions -> shapes) over a small folder interface |
 | `seed.js`, `armor_data.js`, `panel_data.js` | The starting library |
