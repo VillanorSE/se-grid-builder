@@ -284,8 +284,12 @@ export function prepareModel(rawParts, o) {
   const up = 'xyz'.indexOf(o.up), fa = 'xyz'.indexOf(o.front[1]), sg = o.front[0] === '-' ? -1 : 1;
   if (fa === up) throw new Error('front and up must be different axes');
   const side = [0, 1, 2].find(i => i !== up && i !== fa);
+  // the side axis takes whichever sign keeps this a rotation (determinant +1); a fixed sign mirrored the model
+  // left-to-right for some front/up choices (e.g. front -y, up z), swapping port and starboard
+  const even = (fa === 0 && up === 1) || (fa === 1 && up === 2) || (fa === 2 && up === 0);
+  const ss = sg * (even ? 1 : -1);
   const parts = rawParts.map(p => { const t = new Float32Array(p.tris.length);
-    for (let i = 0; i < t.length; i += 3) { t[i] = p.tris[i + fa] * sg; t[i + 1] = p.tris[i + up]; t[i + 2] = p.tris[i + side]; }
+    for (let i = 0; i < t.length; i += 3) { t[i] = p.tris[i + fa] * sg; t[i + 1] = p.tris[i + up]; t[i + 2] = p.tris[i + side] * ss; }
     return { name: p.name, tris: t }; });
   const mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
   parts.forEach(p => { for (let i = 0; i < p.tris.length; i += 3) for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], p.tris[i + k]); mx[k] = Math.max(mx[k], p.tris[i + k]); } });
@@ -719,6 +723,29 @@ export function computeGrid(parts, o) {
       return m >= 0.5 * layer[k];
     });
   };
+  // buildable surfaces: on by default for shell fill at large-grid sizes (a hull to build on), off otherwise (the
+  // owner's small-grid vehicles use shaped and half blocks on top and sides)
+  const buildable = o.buildable ?? (o.fill === 'shell' && b >= 1);
+  const roundDepth = o.roundDepth ?? 2, roundCover = o.roundCover ?? 0.5, coverMin = o.coverMin ?? 0.8, mm = newMask();
+  // a cell rounds out when every exposed wall but the bottom has the model's material within roundDepth samples of it
+  // over most of the wall (so a full block widens the skin by at most that much), the bottom, if exposed, has material
+  // on it (no rounding down), and at least one top or side wall is exposed
+  const roundsOut = (x, y, z, mi, ms) => {
+    let any = false;
+    for (let w = 0; w < 6; w++) {
+      const X = x + [-1, 1, 0, 0, 0, 0][w], Y = y + [0, 0, -1, 1, 0, 0][w], Z = z + [0, 0, 0, 0, -1, 1][w];
+      if (X >= 0 && Y >= 0 && Z >= 0 && X < nx && Y < ny && Z < nz && niOf[idx(X, Y, Z)] >= NS / 4) continue;   // not exposed
+      const ax = w >> 1, depth = w === 2 ? 1 : roundDepth + 1;
+      let hit = 0;
+      for (let u = 0; u < SUB; u++) for (let v = 0; v < SUB; v++) { let on = false;
+        for (let dd = 0; dd < depth && !on; dd++) { const q = [0, 0, 0]; q[ax] = w & 1 ? SUB - 1 - dd : dd; q[(ax + 1) % 3] = u; q[(ax + 2) % 3] = v;
+          const k = (q[1] * SUB + q[2]) * SUB + q[0]; if (getBit(mi, k) || getBit(ms, k)) on = true; }
+        if (on) hit++; }
+      if (hit < roundCover * SUB * SUB) return false;
+      if (w !== 2) any = true;
+    }
+    return any;
+  };
   let nextProgress = 0;
   const mi = newMask(), ms = newMask(), cnt = new Uint32Array(o.groupNames.length + 1), cand = [];
   for (let y = 0; y < ny; y++) for (let z = 0; z < nz; z++) for (let x = 0; x < nx; x++) {
@@ -776,11 +803,32 @@ export function computeGrid(parts, o) {
         let ov = 0; for (let w = 0; w < W; w++) ov += pop(tm[w] & mh[w]); if (ov > reserveOverlap * tp.n) continue; }
       cand.push({ ti, iou: inter / uni, bfill, sc: inter / uni - pen[ti] });
     }
+    // buildable surfaces, round outward: of the blocks that hold (nearly) all of the cell's material, the one adding the
+    // least volume past the model, simplicity penalty included. They may miss the fill rule (a half block keeping a
+    // narrowing hull side full width). Skin cells only (an exposed wall), not where a hidden part keeps its space.
+    let covers = null;
+    if (buildable && !nh && [[x - 1, y, z], [x + 1, y, z], [x, y - 1, z], [x, y + 1, z], [x, y, z - 1], [x, y, z + 1]]
+      .some(([X, Y, Z]) => X < 0 || Y < 0 || Z < 0 || X >= nx || Y >= ny || Z >= nz || niOf[idx(X, Y, Z)] < NS / 4)) {
+      let nm = 0; for (let w = 0; w < W; w++) { mm[w] = mi[w] | ms[w]; nm += pop(mm[w]); }
+      let best = 1e9; const cost = new Map();
+      for (let ti = 0; ti < T.length; ti++) {
+        const tp = T[ti]; if (tp.plate) continue;
+        let im = 0; for (let w = 0; w < W; w++) im += pop(tp.mask[w] & mm[w]);
+        if (im < coverMin * nm) continue;
+        const cst = (tp.n - im) / NS + PEN_SCALE * pen[ti]; cost.set(ti, cst); if (cst < best) best = cst;
+      }
+      covers = new Set([...cost].filter(([, c]) => c < best + 1e-6).map(([ti]) => ti));
+      for (const ti of covers) if (!cand.some(c => c.ti === ti)) {
+        let inter = 0, uni = 0; for (let w = 0; w < W; w++) { inter += pop(T[ti].mask[w] & mi[w]); uni += pop(T[ti].mask[w] | mi[w]); }
+        cand.push({ ti, iou: uni ? inter / uni : 0, bfill: inter / T[ti].n, sc: (uni ? inter / uni : 0) - pen[ti], cover: true });
+      }
+      if (!covers.size) covers = null;
+    }
     if (!cand.length) { fit[ci] = -2; if (o.skipped) o.skipped(x, y, z, 'no block passes the fill rule', ni, ns); continue; }
     cand.sort((p, q) => q.sc - p.sc);
     // keep the best K, at most 2 orientations per shape (so near-identical turns of one shape can't crowd out the rest)
     { const per = new Map(); let n = 0;
-      for (const c of cand) { const s = T[c.ti].shape, k = per.get(s) || 0; if (k >= 2) continue; per.set(s, k + 1); cand[n++] = c; if (n >= K) break; }
+      for (const c of cand) { const s = T[c.ti].shape, k = per.get(s) || 0; if (!(covers && covers.has(c.ti)) && (k >= 2 || n >= K)) continue; per.set(s, k + 1); cand[n++] = c; }
       cand.length = n; }
     // 2. surface: the model's surface in the cell should run along the block's faces (model -> block), and every face
     //    the block adds inside the cell should have model surface on it (block -> model)
@@ -805,16 +853,26 @@ export function computeGrid(parts, o) {
       cand.sort((p, q) => q.sc - p.sc);
     }
     if (o.progress && ci >= nextProgress) { o.progress(ci / N); nextProgress = ci + Math.max(1, N >> 6); }
+    // buildable surfaces (owner, 2026-10-11, Littorio): a skin is rounded OUTWARD to a full block, never inward to a
+    // half block: decks and other top skins are full blocks (half blocks on top are a pain to build on), and hull sides
+    // keep their full width (room to mount guns and walk around them). Never downward: an underside stays where it is.
+    let rounded = false;
+    if (covers) { const c = cand.find(c => covers.has(c.ti)); if (c) { cand.splice(cand.indexOf(c), 1); cand.unshift(c); rounded = true; } }
+    if (buildable && cubeTi >= 0 && T[cand[0].ti] !== T[cubeTi] && ni >= o.minFill * NS && !nh && roundsOut(x, y, z, mi, ms)) {
+      const c = cand.find(c => c.ti === cubeTi) || { ti: cubeTi, sc: cand[0].sc, raw: cand[0].raw, iou: ni / NS, bfill: ni / NS };
+      if (cand.indexOf(c) >= 0) cand.splice(cand.indexOf(c), 1);
+      cand.unshift(c); rounded = true;
+    }
     if (o.debug) o.debug(x, y, z, cand, ni, ns);
     if (interiorFill < 1 && cubeTi >= 0 && ni >= interiorFill * NS && isInterior(x, y, z) && T[cand[0].ti] !== T[cubeTi]) {
-      const c = cand.find(c => c.ti === cubeTi) || { ti: cubeTi, sc: cand[0].sc, bfill: ni / NS };
+      const c = cand.find(c => c.ti === cubeTi) || { ti: cubeTi, sc: cand[0].sc, iou: ni / NS, bfill: ni / NS };
       cand.splice(cand.indexOf(c) >= 0 ? cand.indexOf(c) : 0, cand.indexOf(c) >= 0 ? 1 : 0); cand.unshift(c);
     }
     const top = cand[0], plateMin = o.plateMinScore ?? 0;
     const q = top.raw ?? top.sc;          // match quality before the simplicity tie-breaker
-    fit[ci] = surface && (q < (o.minScore ?? 0.2) || (T[top.ti].plate && q < plateMin)) ? -2 : top.ti; fill[ci] = top.bfill;   // -2: nothing matches well
+    fit[ci] = !rounded && surface && (q < (o.minScore ?? 0.2) || (T[top.ti].plate && q < plateMin)) ? -2 : top.ti; fill[ci] = top.bfill;   // -2: nothing matches well
     for (let k = 0; k < Math.min(ALT, cand.length); k++) { alt[ci * ALT + k] = cand[k].ti; altScore[ci * ALT + k] = cand[k].sc; }
-    if (fit[ci] >= 0 && !(interiorFill < 1 && cand[0].ti === cubeTi && isInterior(x, y, z))) keep.set(ci, { x, y, z, cand: cand.map(c => ({ ti: c.ti, sc: c.sc })) });
+    if (fit[ci] >= 0 && !rounded && !(interiorFill < 1 && cand[0].ti === cubeTi && isInterior(x, y, z))) keep.set(ci, { x, y, z, cand: cand.map(c => ({ ti: c.ti, sc: c.sc })) });
   }
   // continuity (owner, 2026-10-01: side walls and skins run on from block to block): a candidate gains for every face it
   // meets flush with the neighbouring block's face; two passes, each using the previous pass's picks

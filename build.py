@@ -38,7 +38,7 @@ def main():
     a = ap.parse_args()
     n = armor_data() if SHAPES.exists() else "committed"
     app = (HERE / "app.html").read_text(encoding="utf-8")
-    bundle = "\n".join(module_body(m) for m in ("armor_data.js", "panel_data.js", "core.js", "mwm.js", "seed.js", "importer.js"))
+    bundle = "\n".join(module_body(m) for m in ("armor_data.js", "panel_data.js", "core.js", "mwm.js", "seed.js", "blueprint.js", "importer.js", "blueprint_ui.js"))
     marker = "/*__MODULES__*/"
     assert app.count(marker) == 1
     out = app.replace(marker, bundle)

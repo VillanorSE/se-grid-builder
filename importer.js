@@ -4,6 +4,7 @@
 import { parseWorldMods, parseBlockDefs, parseResx, blockName, modelToCell, shapeMask, maskCount, shapeKeySig, makeKey } from './core.js';
 import { readMwm } from './mwm.js';
 import { MOD_PENALTY } from './seed.js';
+import { blockOrientOnCard } from './blueprint.js';
 
 export const DEFAULT_FILTER = 'armou?r|panel|plate|slope|corner|hull|wing';
 const dec = new TextDecoder();
@@ -44,9 +45,13 @@ export async function importWorldBlocks(library, o) {
   for (const s of library) { if (!s.solids || !s.solids.length) continue; if (!s._m) s._m = shapeMask(s); if (maskCount(s._m.mask)) bySig.set(shapeKeySig(s._m.mask), s); }
   const keys = new Set(library.map(s => s.key));
   const sum = { mods: sources.length, defs: 0, matched: 0, topology: 0, models: 0, newShapes: 0, multiCell: 0, noShape: 0, unreadable: 0, filteredOut: 0 };
-  const addBlock = (s, d, src) => {
+  // orient: for a block read from its model, how it sits on the card (its Forward and Up as card directions; the card
+  // may hold it turned, since cards group shapes in any turn). Blueprint export needs it (blueprint.js).
+  const addBlock = (s, d, src, orient) => {
     s.blocks ||= [];
-    if (!s.blocks.some(b => b.subtype === d.subtype && b.size === d.cubeSize)) s.blocks.push({ subtype: d.subtype, size: d.cubeSize, mod: src.name, name: blockName(d, texts) });
+    const cur = s.blocks.find(b => b.subtype === d.subtype && b.size === d.cubeSize);
+    if (!cur) s.blocks.push({ subtype: d.subtype, size: d.cubeSize, mod: src.name, name: blockName(d, texts), typeId: d.typeId, ...(orient ? { orient } : {}) });
+    else if (orient && !cur.orient) cur.orient = orient;
   };
   for (const src of sources) {
     const files = await sbcFiles(src.fs, (src.root ? src.root + '/' : '') + 'Data');
@@ -75,14 +80,15 @@ export async function importWorldBlocks(library, o) {
         shape._m = shapeMask(shape);
         if (!maskCount(shape._m.mask)) { sum.noShape++; continue; }
         const sig = shapeKeySig(shape._m.mask);
-        let s = bySig.get(sig);
+        let s = bySig.get(sig), orient = ['Forward', 'Up'];
+        if (s) { if (!s._m) s._m = shapeMask(s); orient = blockOrientOnCard(s._m.mask, shape._m.mask); }
         if (!s) {
           const name = blockName(d, texts);
           s = Object.assign(shape, { id: 'mesh:' + src.name + ':' + d.subtype, key: makeKey(name, keys), name, source: src.name,
             blocks: [], use: false, penalty: MOD_PENALTY, lines: [], rev: 1 });   // mod blocks start off: switch on the ones you build with
           keys.add(s.key); library.push(s); bySig.set(sig, s); sum.newShapes++;
         }
-        addBlock(s, d, src); sum.models++; n++;
+        addBlock(s, d, src, orient); sum.models++; n++;
         if (n % 25 === 0) await pause();
       }
     }

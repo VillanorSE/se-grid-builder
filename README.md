@@ -46,6 +46,51 @@ a command line instead, then use **Import JSON** in the Cube Library:
 Imported mod blocks start switched off: turn on the ones you build with. Blocks larger than one cell (most wings) are
 counted but not imported yet (see `design/multicell-blocks.md`).
 
+## Blueprint export
+
+Grid Builder > Blueprint. One `CubeGrid` of the block size above (0.5 m = small grid, 2.5 m = large), every cell that
+has a block (fitted or edited; empty and "no block" cells left out):
+
+- **Blocks:** vanilla armour cards use the game's subtype for the grid size and the Armour choice (light by default,
+  heavy); panels and imported blocks use their own TypeId/SubtypeId of that grid size (heavy variant when there is one).
+  Cards without a block of that grid size (own sketches, mod blocks of the other size) are left out and listed.
+- **Placement:** the model's front becomes the grid's Forward (-Z), up stays up, the model's +z side becomes the grid's
+  Right (+X). `Min` is the cell; `BlockOrientation` comes from the card's turn in the cell and the card's base
+  orientation (below).
+- **Symmetry:** `XMirroxPlane`/`XMirroxOdd` on the hull centreline, so the in-game X symmetry mode lines up: centre on a
+  block column = plane through the middle column (X = 0); on a grid line = `XMirroxOdd` (plane between X = -1 and 0).
+  ENGINE_CONSTRAINT from the game's code (MyCubeBuilderGizmo.MirrorBlockByPlane: Odd mirrors x to 2P - x - 1).
+- **Colour** (optional): one colour, or per block kind as drawn (armour blue, panels tan, mod blocks green), written as
+  `ColorMaskHSV` with the game's conversion (VRage ColorToHSV, then saturation - 0.8, value - 0.45).
+- **Name:** the model's name unless one is typed; it is the folder name and the grid's name.
+- **Delivery:** Chrome/Edge write `bp.sbc` and `thumb.png` (the blocks seen from the 3D view's direction) straight into
+  `%APPDATA%\SpaceEngineers\Blueprints\local\<name>\` (pick that folder once; it is remembered like the import
+  folders; "folder..." picks it again). Replacing asks first and deletes the game's cache `bp.sbcB5`. **Download zip**
+  (any browser) gives `<name>.zip` to unzip into `Blueprints\local`. In game: F10, select it, paste.
+
+**Orientation map** (`blueprint.js`, `CARD_ORIENT`): for each card, how the game block sits in the card's frame (its
+Forward and Up as card directions). Correct a wrong card there, in one line. Imported blocks carry their own turn
+(`orient`, recorded by the importer). Verified 2026-10-11 for the 51 starting cards against three independent game
+sources (`test_blueprint.mjs` repeats the check when the game is installed):
+
+1. the armour tile table in `Sandbox.Game.dll` (`MyCubeGridDefinitions`: face normals, full faces, edges);
+2. the blocks' mount points (`CubeBlocks_Armor*.sbc`, converted with the game's own mount-point transforms);
+3. the blocks' construction-stage models (`*Construction_3.mwm`, all four light/heavy and size variants).
+
+23 armour cards and all 18 panel cards (all 72 panel models) sit unturned; 10 armour cards are owner sketches drawn
+turned (Corner 2x1 Base, Inv. Corner 2x1 Base and Tip, Half Block, Half Slope, Half Slope Corner and its Inverted,
+Sloped Corner Tip, Corner Square Inverted, Square Sloped Corner Tip Inv.), and the map turns them back. Inv. Corner 2x1
+Base is the least certain (three turns fit the mount points and models nearly equally; the tile table's cut face picks
+one). The in-game check is the **test blueprint**: one row per card (only blocks used in builder by default), the card
+in all 24 turns, one empty cell apart, red marker cubes at the back of each row (2 on every 5th row, 3 on every 10th).
+Its folder also holds `layout.png` (the same layout drawn by the tool, row and turn numbers on it) and `layout.txt`
+(the legend). Each block in game should look like the tool's drawing.
+
+The blueprint XML follows the game's own files (element names and order checked against the owner's local blueprints
+by `test_blueprint.mjs`) and two MIT-licensed tools, se-blueprinter (imivi) and StlToBlueprint (Austin Van Ess);
+their licence notice is in `blueprint.js`.
+
+
 ## Development
 
 | File | Holds |
@@ -65,6 +110,10 @@ After editing: `python build.py`, then `node test_core.mjs`. Optional real-model
 `SGB_TEST_OBJ=<model.obj> node test_core.mjs`, and a world import test with `node test_core.mjs "<world folder>"`.
 
 ## Credits and licence
+
+Blueprint export borrows ideas and small pieces from se-blueprinter (MIT, (c) 2024 imivi) and StlToBlueprint
+(MIT, (c) 2020 Austin Van Ess); their licence notices are in `blueprint.js`.
+
 
 Code: MIT (see `LICENSE`). three.js is loaded from jsDelivr (MIT).
 

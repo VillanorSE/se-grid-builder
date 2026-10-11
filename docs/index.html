@@ -209,11 +209,26 @@
     <label>Cells <select id="fill"><option value="solid">all filled cells</option><option value="shell">outer cells only</option></select></label>
     <label>Min block fill <input type="number" id="minFill" min="0" max="1" step="0.05" value="0.3"></label>
     <label>Simplify <input type="number" id="simplify" min="0" max="6" step="0.5" value="4"> <span class="hint">0 = follow the model exactly; higher = cubes, halves and slopes win more often</span></label>
+    <label>Buildable surfaces <select id="buildable"><option value="auto">auto (on for outer cells at large grid)</option><option value="on">on</option><option value="off">off</option></select>
+      <span class="hint">round the skin outward, never inward: full blocks on decks and other tops, hull sides kept full width, blocks that hold all of the model where it narrows</span></label>
     <div class="hint">A block is considered for a cell only when the model fills at least this share of <i>the block's own</i>
     volume (a plate: of the model's thin skin). Among those, the winner is the block whose faces best match the model's
     surface in the cell: the surface should lie on the block's faces, and every face the block shows should have model
     surface on it. Simpler blocks take near-ties. Thin bits of a neighbour poking through a grid line get no block.</div>
     <div id="info"></div>
+
+    <h2>Blueprint</h2>
+    <label>Name <input type="text" id="bpName" style="flex:1"></label>
+    <label>Armour <select id="bpArmour"><option value="light">light</option><option value="heavy">heavy</option></select></label>
+    <label>Colour <select id="bpColour"><option value="none">game default</option><option value="kind">per block kind</option><option value="one">one colour</option></select>
+      <input type="color" id="bpColourPick" value="#8a9099" style="width:28px;padding:0"></label>
+    <div class="btnrow"><button id="bpExport" class="primary">Export blueprint</button><button id="bpZip">Download zip</button><button id="bpFolder" title="Choose the Blueprints\local folder again">folder&hellip;</button></div>
+    <div class="btnrow"><button id="bpTest">Test blueprint: every block in 24 turns</button></div>
+    <label><input type="checkbox" id="bpTestUsed" checked> test only blocks used in builder</label>
+    <div id="bpStatus" class="hint"></div>
+    <div class="hint">One grid of the block size above, every fitted cell with your edits. Export writes straight into
+    %APPDATA%\SpaceEngineers\Blueprints\local\&lt;name&gt; (pick that folder once); in game F10, then paste. The in-game
+    symmetry plane is set on the hull centreline.</div>
 
     <h2>Show</h2>
     <label><input type="checkbox" id="showModel" checked> Model, opacity <input type="range" id="opacity" min="0.05" max="1" step="0.05" value="0.3"></label>
@@ -546,8 +561,12 @@ function prepareModel(rawParts, o) {
   const up = 'xyz'.indexOf(o.up), fa = 'xyz'.indexOf(o.front[1]), sg = o.front[0] === '-' ? -1 : 1;
   if (fa === up) throw new Error('front and up must be different axes');
   const side = [0, 1, 2].find(i => i !== up && i !== fa);
+  // the side axis takes whichever sign keeps this a rotation (determinant +1); a fixed sign mirrored the model
+  // left-to-right for some front/up choices (e.g. front -y, up z), swapping port and starboard
+  const even = (fa === 0 && up === 1) || (fa === 1 && up === 2) || (fa === 2 && up === 0);
+  const ss = sg * (even ? 1 : -1);
   const parts = rawParts.map(p => { const t = new Float32Array(p.tris.length);
-    for (let i = 0; i < t.length; i += 3) { t[i] = p.tris[i + fa] * sg; t[i + 1] = p.tris[i + up]; t[i + 2] = p.tris[i + side]; }
+    for (let i = 0; i < t.length; i += 3) { t[i] = p.tris[i + fa] * sg; t[i + 1] = p.tris[i + up]; t[i + 2] = p.tris[i + side] * ss; }
     return { name: p.name, tris: t }; });
   const mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
   parts.forEach(p => { for (let i = 0; i < p.tris.length; i += 3) for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], p.tris[i + k]); mx[k] = Math.max(mx[k], p.tris[i + k]); } });
@@ -981,6 +1000,29 @@ function computeGrid(parts, o) {
       return m >= 0.5 * layer[k];
     });
   };
+  // buildable surfaces: on by default for shell fill at large-grid sizes (a hull to build on), off otherwise (the
+  // owner's small-grid vehicles use shaped and half blocks on top and sides)
+  const buildable = o.buildable ?? (o.fill === 'shell' && b >= 1);
+  const roundDepth = o.roundDepth ?? 2, roundCover = o.roundCover ?? 0.5, coverMin = o.coverMin ?? 0.8, mm = newMask();
+  // a cell rounds out when every exposed wall but the bottom has the model's material within roundDepth samples of it
+  // over most of the wall (so a full block widens the skin by at most that much), the bottom, if exposed, has material
+  // on it (no rounding down), and at least one top or side wall is exposed
+  const roundsOut = (x, y, z, mi, ms) => {
+    let any = false;
+    for (let w = 0; w < 6; w++) {
+      const X = x + [-1, 1, 0, 0, 0, 0][w], Y = y + [0, 0, -1, 1, 0, 0][w], Z = z + [0, 0, 0, 0, -1, 1][w];
+      if (X >= 0 && Y >= 0 && Z >= 0 && X < nx && Y < ny && Z < nz && niOf[idx(X, Y, Z)] >= NS / 4) continue;   // not exposed
+      const ax = w >> 1, depth = w === 2 ? 1 : roundDepth + 1;
+      let hit = 0;
+      for (let u = 0; u < SUB; u++) for (let v = 0; v < SUB; v++) { let on = false;
+        for (let dd = 0; dd < depth && !on; dd++) { const q = [0, 0, 0]; q[ax] = w & 1 ? SUB - 1 - dd : dd; q[(ax + 1) % 3] = u; q[(ax + 2) % 3] = v;
+          const k = (q[1] * SUB + q[2]) * SUB + q[0]; if (getBit(mi, k) || getBit(ms, k)) on = true; }
+        if (on) hit++; }
+      if (hit < roundCover * SUB * SUB) return false;
+      if (w !== 2) any = true;
+    }
+    return any;
+  };
   let nextProgress = 0;
   const mi = newMask(), ms = newMask(), cnt = new Uint32Array(o.groupNames.length + 1), cand = [];
   for (let y = 0; y < ny; y++) for (let z = 0; z < nz; z++) for (let x = 0; x < nx; x++) {
@@ -1038,11 +1080,32 @@ function computeGrid(parts, o) {
         let ov = 0; for (let w = 0; w < W; w++) ov += pop(tm[w] & mh[w]); if (ov > reserveOverlap * tp.n) continue; }
       cand.push({ ti, iou: inter / uni, bfill, sc: inter / uni - pen[ti] });
     }
+    // buildable surfaces, round outward: of the blocks that hold (nearly) all of the cell's material, the one adding the
+    // least volume past the model, simplicity penalty included. They may miss the fill rule (a half block keeping a
+    // narrowing hull side full width). Skin cells only (an exposed wall), not where a hidden part keeps its space.
+    let covers = null;
+    if (buildable && !nh && [[x - 1, y, z], [x + 1, y, z], [x, y - 1, z], [x, y + 1, z], [x, y, z - 1], [x, y, z + 1]]
+      .some(([X, Y, Z]) => X < 0 || Y < 0 || Z < 0 || X >= nx || Y >= ny || Z >= nz || niOf[idx(X, Y, Z)] < NS / 4)) {
+      let nm = 0; for (let w = 0; w < W; w++) { mm[w] = mi[w] | ms[w]; nm += pop(mm[w]); }
+      let best = 1e9; const cost = new Map();
+      for (let ti = 0; ti < T.length; ti++) {
+        const tp = T[ti]; if (tp.plate) continue;
+        let im = 0; for (let w = 0; w < W; w++) im += pop(tp.mask[w] & mm[w]);
+        if (im < coverMin * nm) continue;
+        const cst = (tp.n - im) / NS + PEN_SCALE * pen[ti]; cost.set(ti, cst); if (cst < best) best = cst;
+      }
+      covers = new Set([...cost].filter(([, c]) => c < best + 1e-6).map(([ti]) => ti));
+      for (const ti of covers) if (!cand.some(c => c.ti === ti)) {
+        let inter = 0, uni = 0; for (let w = 0; w < W; w++) { inter += pop(T[ti].mask[w] & mi[w]); uni += pop(T[ti].mask[w] | mi[w]); }
+        cand.push({ ti, iou: uni ? inter / uni : 0, bfill: inter / T[ti].n, sc: (uni ? inter / uni : 0) - pen[ti], cover: true });
+      }
+      if (!covers.size) covers = null;
+    }
     if (!cand.length) { fit[ci] = -2; if (o.skipped) o.skipped(x, y, z, 'no block passes the fill rule', ni, ns); continue; }
     cand.sort((p, q) => q.sc - p.sc);
     // keep the best K, at most 2 orientations per shape (so near-identical turns of one shape can't crowd out the rest)
     { const per = new Map(); let n = 0;
-      for (const c of cand) { const s = T[c.ti].shape, k = per.get(s) || 0; if (k >= 2) continue; per.set(s, k + 1); cand[n++] = c; if (n >= K) break; }
+      for (const c of cand) { const s = T[c.ti].shape, k = per.get(s) || 0; if (!(covers && covers.has(c.ti)) && (k >= 2 || n >= K)) continue; per.set(s, k + 1); cand[n++] = c; }
       cand.length = n; }
     // 2. surface: the model's surface in the cell should run along the block's faces (model -> block), and every face
     //    the block adds inside the cell should have model surface on it (block -> model)
@@ -1067,16 +1130,26 @@ function computeGrid(parts, o) {
       cand.sort((p, q) => q.sc - p.sc);
     }
     if (o.progress && ci >= nextProgress) { o.progress(ci / N); nextProgress = ci + Math.max(1, N >> 6); }
+    // buildable surfaces (owner, 2026-10-11, Littorio): a skin is rounded OUTWARD to a full block, never inward to a
+    // half block: decks and other top skins are full blocks (half blocks on top are a pain to build on), and hull sides
+    // keep their full width (room to mount guns and walk around them). Never downward: an underside stays where it is.
+    let rounded = false;
+    if (covers) { const c = cand.find(c => covers.has(c.ti)); if (c) { cand.splice(cand.indexOf(c), 1); cand.unshift(c); rounded = true; } }
+    if (buildable && cubeTi >= 0 && T[cand[0].ti] !== T[cubeTi] && ni >= o.minFill * NS && !nh && roundsOut(x, y, z, mi, ms)) {
+      const c = cand.find(c => c.ti === cubeTi) || { ti: cubeTi, sc: cand[0].sc, raw: cand[0].raw, iou: ni / NS, bfill: ni / NS };
+      if (cand.indexOf(c) >= 0) cand.splice(cand.indexOf(c), 1);
+      cand.unshift(c); rounded = true;
+    }
     if (o.debug) o.debug(x, y, z, cand, ni, ns);
     if (interiorFill < 1 && cubeTi >= 0 && ni >= interiorFill * NS && isInterior(x, y, z) && T[cand[0].ti] !== T[cubeTi]) {
-      const c = cand.find(c => c.ti === cubeTi) || { ti: cubeTi, sc: cand[0].sc, bfill: ni / NS };
+      const c = cand.find(c => c.ti === cubeTi) || { ti: cubeTi, sc: cand[0].sc, iou: ni / NS, bfill: ni / NS };
       cand.splice(cand.indexOf(c) >= 0 ? cand.indexOf(c) : 0, cand.indexOf(c) >= 0 ? 1 : 0); cand.unshift(c);
     }
     const top = cand[0], plateMin = o.plateMinScore ?? 0;
     const q = top.raw ?? top.sc;          // match quality before the simplicity tie-breaker
-    fit[ci] = surface && (q < (o.minScore ?? 0.2) || (T[top.ti].plate && q < plateMin)) ? -2 : top.ti; fill[ci] = top.bfill;   // -2: nothing matches well
+    fit[ci] = !rounded && surface && (q < (o.minScore ?? 0.2) || (T[top.ti].plate && q < plateMin)) ? -2 : top.ti; fill[ci] = top.bfill;   // -2: nothing matches well
     for (let k = 0; k < Math.min(ALT, cand.length); k++) { alt[ci * ALT + k] = cand[k].ti; altScore[ci * ALT + k] = cand[k].sc; }
-    if (fit[ci] >= 0 && !(interiorFill < 1 && cand[0].ti === cubeTi && isInterior(x, y, z))) keep.set(ci, { x, y, z, cand: cand.map(c => ({ ti: c.ti, sc: c.sc })) });
+    if (fit[ci] >= 0 && !rounded && !(interiorFill < 1 && cand[0].ti === cubeTi && isInterior(x, y, z))) keep.set(ci, { x, y, z, cand: cand.map(c => ({ ti: c.ti, sc: c.sc })) });
   }
   // continuity (owner, 2026-10-01: side walls and skins run on from block to block): a candidate gains for every face it
   // meets flush with the neighbouring block's face; two passes, each using the previous pass's picks
@@ -1547,8 +1620,12 @@ function prepareModel(rawParts, o) {
   const up = 'xyz'.indexOf(o.up), fa = 'xyz'.indexOf(o.front[1]), sg = o.front[0] === '-' ? -1 : 1;
   if (fa === up) throw new Error('front and up must be different axes');
   const side = [0, 1, 2].find(i => i !== up && i !== fa);
+  // the side axis takes whichever sign keeps this a rotation (determinant +1); a fixed sign mirrored the model
+  // left-to-right for some front/up choices (e.g. front -y, up z), swapping port and starboard
+  const even = (fa === 0 && up === 1) || (fa === 1 && up === 2) || (fa === 2 && up === 0);
+  const ss = sg * (even ? 1 : -1);
   const parts = rawParts.map(p => { const t = new Float32Array(p.tris.length);
-    for (let i = 0; i < t.length; i += 3) { t[i] = p.tris[i + fa] * sg; t[i + 1] = p.tris[i + up]; t[i + 2] = p.tris[i + side]; }
+    for (let i = 0; i < t.length; i += 3) { t[i] = p.tris[i + fa] * sg; t[i + 1] = p.tris[i + up]; t[i + 2] = p.tris[i + side] * ss; }
     return { name: p.name, tris: t }; });
   const mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
   parts.forEach(p => { for (let i = 0; i < p.tris.length; i += 3) for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], p.tris[i + k]); mx[k] = Math.max(mx[k], p.tris[i + k]); } });
@@ -1982,6 +2059,29 @@ function computeGrid(parts, o) {
       return m >= 0.5 * layer[k];
     });
   };
+  // buildable surfaces: on by default for shell fill at large-grid sizes (a hull to build on), off otherwise (the
+  // owner's small-grid vehicles use shaped and half blocks on top and sides)
+  const buildable = o.buildable ?? (o.fill === 'shell' && b >= 1);
+  const roundDepth = o.roundDepth ?? 2, roundCover = o.roundCover ?? 0.5, coverMin = o.coverMin ?? 0.8, mm = newMask();
+  // a cell rounds out when every exposed wall but the bottom has the model's material within roundDepth samples of it
+  // over most of the wall (so a full block widens the skin by at most that much), the bottom, if exposed, has material
+  // on it (no rounding down), and at least one top or side wall is exposed
+  const roundsOut = (x, y, z, mi, ms) => {
+    let any = false;
+    for (let w = 0; w < 6; w++) {
+      const X = x + [-1, 1, 0, 0, 0, 0][w], Y = y + [0, 0, -1, 1, 0, 0][w], Z = z + [0, 0, 0, 0, -1, 1][w];
+      if (X >= 0 && Y >= 0 && Z >= 0 && X < nx && Y < ny && Z < nz && niOf[idx(X, Y, Z)] >= NS / 4) continue;   // not exposed
+      const ax = w >> 1, depth = w === 2 ? 1 : roundDepth + 1;
+      let hit = 0;
+      for (let u = 0; u < SUB; u++) for (let v = 0; v < SUB; v++) { let on = false;
+        for (let dd = 0; dd < depth && !on; dd++) { const q = [0, 0, 0]; q[ax] = w & 1 ? SUB - 1 - dd : dd; q[(ax + 1) % 3] = u; q[(ax + 2) % 3] = v;
+          const k = (q[1] * SUB + q[2]) * SUB + q[0]; if (getBit(mi, k) || getBit(ms, k)) on = true; }
+        if (on) hit++; }
+      if (hit < roundCover * SUB * SUB) return false;
+      if (w !== 2) any = true;
+    }
+    return any;
+  };
   let nextProgress = 0;
   const mi = newMask(), ms = newMask(), cnt = new Uint32Array(o.groupNames.length + 1), cand = [];
   for (let y = 0; y < ny; y++) for (let z = 0; z < nz; z++) for (let x = 0; x < nx; x++) {
@@ -2039,11 +2139,32 @@ function computeGrid(parts, o) {
         let ov = 0; for (let w = 0; w < W; w++) ov += pop(tm[w] & mh[w]); if (ov > reserveOverlap * tp.n) continue; }
       cand.push({ ti, iou: inter / uni, bfill, sc: inter / uni - pen[ti] });
     }
+    // buildable surfaces, round outward: of the blocks that hold (nearly) all of the cell's material, the one adding the
+    // least volume past the model, simplicity penalty included. They may miss the fill rule (a half block keeping a
+    // narrowing hull side full width). Skin cells only (an exposed wall), not where a hidden part keeps its space.
+    let covers = null;
+    if (buildable && !nh && [[x - 1, y, z], [x + 1, y, z], [x, y - 1, z], [x, y + 1, z], [x, y, z - 1], [x, y, z + 1]]
+      .some(([X, Y, Z]) => X < 0 || Y < 0 || Z < 0 || X >= nx || Y >= ny || Z >= nz || niOf[idx(X, Y, Z)] < NS / 4)) {
+      let nm = 0; for (let w = 0; w < W; w++) { mm[w] = mi[w] | ms[w]; nm += pop(mm[w]); }
+      let best = 1e9; const cost = new Map();
+      for (let ti = 0; ti < T.length; ti++) {
+        const tp = T[ti]; if (tp.plate) continue;
+        let im = 0; for (let w = 0; w < W; w++) im += pop(tp.mask[w] & mm[w]);
+        if (im < coverMin * nm) continue;
+        const cst = (tp.n - im) / NS + PEN_SCALE * pen[ti]; cost.set(ti, cst); if (cst < best) best = cst;
+      }
+      covers = new Set([...cost].filter(([, c]) => c < best + 1e-6).map(([ti]) => ti));
+      for (const ti of covers) if (!cand.some(c => c.ti === ti)) {
+        let inter = 0, uni = 0; for (let w = 0; w < W; w++) { inter += pop(T[ti].mask[w] & mi[w]); uni += pop(T[ti].mask[w] | mi[w]); }
+        cand.push({ ti, iou: uni ? inter / uni : 0, bfill: inter / T[ti].n, sc: (uni ? inter / uni : 0) - pen[ti], cover: true });
+      }
+      if (!covers.size) covers = null;
+    }
     if (!cand.length) { fit[ci] = -2; if (o.skipped) o.skipped(x, y, z, 'no block passes the fill rule', ni, ns); continue; }
     cand.sort((p, q) => q.sc - p.sc);
     // keep the best K, at most 2 orientations per shape (so near-identical turns of one shape can't crowd out the rest)
     { const per = new Map(); let n = 0;
-      for (const c of cand) { const s = T[c.ti].shape, k = per.get(s) || 0; if (k >= 2) continue; per.set(s, k + 1); cand[n++] = c; if (n >= K) break; }
+      for (const c of cand) { const s = T[c.ti].shape, k = per.get(s) || 0; if (!(covers && covers.has(c.ti)) && (k >= 2 || n >= K)) continue; per.set(s, k + 1); cand[n++] = c; }
       cand.length = n; }
     // 2. surface: the model's surface in the cell should run along the block's faces (model -> block), and every face
     //    the block adds inside the cell should have model surface on it (block -> model)
@@ -2068,16 +2189,26 @@ function computeGrid(parts, o) {
       cand.sort((p, q) => q.sc - p.sc);
     }
     if (o.progress && ci >= nextProgress) { o.progress(ci / N); nextProgress = ci + Math.max(1, N >> 6); }
+    // buildable surfaces (owner, 2026-10-11, Littorio): a skin is rounded OUTWARD to a full block, never inward to a
+    // half block: decks and other top skins are full blocks (half blocks on top are a pain to build on), and hull sides
+    // keep their full width (room to mount guns and walk around them). Never downward: an underside stays where it is.
+    let rounded = false;
+    if (covers) { const c = cand.find(c => covers.has(c.ti)); if (c) { cand.splice(cand.indexOf(c), 1); cand.unshift(c); rounded = true; } }
+    if (buildable && cubeTi >= 0 && T[cand[0].ti] !== T[cubeTi] && ni >= o.minFill * NS && !nh && roundsOut(x, y, z, mi, ms)) {
+      const c = cand.find(c => c.ti === cubeTi) || { ti: cubeTi, sc: cand[0].sc, raw: cand[0].raw, iou: ni / NS, bfill: ni / NS };
+      if (cand.indexOf(c) >= 0) cand.splice(cand.indexOf(c), 1);
+      cand.unshift(c); rounded = true;
+    }
     if (o.debug) o.debug(x, y, z, cand, ni, ns);
     if (interiorFill < 1 && cubeTi >= 0 && ni >= interiorFill * NS && isInterior(x, y, z) && T[cand[0].ti] !== T[cubeTi]) {
-      const c = cand.find(c => c.ti === cubeTi) || { ti: cubeTi, sc: cand[0].sc, bfill: ni / NS };
+      const c = cand.find(c => c.ti === cubeTi) || { ti: cubeTi, sc: cand[0].sc, iou: ni / NS, bfill: ni / NS };
       cand.splice(cand.indexOf(c) >= 0 ? cand.indexOf(c) : 0, cand.indexOf(c) >= 0 ? 1 : 0); cand.unshift(c);
     }
     const top = cand[0], plateMin = o.plateMinScore ?? 0;
     const q = top.raw ?? top.sc;          // match quality before the simplicity tie-breaker
-    fit[ci] = surface && (q < (o.minScore ?? 0.2) || (T[top.ti].plate && q < plateMin)) ? -2 : top.ti; fill[ci] = top.bfill;   // -2: nothing matches well
+    fit[ci] = !rounded && surface && (q < (o.minScore ?? 0.2) || (T[top.ti].plate && q < plateMin)) ? -2 : top.ti; fill[ci] = top.bfill;   // -2: nothing matches well
     for (let k = 0; k < Math.min(ALT, cand.length); k++) { alt[ci * ALT + k] = cand[k].ti; altScore[ci * ALT + k] = cand[k].sc; }
-    if (fit[ci] >= 0 && !(interiorFill < 1 && cand[0].ti === cubeTi && isInterior(x, y, z))) keep.set(ci, { x, y, z, cand: cand.map(c => ({ ti: c.ti, sc: c.sc })) });
+    if (fit[ci] >= 0 && !rounded && !(interiorFill < 1 && cand[0].ti === cubeTi && isInterior(x, y, z))) keep.set(ci, { x, y, z, cand: cand.map(c => ({ ti: c.ti, sc: c.sc })) });
   }
   // continuity (owner, 2026-10-01: side walls and skins run on from block to block): a candidate gains for every face it
   // meets flush with the neighbouring block's face; two passes, each using the previous pass's picks
@@ -2311,6 +2442,313 @@ function seedLibrary() {
   return [...armour, ...panels];
 }
 
+// ---- blueprint.js
+// SE Grid Builder: Space Engineers blueprint export (bp.sbc in a blueprint folder, or a zip). No DOM, no three.js, so
+// it runs in Node too (test_blueprint.mjs). The page side (buttons, folder writing, thumbnail) is blueprint_ui.js.
+//
+// The blueprint layout follows the game's own local blueprints and two MIT-licensed tools (see the licence notice at
+// the end of this file): se-blueprinter (imivi, generate-blueprint-xml.ts) and StlToBlueprint (austinvaness, Main.cs,
+// ArmorCube.cs).
+//
+// Frames (all right-handed):
+// - card frame: a library card's shape in its cell, 0..1 (core.js "cell space"; y up, Forward is -z as in the game).
+// - tool frame: the Grid Builder's world and grid: x = the model's front, y = up, z = side. A fitted template is the card
+//   turned by ROTS[rot] about the cell centre (core.js buildTemplates; the 3D view draws it that way).
+// - block frame: the game block's own axes (Forward = -Z, Up = +Y, Right = +X); its .mwm model is in this frame.
+// - SE grid frame: the blueprint's CubeGrid. The model's front becomes the grid's Forward (-Z), up stays +Y, so the
+//   tool's +z side becomes the grid's Right (+X): grid = (z, y, -x). ENGINE_CONSTRAINT: grid Forward is -Z.
+
+// ---------- directions
+const BP_DIRS = { Forward: [0, 0, -1], Backward: [0, 0, 1], Left: [-1, 0, 0], Right: [1, 0, 0], Up: [0, 1, 0], Down: [0, -1, 0] };
+const bpDirName = v => Object.keys(BP_DIRS).find(k => BP_DIRS[k].every((x, i) => x === Math.round(v[i]))) || null;
+const bpMul = (A, B) => [0, 1, 2].map(r => [0, 1, 2].map(c => A[r][0] * B[0][c] + A[r][1] * B[1][c] + A[r][2] * B[2][c]));
+const bpApply = (M, v) => [0, 1, 2].map(r => M[r][0] * v[0] + M[r][1] * v[1] + M[r][2] * v[2]);
+const bpCross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+// tool frame -> SE grid frame
+const TOOL_TO_GRID = [[0, 0, 1], [0, 1, 0], [-1, 0, 0]];
+// the rotation (block frame -> another frame) that puts the block's Forward and Up on directions f and u (names)
+function orientMatrix(f, u) {
+  const F = BP_DIRS[f], U = BP_DIRS[u];
+  if (!F || !U || F.some((x, i) => x * U[i] !== 0) || F.every((x, i) => Math.abs(x) === Math.abs(U[i]))) throw new Error(`bad orientation ${f}/${u}`);
+  const R = bpCross(F, U);                       // Right = Forward x Up (SE Base6Directions)
+  return [0, 1, 2].map(r => [R[r], U[r], -F[r]]);  // columns: block +X, +Y, +Z
+}
+// Forward/Up names of a block-to-frame rotation
+const orientOf = M => [bpDirName(bpApply(M, [0, 0, -1])), bpDirName(bpApply(M, [0, 1, 0]))];
+
+// ---------- the orientation map: one place to correct a card
+// For each built-in card, how the game block sits in the card's frame: the block's Forward and Up as card directions.
+// A card that isn't listed shows its block unturned (Forward, Up). Verified 2026-10-11 against three independent game
+// sources (tools/se-grid-builder/README.md, "Blueprint export"): the armour tile table in Sandbox.Game.dll
+// (MyCubeGridDefinitions: face normals, full faces, edges), the blocks' mount points (CubeBlocks_Armor*.sbc), and the
+// blocks' construction-stage models (*Construction_3.mwm). All 33 armour shapes and 18 panels agree on one turn; the 10
+// listed here are owner sketches drawn turned. InvCorner2Base is the least certain (three turns fit the mount points and
+// construction models nearly equally; the tile table's cut-face normal picks this one): check it in game first.
+// Imported mod blocks carry their own turn (block.orient, set by the importer); it wins over this table.
+const CARD_ORIENT = {
+  'vanilla:Corner2Base': ['Right', 'Up'],
+  'vanilla:InvCorner2Base': ['Left', 'Down'],
+  'vanilla:InvCorner2Tip': ['Right', 'Forward'],
+  'vanilla:HalfBox': ['Down', 'Backward'],
+  'vanilla:HalfSlopeBox': ['Down', 'Left'],
+  'vanilla:HalfSlopeCorner': ['Backward', 'Up'],
+  'vanilla:HalfSlopeCornerInverted': ['Up', 'Backward'],
+  'vanilla:SlopedCornerTip': ['Right', 'Up'],
+  'vanilla:CornerSquareInverted': ['Right', 'Up'],
+  'vanilla:SquareSlopedCornerTipInv': ['Backward', 'Up'],
+};
+
+// Vanilla armour subtypes per cube topology: [small light, small heavy, large light, large heavy]
+// (from Content/Data/CubeBlocks/CubeBlocks_Armor*.sbc, 2026-10-11)
+const bpA = (s, sh, l, lh) => [s, sh, l, lh];
+const VANILLA_ARMOR = {
+  Box: bpA('SmallBlockArmorBlock', 'SmallHeavyBlockArmorBlock', 'LargeBlockArmorBlock', 'LargeHeavyBlockArmorBlock'),
+  Slope: bpA('SmallBlockArmorSlope', 'SmallHeavyBlockArmorSlope', 'LargeBlockArmorSlope', 'LargeHeavyBlockArmorSlope'),
+  Corner: bpA('SmallBlockArmorCorner', 'SmallHeavyBlockArmorCorner', 'LargeBlockArmorCorner', 'LargeHeavyBlockArmorCorner'),
+  InvCorner: bpA('SmallBlockArmorCornerInv', 'SmallHeavyBlockArmorCornerInv', 'LargeBlockArmorCornerInv', 'LargeHeavyBlockArmorCornerInv'),
+  HalfBox: bpA('HalfArmorBlock', 'HeavyHalfArmorBlock', 'LargeHalfArmorBlock', 'LargeHeavyHalfArmorBlock'),
+  HalfSlopeBox: bpA('HalfSlopeArmorBlock', 'HeavyHalfSlopeArmorBlock', 'LargeHalfSlopeArmorBlock', 'LargeHeavyHalfSlopeArmorBlock'),
+};
+for (const t of ['Slope2Base', 'Slope2Tip', 'Corner2Base', 'Corner2Tip', 'InvCorner2Base', 'InvCorner2Tip'])
+  VANILLA_ARMOR[t] = bpA(`SmallBlockArmor${t}`, `SmallHeavyBlockArmor${t}`, `LargeBlockArmor${t}`, `LargeHeavyBlockArmor${t}`);
+for (const t of ['CornerSquare', 'CornerSquareInverted', 'HalfCorner', 'HalfSlopeCorner', 'HalfSlopeCornerInverted', 'HalfSlopedCorner',
+  'HalfSlopedCornerBase', 'HalfSlopeInverted', 'SlopedCorner', 'SlopedCornerBase', 'SlopedCornerTip', 'RaisedSlopedCorner', 'SlopeTransition',
+  'SlopeTransitionBase', 'SlopeTransitionBaseMirrored', 'SlopeTransitionMirrored', 'SlopeTransitionTip', 'SlopeTransitionTipMirrored',
+  'SquareSlopedCornerBase', 'SquareSlopedCornerTip', 'SquareSlopedCornerTipInv'])
+  VANILLA_ARMOR[t] = bpA(`SmallBlockArmor${t}`, `SmallBlockHeavyArmor${t}`, `LargeBlockArmor${t}`, `LargeBlockHeavyArmor${t}`);
+
+// ---------- turns of sample masks (the same permutation as core.js ROT_MAP: mask turned by ROTS[r])
+const BP_SAMPLE = []; for (let y = 0; y < SUB; y++) for (let z = 0; z < SUB; z++) for (let x = 0; x < SUB; x++) BP_SAMPLE.push([(x + .5) / SUB, (y + .5) / SUB, (z + .5) / SUB]);
+const bpIndex = q => { const c = q.map(v => Math.round((v + .5) * SUB - .5)); return (c[1] * SUB + c[2]) * SUB + c[0]; };
+const BP_ROT_MAP = ROTS.map(R => BP_SAMPLE.map(p => bpIndex([0, 1, 2].map(c => R[0][c] * (p[0] - .5) + R[1][c] * (p[1] - .5) + R[2][c] * (p[2] - .5)))));
+function turnMask(m, ri) { const o = newMask(), map = BP_ROT_MAP[ri]; for (let k = 0; k < NS; k++) if (getBit(m, map[k])) setBit(o, k); return o; }
+const bpSame = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+// How a block sits on a card whose shape matched it in some turn: the block's Forward/Up in the card's frame, or null.
+// cardMask, blockMask: core.js shapeMask(...).mask of the card and of the block's own model (block frame).
+function blockOrientOnCard(cardMask, blockMask) {
+  for (let r = 0; r < ROTS.length; r++) if (bpSame(turnMask(cardMask, r), blockMask)) {
+    // block = ROTS[r] . card, so a block direction d is ROTS[r]^T d in the card's frame
+    const Rt = [0, 1, 2].map(i => [0, 1, 2].map(j => ROTS[r][j][i]));
+    return orientOf(Rt);
+  }
+  return null;
+}
+
+// ---------- which game block a card becomes
+// size: 'Large' | 'Small'; armour: 'light' | 'heavy'. Returns { typeId, subtype, orient: [F, U], sure } or null when the
+// card has no block of that grid size. sure = false: an imported block whose turn on the card was never recorded.
+function pickBlock(shape, size, armour = 'light') {
+  const heavy = armour === 'heavy', cardOrient = CARD_ORIENT[shape.id] || ['Forward', 'Up'];
+  const va = shape.topology && VANILLA_ARMOR[shape.topology];
+  if (va) return { typeId: 'CubeBlock', subtype: va[(size === 'Large' ? 2 : 0) + (heavy ? 1 : 0)], orient: cardOrient, sure: true };
+  const list = (shape.blocks || []).filter(b => b.size === size && b.subtype);
+  if (!list.length) return null;
+  const isHeavy = b => /heavy/i.test(b.subtype + ' ' + (b.name || ''));
+  const rank = b => (isHeavy(b) === heavy ? 0 : 2) + (b.mod === 'Vanilla' ? 0 : 1);
+  const b = [...list].sort((p, q) => rank(p) - rank(q))[0];
+  const defining = shape.id === 'mesh:' + b.mod + ':' + b.subtype;   // the block the card's shape was read from
+  const orient = b.orient || cardOrient;
+  return { typeId: b.typeId || 'CubeBlock', subtype: b.subtype, orient, sure: !!(b.orient || !shape.id.startsWith('mesh:') || defining) };
+}
+
+// a template's block orientation in the SE grid: rot = the tool's turn of the card (ROTS index), orient = pickBlock's
+function gridOrientation(rot, orient) {
+  const M = bpMul(TOOL_TO_GRID, bpMul(ROTS[rot], orientMatrix(orient[0], orient[1])));
+  const [forward, up] = orientOf(M);
+  return { forward, up };
+}
+// tool cell -> SE grid cell. centre 'col': the middle column is X = 0; 'line': the centreline lies between X = -1 and 0
+function gridPos(x, y, z, nz, centre) { return [z - (centre === 'line' ? nz / 2 : (nz - 1) / 2), y, -x]; }
+// the symmetry plane on the hull centreline (ENGINE_CONSTRAINT, MyCubeBuilderGizmo.MirrorBlockByPlane: X mirror maps
+// x -> 2P - x, minus 1 more with Odd, so Odd puts the plane between P - 1 and P)
+const mirrorPlane = centre => ({ plane: [0, 0, 0], odd: centre === 'line' });
+
+// ---------- colour: an RGB colour as the game's ColorMaskHSV (VRage ColorExtensions.ColorToHSV, then
+// MyColorPickerConstants.HSVToHSVOffset: saturation - 0.8, value - 0.55 + 0.1)
+function colorMaskHSV(hex) {
+  const n = parseInt(String(hex).replace('#', ''), 16), r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+  let h = 0;                                      // System.Drawing.Color.GetHue (0 for greys)
+  if (mx !== mn) { const d = mx - mn; h = mx === r ? (g - b) / d : mx === g ? 2 + (b - r) / d : 4 + (r - g) / d; h *= 60; if (h < 0) h += 360; }
+  const s = mx === 0 ? 0 : 1 - mn / mx, v = mx / 255;
+  return [h / 360, s - 0.8, v - 0.55 + 0.1];
+}
+
+// ---------- blocks of a fitted grid
+// grid: { nx, ny, nz, centre }; cellAt(x, y, z) -> { shape: library entry, rot } | null (empty / no block)
+// o: { size, armour, color(shape) -> '#rrggbb' | null }
+// Returns { blocks, skipped: { reason: count }, unsure, mirror }
+function gridBlocks(grid, cellAt, o) {
+  const blocks = [], skipped = {}, skip = r => { skipped[r] = (skipped[r] || 0) + 1; };
+  let unsure = 0;
+  for (let y = 0; y < grid.ny; y++) for (let z = 0; z < grid.nz; z++) for (let x = 0; x < grid.nx; x++) {
+    const c = cellAt(x, y, z); if (!c) continue;
+    const pb = pickBlock(c.shape, o.size, o.armour);
+    if (!pb) { skip(`${c.shape.name} (no ${o.size.toLowerCase()} grid block)`); continue; }
+    if (!pb.sure) unsure++;
+    const col = o.color ? o.color(c.shape) : null;
+    blocks.push({ typeId: pb.typeId, subtype: pb.subtype, min: gridPos(x, y, z, grid.nz, grid.centre), ...gridOrientation(c.rot, pb.orient),
+      color: col ? colorMaskHSV(col) : null, card: c.shape.id });
+  }
+  return { blocks, skipped, unsure, mirror: mirrorPlane(grid.centre) };
+}
+
+// ---------- bp.sbc
+const xmlEsc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+const bpNum = v => { const s = (Math.round(v * 1e6) / 1e6).toString(); return s === '-0' ? '0' : s; };
+// a random positive 63-bit entity id as a decimal string (the game re-maps ids when pasting)
+const bpEntityId = () => { let s = String(1 + Math.floor(Math.random() * 8)); for (let i = 0; i < 17; i++) s += Math.floor(Math.random() * 10); return s; };
+// o: { name, gridSize: 'Large'|'Small', blocks (gridBlocks), mirror?, isStatic?, author? }
+function blueprintXml(o) {
+  const L = [];
+  L.push('<?xml version="1.0"?>',
+    '<Definitions xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">',
+    '  <ShipBlueprints>',
+    '    <ShipBlueprint xsi:type="MyObjectBuilder_ShipBlueprintDefinition">',
+    `      <Id Type="MyObjectBuilder_ShipBlueprintDefinition" Subtype="${xmlEsc(o.name)}" />`,
+    `      <DisplayName>${xmlEsc(o.author || 'SE Grid Builder')}</DisplayName>`,
+    '      <CubeGrids>',
+    '        <CubeGrid>',
+    '          <SubtypeName />',
+    `          <EntityId>${o.entityId || bpEntityId()}</EntityId>`,
+    '          <PersistentFlags>CastShadows InScene</PersistentFlags>',
+    '          <PositionAndOrientation>',
+    '            <Position x="0" y="0" z="0" />',
+    '            <Forward x="0" y="0" z="-1" />',
+    '            <Up x="0" y="1" z="0" />',
+    '            <Orientation>',
+    '              <X>0</X>',
+    '              <Y>0</Y>',
+    '              <Z>0</Z>',
+    '              <W>1</W>',
+    '            </Orientation>',
+    '          </PositionAndOrientation>',
+    `          <GridSizeEnum>${o.gridSize === 'Large' ? 'Large' : 'Small'}</GridSizeEnum>`,
+    '          <CubeBlocks>');
+  for (const b of o.blocks) {
+    L.push(`            <MyObjectBuilder_CubeBlock xsi:type="MyObjectBuilder_${xmlEsc(b.typeId || 'CubeBlock')}">`,
+      `              <SubtypeName>${xmlEsc(b.subtype)}</SubtypeName>`,
+      `              <Min x="${b.min[0]}" y="${b.min[1]}" z="${b.min[2]}" />`);
+    if (b.forward !== 'Forward' || b.up !== 'Up') L.push(`              <BlockOrientation Forward="${b.forward}" Up="${b.up}" />`);
+    if (b.color) L.push(`              <ColorMaskHSV x="${bpNum(b.color[0])}" y="${bpNum(b.color[1])}" z="${bpNum(b.color[2])}" />`);
+    L.push('            </MyObjectBuilder_CubeBlock>');
+  }
+  L.push('          </CubeBlocks>', `          <IsStatic>${o.isStatic ? 'true' : 'false'}</IsStatic>`);
+  if (o.mirror) {
+    const p = o.mirror.plane;
+    L.push(`          <XMirroxPlane x="${p[0]}" y="${p[1]}" z="${p[2]}" />`);
+    if (o.mirror.odd) L.push('          <XMirroxOdd>true</XMirroxOdd>');
+  }
+  L.push(`          <DisplayName>${xmlEsc(o.name)}</DisplayName>`,
+    '          <DestructibleBlocks>true</DestructibleBlocks>',
+    '          <IsRespawnGrid>false</IsRespawnGrid>',
+    '          <TargetingTargets />',
+    '        </CubeGrid>',
+    '      </CubeGrids>',
+    '      <EnvironmentType>None</EnvironmentType>',
+    '      <WorkshopId>0</WorkshopId>',
+    '      <OwnerSteamId>0</OwnerSteamId>',
+    '      <Points>0</Points>',
+    '    </ShipBlueprint>',
+    '  </ShipBlueprints>',
+    '</Definitions>');
+  return L.join('\r\n') + '\r\n';
+}
+// a blueprint folder name Windows accepts
+function blueprintFolderName(name) {
+  let s = String(name || '').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[. ]+$/, '').trim();
+  if (/^(con|prn|aux|nul|com\d|lpt\d)$/i.test(s)) s += '_';
+  return s.slice(0, 120) || 'Grid';
+}
+
+// ---------- test blueprint: every card in all 24 turns, one row per card
+// shapes: the library; o: { size, armour, onlyUsed }. Rows run along the tool's z (the grid's X), turns along the tool's
+// x (towards the grid's Forward), one empty cell between blocks. Each row starts with a marker behind its first
+// block (the grid's Backward side): 1 cube, 2 stacked on every 5th row, 3 on every 10th, so rows can be counted.
+function testLayout(shapes, o) {
+  const cells = [], rows = [], marker = shapes.find(s => s.topology === 'Box');
+  shapes.forEach((s, si) => {
+    if (o.onlyUsed && !s.use) return;
+    const pb = pickBlock(s, o.size, o.armour); if (!pb || !s.solids || !s.solids.length) return;
+    const r = rows.length, z = 2 * r;
+    rows.push({ row: r + 1, key: s.key, name: s.name, id: s.id, subtype: pb.subtype, sure: pb.sure,
+      orient: CARD_ORIENT[s.id] || (pb.orient[0] !== 'Forward' || pb.orient[1] !== 'Up' ? pb.orient : null) });
+    for (let ri = 0; ri < ROTS.length; ri++) cells.push({ x: 2 * ri, y: 0, z, shape: s, si, rot: ri });
+    if (marker) { const h = 1 + ((r + 1) % 5 === 0) + ((r + 1) % 10 === 0); for (let k = 0; k < h; k++) cells.push({ x: -2, y: k, z, shape: marker, si: shapes.indexOf(marker), rot: 0, marker: true }); }
+  });
+  return { cells, rows };
+}
+// the test layout's blocks and a text legend
+function testBlueprint(shapes, o) {
+  const { cells, rows } = testLayout(shapes, o), blocks = [];
+  for (const c of cells) {
+    const pb = pickBlock(c.shape, o.size, o.armour);
+    blocks.push({ typeId: pb.typeId, subtype: pb.subtype, min: gridPos(c.x, c.y, c.z, 1, 'col'), ...gridOrientation(c.rot, pb.orient),
+      color: o.color ? colorMaskHSV(c.marker ? '#d04040' : (rows.length && (c.z / 2) % 2 ? '#7090c0' : '#c0c0c0')) : null });
+  }
+  const turns = ROTS.map((R, ri) => { const t = orientOf(R); return `${String(ri + 1).padStart(2)}: card Forward -> ${t[0]}, card Up -> ${t[1]}`; });
+  const legend = [`SE Grid Builder test blueprint: ${rows.length} cards x 24 turns, ${o.size} grid, ${o.armour} armour.`,
+    '',
+    'Layout (seen from above, the grid\'s Forward pointing away from you):',
+    '- one row per card, rows side by side from left (row 1) to right; one empty cell between blocks;',
+    '- red marker cubes at the back end of each row: 1 cube, 2 on every 5th row, 3 on every 10th;',
+    '- along each row, going forward, the card in the tool\'s 24 turns (below). Turn 1 is the card unturned.',
+    '',
+    'Check: each block should look exactly like the tool draws that card in that turn (layout.png, same view).',
+    'Turn 1: the card as its Cube Library thumbnail shows it, with the thumbnail\'s orange arrow pointing to the',
+    'grid\'s Left (the tool\'s card -z is the grid\'s -X, the card\'s +x is the grid\'s Forward).',
+    '',
+    'Rows:', ...rows.map(r => `${String(r.row).padStart(3)}  ${r.key.padEnd(5)} ${r.name}  [${r.subtype}]` +
+      (r.orient ? `  card orientation: block Forward = card ${r.orient[0]}, Up = card ${r.orient[1]}` : '') + (r.sure ? '' : '  (turn on the card not recorded: re-import)')),
+    '', 'Turns (the tool\'s rotation of the card, in the tool frame: x front, y up, z side):', ...turns];
+  return { blocks, rows, legend: legend.join('\r\n') + '\r\n', cells };
+}
+
+// ---------- zip (stored, no compression) for the download fallback
+const BP_CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(u8) { let c = 0xffffffff; for (let i = 0; i < u8.length; i++) c = BP_CRC[(c ^ u8[i]) & 255] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; }
+// files: [{ name: 'folder/bp.sbc', data: Uint8Array | string }] -> Uint8Array
+function makeZip(files) {
+  const enc = new TextEncoder(), parts = [], central = []; let off = 0;
+  const now = new Date(), dtime = (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1),
+    ddate = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+  for (const f of files) {
+    const name = enc.encode(f.name), data = typeof f.data === 'string' ? enc.encode(f.data) : f.data, crc = crc32(data);
+    const h = new DataView(new ArrayBuffer(30));
+    h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true); h.setUint16(8, 0, true);
+    h.setUint16(10, dtime, true); h.setUint16(12, ddate, true); h.setUint32(14, crc, true); h.setUint32(18, data.length, true);
+    h.setUint32(22, data.length, true); h.setUint16(26, name.length, true); h.setUint16(28, 0, true);
+    parts.push(new Uint8Array(h.buffer), name, data);
+    const c = new DataView(new ArrayBuffer(46));
+    c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true); c.setUint16(10, 0, true);
+    c.setUint16(12, dtime, true); c.setUint16(14, ddate, true); c.setUint32(16, crc, true); c.setUint32(20, data.length, true); c.setUint32(24, data.length, true);
+    c.setUint16(28, name.length, true); c.setUint32(42, off, true);
+    central.push(new Uint8Array(c.buffer), name);
+    off += 30 + name.length + data.length;
+  }
+  const csize = central.reduce((n, p) => n + p.length, 0), e = new DataView(new ArrayBuffer(22));
+  e.setUint32(0, 0x06054b50, true); e.setUint16(8, files.length, true); e.setUint16(10, files.length, true); e.setUint32(12, csize, true); e.setUint32(16, off, true);
+  const all = [...parts, ...central, new Uint8Array(e.buffer)], out = new Uint8Array(all.reduce((n, p) => n + p.length, 0));
+  let p = 0; for (const a of all) { out.set(a, p); p += a.length; }
+  return out;
+}
+
+/* Licence notice for the parts adapted from se-blueprinter (https://github.com/imivi/se-blueprinter) and StlToBlueprint
+   (https://github.com/austinvaness/StlToBlueprint): the blueprint XML layout and the zip-of-a-blueprint-folder idea
+   (se-blueprinter), and writing into Blueprints\local with removal of the bp.sbcB5 cache (StlToBlueprint). Both are:
+
+   MIT License. Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+   associated documentation files (the "Software"), to deal in the Software without restriction, including without
+   limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the
+   Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+   The above copyright notice and this permission notice shall be included in all copies or substantial portions of
+   the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+   LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+   SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+   CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+   THE SOFTWARE.
+   Copyright (c) 2024 imivi (se-blueprinter); Copyright (c) 2020 Austin Van Ess (StlToBlueprint). */
+
 // ---- importer.js
 // Import blocks from a world's mod list into the Cube Library.
 // Folders are { read(path) -> ArrayBuffer | null, list(path) -> [{ name, kind: 'file'|'directory' }] } (async), so the
@@ -2355,9 +2793,13 @@ async function importWorldBlocks(library, o) {
   for (const s of library) { if (!s.solids || !s.solids.length) continue; if (!s._m) s._m = shapeMask(s); if (maskCount(s._m.mask)) bySig.set(shapeKeySig(s._m.mask), s); }
   const keys = new Set(library.map(s => s.key));
   const sum = { mods: sources.length, defs: 0, matched: 0, topology: 0, models: 0, newShapes: 0, multiCell: 0, noShape: 0, unreadable: 0, filteredOut: 0 };
-  const addBlock = (s, d, src) => {
+  // orient: for a block read from its model, how it sits on the card (its Forward and Up as card directions; the card
+  // may hold it turned, since cards group shapes in any turn). Blueprint export needs it (blueprint.js).
+  const addBlock = (s, d, src, orient) => {
     s.blocks ||= [];
-    if (!s.blocks.some(b => b.subtype === d.subtype && b.size === d.cubeSize)) s.blocks.push({ subtype: d.subtype, size: d.cubeSize, mod: src.name, name: blockName(d, texts) });
+    const cur = s.blocks.find(b => b.subtype === d.subtype && b.size === d.cubeSize);
+    if (!cur) s.blocks.push({ subtype: d.subtype, size: d.cubeSize, mod: src.name, name: blockName(d, texts), typeId: d.typeId, ...(orient ? { orient } : {}) });
+    else if (orient && !cur.orient) cur.orient = orient;
   };
   for (const src of sources) {
     const files = await sbcFiles(src.fs, (src.root ? src.root + '/' : '') + 'Data');
@@ -2386,14 +2828,15 @@ async function importWorldBlocks(library, o) {
         shape._m = shapeMask(shape);
         if (!maskCount(shape._m.mask)) { sum.noShape++; continue; }
         const sig = shapeKeySig(shape._m.mask);
-        let s = bySig.get(sig);
+        let s = bySig.get(sig), orient = ['Forward', 'Up'];
+        if (s) { if (!s._m) s._m = shapeMask(s); orient = blockOrientOnCard(s._m.mask, shape._m.mask); }
         if (!s) {
           const name = blockName(d, texts);
           s = Object.assign(shape, { id: 'mesh:' + src.name + ':' + d.subtype, key: makeKey(name, keys), name, source: src.name,
             blocks: [], use: false, penalty: MOD_PENALTY, lines: [], rev: 1 });   // mod blocks start off: switch on the ones you build with
           keys.add(s.key); library.push(s); bySig.set(sig, s); sum.newShapes++;
         }
-        addBlock(s, d, src); sum.models++; n++;
+        addBlock(s, d, src, orient); sum.models++; n++;
         if (n % 25 === 0) await pause();
       }
     }
@@ -2401,6 +2844,193 @@ async function importWorldBlocks(library, o) {
     await pause();
   }
   return sum;
+}
+
+// ---- blueprint_ui.js
+// SE Grid Builder: the page side of blueprint export (the Blueprint panel on the Grid Builder tab). The blueprint itself
+// is built by blueprint.js. Bundled into the page by build.py; it gets the page's pieces through initBlueprintUI(ctx),
+// so its own top-level names stay few (one shared module scope).
+
+// ctx: { THREE, el, DB, B, lib() -> library, effFit(x, y, z), shapeGeometry(shape), shapeColor(shape) -> THREE.Color }
+function initBlueprintUI(ctx) {
+  const { THREE, el, DB, B } = ctx;
+  const status = (msg, warn) => { el('bpStatus').innerHTML = msg; el('bpStatus').className = warn ? 'warn' : 'hint'; };
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const gridSize = () => (parseFloat(el('block').value) >= 1 ? 'Large' : 'Small');
+  const modelBase = () => (B.modelName || 'Grid').replace(/\.(obj|stl)$/i, '');
+  const name = () => blueprintFolderName(el('bpName').value.trim() || modelBase());
+  const colorFn = () => {
+    const mode = el('bpColour').value;
+    if (mode === 'one') { const c = el('bpColourPick').value; return () => c; }
+    if (mode === 'kind') return s => '#' + ctx.shapeColor(s).getHexString();
+    return null;
+  };
+  // settings kept in this browser
+  const SAVE = ['bpArmour', 'bpColour', 'bpColourPick'];
+  DB.get('blueprint').then(s => { if (s) SAVE.forEach(id => { if (s[id] !== undefined) el(id).value = s[id]; }); });
+  SAVE.forEach(id => el(id).addEventListener('change', () => { const s = {}; SAVE.forEach(k => s[k] = el(k).value); DB.set('blueprint', s).catch(() => {}); }));
+  // the name field shows the model's name until one is typed
+  const showDefault = () => { el('bpName').placeholder = modelBase(); };
+  new MutationObserver(showDefault).observe(el('bModelName'), { childList: true, characterData: true, subtree: true }); showDefault();
+
+  // ---- the fitted grid as blueprint blocks (user edits included; empty and "no block" cells skipped)
+  function fittedBlueprint() {
+    const g = B.grid; if (!g || !B.T) throw new Error('Load a model first (and wait for the fit).');
+    const lib = ctx.lib(), cells = [];
+    const r = gridBlocks({ nx: g.nx, ny: g.ny, nz: g.nz, centre: el('centre').value }, (x, y, z) => {
+      const f = ctx.effFit(x, y, z); if (f < 0) return null;
+      const t = B.T.list[f]; cells.push({ x, y, z, shape: lib[t.shape], si: t.shape, rot: t.rot }); return { shape: lib[t.shape], rot: t.rot };
+    }, { size: gridSize(), armour: el('bpArmour').value, color: colorFn() });
+    if (!r.blocks.length) throw new Error('The grid has no blocks to export.');
+    const xml = blueprintXml({ name: name(), gridSize: gridSize(), blocks: r.blocks, mirror: r.mirror });
+    return { xml, info: r, cells };
+  }
+  const summary = (n, info) => {
+    const sk = Object.entries(info.skipped || {}).map(([k, v]) => `${v} x ${esc(k)}`);
+    return `${n} blocks, ${gridSize().toLowerCase()} grid, ${el('bpArmour').value} armour.` +
+      (sk.length ? `<br><span class="warn">Left out: ${sk.join(', ')}.</span>` : '') +
+      (info.unsure ? `<br><span class="warn">${info.unsure} imported blocks have no recorded turn on their card (imported before 2026-10-11): ` +
+        're-run Import from world to record it; until then they may sit turned.</span>' : '');
+  };
+
+  // ---- pictures
+  // a square PNG of a canvas (centre crop)
+  const squarePng = (src, size) => new Promise(res => {
+    const c = document.createElement('canvas'); c.width = c.height = size;
+    const s = Math.min(src.width, src.height);
+    c.getContext('2d').drawImage(src, (src.width - s) / 2, (src.height - s) / 2, s, s, 0, 0, size, size);
+    c.toBlob(res, 'image/png');
+  });
+  // blocks drawn by the tool, as in the 3D view: cells [{ x, y, z, shape, si, rot, marker? }] in cell units, seen from
+  // direction dir (towards the camera), framed to fit. Returns { canvas, cam }.
+  function renderCells(cells, W, H, dir, extra = []) {
+    const r = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    r.setSize(W, H); r.setPixelRatio(1);
+    const scene = new THREE.Scene(); scene.background = new THREE.Color('#16191d');
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.5)); const sun = new THREE.DirectionalLight(0xffffff, 1.3); sun.position.set(-5, 10, 3); scene.add(sun);
+    const geo = new Map(), lo = [1e9, 1e9, 1e9], hi = [-1e9, -1e9, -1e9];
+    for (const c of cells) {
+      const k = c.si + ':' + c.rot;
+      if (!geo.has(k)) {
+        const g = ctx.shapeGeometry(c.shape); if (!g) continue; const R = ROTS[c.rot];
+        g.translate(-.5, -.5, -.5);
+        g.applyMatrix4(new THREE.Matrix4().set(R[0][0], R[0][1], R[0][2], 0, R[1][0], R[1][1], R[1][2], 0, R[2][0], R[2][1], R[2][2], 0, 0, 0, 0, 1));
+        geo.set(k, { g, e: new THREE.EdgesGeometry(g, 20) });
+      }
+      const { g, e } = geo.get(k);
+      const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color: c.marker ? 0xd04040 : ctx.shapeColor(c.shape), flatShading: true, side: THREE.DoubleSide }));
+      m.position.set(c.x + .5, c.y + .5, c.z + .5); scene.add(m);
+      const l = new THREE.LineSegments(e, new THREE.LineBasicMaterial({ color: 0x0d1013 })); l.position.copy(m.position); scene.add(l);
+      [c.x, c.y, c.z].forEach((v, i) => { lo[i] = Math.min(lo[i], v); hi[i] = Math.max(hi[i], v + 1); });
+    }
+    extra.forEach(p => p.forEach((v, i) => { lo[i] = Math.min(lo[i], v); hi[i] = Math.max(hi[i], v); }));   // room for labels
+    const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, -1e4, 1e4);
+    const centre = new THREE.Vector3((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2);
+    cam.position.copy(centre).add(dir.clone().normalize().multiplyScalar(100)); cam.up.set(0, 1, 0); cam.lookAt(centre);
+    // fit the blocks' box into the view
+    cam.updateMatrixWorld(); const inv = cam.matrixWorldInverse;
+    let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+    for (const x of [lo[0], hi[0]]) for (const y of [lo[1], hi[1]]) for (const z of [lo[2], hi[2]]) {
+      const q = new THREE.Vector3(x, y, z).applyMatrix4(inv); x0 = Math.min(x0, q.x); x1 = Math.max(x1, q.x); y0 = Math.min(y0, q.y); y1 = Math.max(y1, q.y); }
+    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2; let hw = (x1 - x0) / 2 * 1.08, hh = (y1 - y0) / 2 * 1.12;
+    if (hw / hh > W / H) hh = hw * H / W; else hw = hh * W / H;
+    Object.assign(cam, { left: cx - hw, right: cx + hw, top: cy + hh, bottom: cy - hh }); cam.updateProjectionMatrix();
+    r.render(scene, cam);
+    const out = document.createElement('canvas'); out.width = W; out.height = H;
+    out.getContext('2d').drawImage(r.domElement, 0, 0);
+    geo.forEach(({ g, e }) => { g.dispose(); e.dispose(); }); r.dispose();
+    return { canvas: out, cam };
+  }
+  // the test layout drawn by the tool (same blocks, same turns), seen from behind and above like the legend says
+  function renderLayout(cells, rows) {
+    // about 70 px per row, so each block can be told apart and the row labels don't run into each other
+    const W = Math.max(1600, Math.min(8000, 70 * rows.length + 200)), H = Math.round(W * 0.6);
+    const { canvas: out, cam } = renderCells(cells, W, H, new THREE.Vector3(-1, 1.3, 0), [[-7.5, 0, 0], [0, 0, -2.5]]);
+    // labels: row numbers by the markers, turn numbers along the first row
+    const g2 = out.getContext('2d');
+    const label = (p, text, color) => { const q = p.clone().project(cam); const sx = (q.x + 1) / 2 * W, sy = (1 - q.y) / 2 * H;
+      g2.font = 'bold 18px system-ui, sans-serif'; g2.textAlign = 'center'; g2.lineWidth = 4; g2.strokeStyle = '#000'; g2.strokeText(text, sx, sy); g2.fillStyle = color; g2.fillText(text, sx, sy); };
+    rows.forEach((rw, i) => { label(new THREE.Vector3(-4.5, 0, 2 * i + .5), String(rw.row), '#ffd27a'); label(new THREE.Vector3(-6.5, 0, 2 * i + .5), rw.key, '#ffd27a'); });
+    for (let t = 0; t < 24; t++) label(new THREE.Vector3(2 * t + .5, 0, -1.5), 't' + (t + 1), '#9fd0ff');
+    g2.font = '20px system-ui, sans-serif'; g2.textAlign = 'left'; g2.fillStyle = '#e6e8eb';
+    g2.fillText('SE Grid Builder test layout: rows = cards (numbers as in layout.txt), t1..t24 = turns; grid Forward points away from the viewer.', 16, 30);
+    return out;
+  }
+  // the blueprint's thumbnail: its blocks seen from the 3D view's direction
+  function renderThumb(cells) {
+    const v = B.view, dir = v ? v.camera.position.clone().sub(v.controls.target) : new THREE.Vector3(-1, 1, 1.5);
+    return renderCells(cells, 512, 512, dir.lengthSq() ? dir : new THREE.Vector3(-1, 1, 1.5)).canvas;
+  }
+
+  // ---- delivery: straight into Blueprints\local (Chrome, Edge), else a zip download
+  async function blueprintsFolder(ask) {
+    let h = await DB.get('dir:blueprints');
+    if (h) {
+      let ok = false;
+      try { ok = (await h.queryPermission({ mode: 'readwrite' })) === 'granted' || (await h.requestPermission({ mode: 'readwrite' })) === 'granted'; } catch (e) {}
+      if (ok && !ask) return h;
+    }
+    try { h = await window.showDirectoryPicker({ id: 'sgb-blueprints', mode: 'readwrite' }); } catch (e) { return null; }
+    if (h.name.toLowerCase() === 'blueprints') { try { h = await h.getDirectoryHandle('local'); } catch (e) {} }
+    if (h.name.toLowerCase() !== 'local' && !confirm(`The game reads blueprints from %APPDATA%\\SpaceEngineers\\Blueprints\\local. The folder you picked is "${h.name}". Write the blueprint there anyway?`)) return null;
+    DB.set('dir:blueprints', h).catch(() => {});
+    return h;
+  }
+  async function writeFolder(folderName, files) {
+    const root = await blueprintsFolder(false); if (!root) return false;
+    let exists = false; try { await root.getDirectoryHandle(folderName); exists = true; } catch (e) {}
+    if (exists && !confirm(`A blueprint "${folderName}" already exists in ${root.name}. Replace it?`)) return false;
+    const dir = await root.getDirectoryHandle(folderName, { create: true });
+    for (const f of files) {
+      const fh = await dir.getFileHandle(f.name, { create: true }), w = await fh.createWritable();
+      await w.write(f.data); await w.close();
+    }
+    // the game's binary cache of bp.sbc: it would load the old blueprint instead of the new file (StlToBlueprint does this too)
+    try { await dir.removeEntry('bp.sbcB5'); } catch (e) {}
+    return root.name;
+  }
+  async function download(folderName, files) {
+    const zf = await Promise.all(files.map(async f => ({ name: folderName + '/' + f.name, data: typeof f.data === 'string' ? f.data : new Uint8Array(await f.data.arrayBuffer()) })));
+    const url = URL.createObjectURL(new Blob([makeZip(zf)], { type: 'application/zip' }));
+    const a = document.createElement('a'); a.href = url; a.download = folderName + '.zip'; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+  async function deliver(folderName, files, zip, msg) {
+    if (!zip && window.showDirectoryPicker) {
+      const where = await writeFolder(folderName, files);
+      if (where) { status(`${msg}<br>Written to ${esc(where)}\\${esc(folderName)}. In game: F10 (Blueprints), then Ctrl+V to paste.`); return; }
+      status('Not written (no folder chosen).', true); return;
+    }
+    await download(folderName, files);
+    status(`${msg}<br>Downloaded ${esc(folderName)}.zip: unzip it into %APPDATA%\\SpaceEngineers\\Blueprints\\local (the folder ${esc(folderName)} with bp.sbc inside).`);
+  }
+
+  async function exportFitted(zip) {
+    try {
+      const { xml, info, cells } = fittedBlueprint(), folderName = name();
+      const thumb = await new Promise(res => renderThumb(cells).toBlob(res, 'image/png'));
+      await deliver(folderName, [{ name: 'bp.sbc', data: xml }, { name: 'thumb.png', data: thumb }], zip, summary(info.blocks.length, info));
+    } catch (e) { status(esc(e.message), true); }
+  }
+  async function exportTest(zip) {
+    try {
+      const lib = ctx.lib(), size = gridSize(), armour = el('bpArmour').value;
+      const t = testBlueprint(lib, { size, armour, onlyUsed: el('bpTestUsed').checked, color: true });
+      if (!t.rows.length) throw new Error(`No library card has a ${size.toLowerCase()} grid block.`);
+      const folderName = blueprintFolderName(`SGB orientation test ${size} ${armour}`);
+      const xml = blueprintXml({ name: folderName, gridSize: size, blocks: t.blocks });
+      const pic = renderLayout(t.cells, t.rows);
+      const png = await new Promise(res => pic.toBlob(res, 'image/png')), thumb = await squarePng(pic, 512);
+      await deliver(folderName, [{ name: 'bp.sbc', data: xml }, { name: 'thumb.png', data: thumb }, { name: 'layout.png', data: png }, { name: 'layout.txt', data: t.legend }], zip,
+        `Test blueprint: ${t.rows.length} cards x 24 turns (${t.blocks.length} blocks). Compare it in game with layout.png (opened in a new tab if the browser allows; also in the blueprint folder).`);
+      window.open(URL.createObjectURL(png), '_blank');
+    } catch (e) { status(esc(e.message), true); }
+  }
+  el('bpExport').addEventListener('click', () => exportFitted(false));
+  el('bpZip').addEventListener('click', () => exportFitted(true));
+  el('bpTest').addEventListener('click', () => exportTest(!window.showDirectoryPicker));
+  el('bpFolder').addEventListener('click', async () => { const h = await blueprintsFolder(true); if (h) status(`Blueprints go to ${esc(h.name)}.`); });
+  if (!window.showDirectoryPicker) { el('bpExport').disabled = true; el('bpFolder').disabled = true; el('bpExport').title = 'This browser can\'t write to folders: use Download zip.'; }
 }
 
 
@@ -2941,6 +3571,7 @@ function opts() {
   return { scale: (parseFloat(el('scale').value) || 100) / 100, block: parseFloat(el('block').value), offX: parseFloat(el('offX').value) || 0,
     offY: parseFloat(el('offY').value) || 0, centre: el('centre').value, fill: el('fill').value, minFill: parseFloat(el('minFill').value) || 0,
     penaltyScale: isNaN(parseFloat(el('simplify').value)) ? 4 : parseFloat(el('simplify').value),
+    buildable: el('buildable').value === 'auto' ? undefined : el('buildable').value === 'on',
     groupsOn: groupOn, groupNames, groupPriority: GROUP_PRIORITY };
 }
 // manual edits: cell "x,y,z" -> template signature (stable when the library changes), or 'none'; per model + grid settings
@@ -3178,7 +3809,7 @@ el('editsExport').addEventListener('click', () => {
   });
   const data = { format: 'se-grid-builder-edits', version: 1, exported: new Date().toISOString(),
     model: { file: B.modelName, length: +el('bLength').value, front: el('bFront').value, up: el('bUp').value, groups: el('bGroups').value, groupsOn: [...groupOn] },
-    grid: { scale: +el('scale').value / 100, block: +el('block').value, centre: el('centre').value, offX: +el('offX').value, offY: +el('offY').value, fill: el('fill').value, minFill: +el('minFill').value, penaltyScale: +el('simplify').value },
+    grid: { scale: +el('scale').value / 100, block: +el('block').value, centre: el('centre').value, offX: +el('offX').value, offY: +el('offY').value, fill: el('fill').value, minFill: +el('minFill').value, penaltyScale: +el('simplify').value, buildable: opts().buildable },
     library: LIB.filter(s => s.use).map(s => s.id), cells };
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }));
@@ -3193,7 +3824,7 @@ el('cellReport').addEventListener('click', async () => {
   const used = LIB.filter(s => s.use), mods = used.filter(s => s.id.startsWith('mesh:'));
   const text = [`SE Grid Builder cell report`,
     `model: ${B.modelName}; length ${el('bLength').value} m; front ${el('bFront').value}; up ${el('bUp').value}; groups "${el('bGroups').value}"; on: ${[...groupOn].join(', ')}`,
-    `grid: scale ${el('scale').value}%; block ${el('block').value} m; centre ${el('centre').value}; forward ${el('offX').value}; up ${el('offY').value}; cells ${el('fill').value}; min fill ${el('minFill').value}; simplify ${el('simplify').value}`,
+    `grid: scale ${el('scale').value}%; block ${el('block').value} m; centre ${el('centre').value}; forward ${el('offX').value}; up ${el('offY').value}; cells ${el('fill').value}; min fill ${el('minFill').value}; simplify ${el('simplify').value}; buildable surfaces ${el('buildable').value}`,
     `library: ${used.length} blocks in use (${mods.length} mod blocks${mods.length ? ': ' + mods.slice(0, 12).map(s => s.key).join(' ') + (mods.length > 12 ? ' ...' : '') : ''})`,
     `cell: column ${x + 1}, layer ${y + 1}, row ${z + 1}; shown: ${f >= 0 ? name(f) : f === -3 ? 'no block (edited)' : 'no block'}${(x + ',' + y + ',' + z) in B.overrides ? ' (edited)' : ''}`,
     `best matches: ${alts.join(', ') || 'none'}`,
@@ -3249,10 +3880,10 @@ function applyDrawOrder() {
   v.scene.remove(v.cellGroup, v.modelGroup); v.overlay.remove(v.cellGroup, v.modelGroup);
   if (blocksOnTop) { v.scene.add(v.modelGroup); v.overlay.add(v.cellGroup); } else { v.scene.add(v.cellGroup); v.overlay.add(v.modelGroup); }
 }
-const SETTINGS = ['bLength', 'bFront', 'bUp', 'bGroups', 'scale', 'block', 'centre', 'offX', 'offY', 'fill', 'minFill', 'simplify', 'onTop'];
+const SETTINGS = ['bLength', 'bFront', 'bUp', 'bGroups', 'scale', 'block', 'centre', 'offX', 'offY', 'fill', 'minFill', 'simplify', 'buildable', 'onTop'];
 function saveBuilderSettings() { const s = {}; SETTINGS.forEach(id => s[id] = el(id).value); DB.set('builder', s).catch(() => {}); }
 ['bLength', 'bFront', 'bUp', 'bGroups'].forEach(id => el(id).addEventListener('change', () => prepare(true)));
-['scale', 'block', 'centre', 'offX', 'offY', 'fill', 'minFill', 'simplify'].forEach(id => el(id).addEventListener('change', () => { saveBuilderSettings(); rebuild(); }));
+['scale', 'block', 'centre', 'offX', 'offY', 'fill', 'minFill', 'simplify', 'buildable'].forEach(id => el(id).addEventListener('change', () => { saveBuilderSettings(); rebuild(); }));
 ['showCells', 'showGrid', 'layerMode', 'cellMode'].forEach(id => el(id).addEventListener('change', drawCells));
 el('cellOpacity').addEventListener('input', drawCells);
 el('layer').addEventListener('input', () => { if (B.selected) B.selected[1] = parseInt(el('layer').value) - 1; updateInfo(); showSel(); drawCells(); });
@@ -3279,6 +3910,9 @@ function showTab(id) {
 }
 document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
 window.addEventListener('resize', () => { if (current === 'skPage') SK.view.resize(); if (current === 'bPage') { B.view.resize(); drawMap(); } });
+
+// blueprint export (blueprint.js, blueprint_ui.js)
+initBlueprintUI({ THREE, el, DB, B, lib: () => LIB, effFit, shapeGeometry, shapeColor });
 
 window.SGB = { B, SK };   // for debugging in the browser console
 (async function start() {
