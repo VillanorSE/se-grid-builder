@@ -81,7 +81,7 @@ sources (`test_blueprint.mjs` repeats the check when the game is installed):
 turned (Corner 2x1 Base, Inv. Corner 2x1 Base and Tip, Half Block, Half Slope, Half Slope Corner and its Inverted,
 Sloped Corner Tip, Corner Square Inverted, Square Sloped Corner Tip Inv.), and the map turns them back. Inv. Corner 2x1
 Base was the least certain (three turns fit the mount points and models nearly equally; the tile table's cut face picks
-one); the owner confirmed it in game on 2026-10-11. The in-game check is the **test blueprint**: one row per card (only blocks used in builder by default), the card
+one). The owner checked the test blueprint in game on 2026-10-11: every card matched. The in-game check is the **test blueprint**: one row per card (only blocks used in builder by default), the card
 in all 24 turns, one empty cell apart, red marker cubes at the back of each row (2 on every 5th row, 3 on every 10th).
 Its folder also holds `layout.png` (the same layout drawn by the tool, row and turn numbers on it) and `layout.txt`
 (the legend). Each block in game should look like the tool's drawing.
