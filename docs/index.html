@@ -223,7 +223,8 @@
     <label>Colour <select id="bpColour"><option value="none">game default</option><option value="kind">per block kind</option><option value="one">one colour</option></select>
       <input type="color" id="bpColourPick" value="#8a9099" style="width:28px;padding:0"></label>
     <div class="btnrow"><button id="bpExport" class="primary">Export blueprint</button><button id="bpZip">Download zip</button><button id="bpFolder" title="Choose the Blueprints\local folder again">folder&hellip;</button></div>
-    <div class="btnrow"><button id="bpTest">Test blueprint: every block in 24 turns</button></div>
+    <div class="btnrow"><button id="bpTest">Test blueprint</button></div>
+    <label><input type="checkbox" id="bpTestAll"> all 24 turns (default: 2 turns per block, enough to check each one)</label>
     <label><input type="checkbox" id="bpTestUsed" checked> test only blocks used in builder</label>
     <div id="bpStatus" class="hint"></div>
     <div class="hint">One grid of the block size above, every fitted cell with your edits. Export writes straight into
@@ -2666,33 +2667,40 @@ function blueprintFolderName(name) {
 // x (towards the grid's Forward), one empty cell between blocks. Each row starts with a marker behind its first
 // block (the grid's Backward side): 1 cube, 2 stacked on every 5th row, 3 on every 10th, so rows can be counted.
 function testLayout(shapes, o) {
-  const cells = [], rows = [], marker = shapes.find(s => s.topology === 'Box');
+  const cells = [], rows = [], marker = shapes.find(s => s.topology === 'Box'), turns = testTurns(o);
   shapes.forEach((s, si) => {
     if (o.onlyUsed && !s.use) return;
     const pb = pickBlock(s, o.size, o.armour); if (!pb || !s.solids || !s.solids.length) return;
     const r = rows.length, z = 2 * r;
     rows.push({ row: r + 1, key: s.key, name: s.name, id: s.id, subtype: pb.subtype, sure: pb.sure,
       orient: CARD_ORIENT[s.id] || (pb.orient[0] !== 'Forward' || pb.orient[1] !== 'Up' ? pb.orient : null) });
-    for (let ri = 0; ri < ROTS.length; ri++) cells.push({ x: 2 * ri, y: 0, z, shape: s, si, rot: ri });
+    turns.forEach((ri, k) => cells.push({ x: 2 * k, y: 0, z, shape: s, si, rot: ri }));
     if (marker) { const h = 1 + ((r + 1) % 5 === 0) + ((r + 1) % 10 === 0); for (let k = 0; k < h; k++) cells.push({ x: -2, y: k, z, shape: marker, si: shapes.indexOf(marker), rot: 0, marker: true }); }
   });
-  return { cells, rows };
+  return { cells, rows, turns };
+}
+// o.quick: turn 1 plus one turn that moves both Forward and Up. The 24-turn maths is tested against the game's own
+// orientation code, so a card that is right in these two is right in all 24; only the card's base turn needs eyes.
+function testTurns(o) {
+  if (!o.quick) return ROTS.map((R, i) => i);
+  const other = ROTS.findIndex(R => { const t = orientOf(R); return t[0] !== 'Forward' && t[0] !== 'Backward' && t[1] !== 'Up' && t[1] !== 'Down'; });
+  return [0, other];
 }
 // the test layout's blocks and a text legend
 function testBlueprint(shapes, o) {
-  const { cells, rows } = testLayout(shapes, o), blocks = [];
+  const { cells, rows, turns: tl } = testLayout(shapes, o), blocks = [];
   for (const c of cells) {
     const pb = pickBlock(c.shape, o.size, o.armour);
     blocks.push({ typeId: pb.typeId, subtype: pb.subtype, min: gridPos(c.x, c.y, c.z, 1, 'col'), ...gridOrientation(c.rot, pb.orient),
       color: o.color ? colorMaskHSV(c.marker ? '#d04040' : (rows.length && (c.z / 2) % 2 ? '#7090c0' : '#c0c0c0')) : null });
   }
-  const turns = ROTS.map((R, ri) => { const t = orientOf(R); return `${String(ri + 1).padStart(2)}: card Forward -> ${t[0]}, card Up -> ${t[1]}`; });
-  const legend = [`SE Grid Builder test blueprint: ${rows.length} cards x 24 turns, ${o.size} grid, ${o.armour} armour.`,
+  const turns = tl.map(ri => { const t = orientOf(ROTS[ri]); return `${String(ri + 1).padStart(2)}: card Forward -> ${t[0]}, card Up -> ${t[1]}`; });
+  const legend = [`SE Grid Builder test blueprint: ${rows.length} cards x ${tl.length} turns,${o.size} grid, ${o.armour} armour.`,
     '',
     'Layout (seen from above, the grid\'s Forward pointing away from you):',
     '- one row per card, rows side by side from left (row 1) to right; one empty cell between blocks;',
     '- red marker cubes at the back end of each row: 1 cube, 2 on every 5th row, 3 on every 10th;',
-    '- along each row, going forward, the card in the tool\'s 24 turns (below). Turn 1 is the card unturned.',
+    '- along each row, going forward, the card in the turns listed below (t numbers as in the tool). Turn 1 is the card unturned.',
     '',
     'Check: each block should look exactly like the tool draws that card in that turn (layout.png, same view).',
     'Turn 1: the card as its Cube Library thumbnail shows it, with the thumbnail\'s orange arrow pointing to the',
@@ -2701,7 +2709,7 @@ function testBlueprint(shapes, o) {
     'Rows:', ...rows.map(r => `${String(r.row).padStart(3)}  ${r.key.padEnd(5)} ${r.name}  [${r.subtype}]` +
       (r.orient ? `  card orientation: block Forward = card ${r.orient[0]}, Up = card ${r.orient[1]}` : '') + (r.sure ? '' : '  (turn on the card not recorded: re-import)')),
     '', 'Turns (the tool\'s rotation of the card, in the tool frame: x front, y up, z side):', ...turns];
-  return { blocks, rows, legend: legend.join('\r\n') + '\r\n', cells };
+  return { blocks, rows, legend: legend.join('\r\n') + '\r\n', cells, turns: tl };
 }
 
 // ---------- zip (stored, no compression) for the download fallback
@@ -2942,7 +2950,7 @@ function initBlueprintUI(ctx) {
     return { canvas: out, cam };
   }
   // the test layout drawn by the tool (same blocks, same turns), seen from behind and above like the legend says
-  function renderLayout(cells, rows) {
+  function renderLayout(cells, rows, turns) {
     // about 70 px per row, so each block can be told apart and the row labels don't run into each other
     const W = Math.max(1600, Math.min(8000, 70 * rows.length + 200)), H = Math.round(W * 0.6);
     const { canvas: out, cam } = renderCells(cells, W, H, new THREE.Vector3(-1, 1.3, 0), [[-7.5, 0, 0], [0, 0, -2.5]]);
@@ -2951,9 +2959,9 @@ function initBlueprintUI(ctx) {
     const label = (p, text, color) => { const q = p.clone().project(cam); const sx = (q.x + 1) / 2 * W, sy = (1 - q.y) / 2 * H;
       g2.font = 'bold 18px system-ui, sans-serif'; g2.textAlign = 'center'; g2.lineWidth = 4; g2.strokeStyle = '#000'; g2.strokeText(text, sx, sy); g2.fillStyle = color; g2.fillText(text, sx, sy); };
     rows.forEach((rw, i) => { label(new THREE.Vector3(-4.5, 0, 2 * i + .5), String(rw.row), '#ffd27a'); label(new THREE.Vector3(-6.5, 0, 2 * i + .5), rw.key, '#ffd27a'); });
-    for (let t = 0; t < 24; t++) label(new THREE.Vector3(2 * t + .5, 0, -1.5), 't' + (t + 1), '#9fd0ff');
+    turns.forEach((t, k) => label(new THREE.Vector3(2 * k + .5, 0, -1.5), 't' + (t + 1), '#9fd0ff'));
     g2.font = '20px system-ui, sans-serif'; g2.textAlign = 'left'; g2.fillStyle = '#e6e8eb';
-    g2.fillText('SE Grid Builder test layout: rows = cards (numbers as in layout.txt), t1..t24 = turns; grid Forward points away from the viewer.', 16, 30);
+    g2.fillText('SE Grid Builder test layout: rows = cards (numbers as in layout.txt), t numbers = turns; grid Forward points away from the viewer.', 16, 30);
     return out;
   }
   // the blueprint's thumbnail: its blocks seen from the 3D view's direction
@@ -3015,14 +3023,14 @@ function initBlueprintUI(ctx) {
   async function exportTest(zip) {
     try {
       const lib = ctx.lib(), size = gridSize(), armour = el('bpArmour').value;
-      const t = testBlueprint(lib, { size, armour, onlyUsed: el('bpTestUsed').checked, color: true });
+      const t = testBlueprint(lib, { size, armour, onlyUsed: el('bpTestUsed').checked, quick: !el('bpTestAll').checked, color: true });
       if (!t.rows.length) throw new Error(`No library card has a ${size.toLowerCase()} grid block.`);
       const folderName = blueprintFolderName(`SGB orientation test ${size} ${armour}`);
       const xml = blueprintXml({ name: folderName, gridSize: size, blocks: t.blocks });
-      const pic = renderLayout(t.cells, t.rows);
+      const pic = renderLayout(t.cells, t.rows, t.turns);
       const png = await new Promise(res => pic.toBlob(res, 'image/png')), thumb = await squarePng(pic, 512);
       await deliver(folderName, [{ name: 'bp.sbc', data: xml }, { name: 'thumb.png', data: thumb }, { name: 'layout.png', data: png }, { name: 'layout.txt', data: t.legend }], zip,
-        `Test blueprint: ${t.rows.length} cards x 24 turns (${t.blocks.length} blocks). Compare it in game with layout.png (opened in a new tab if the browser allows; also in the blueprint folder).`);
+        `Test blueprint: ${t.rows.length} cards x ${t.turns.length} turns (${t.blocks.length} blocks). Compare it in game with layout.png (opened in a new tab if the browser allows; also in the blueprint folder).`);
       window.open(URL.createObjectURL(png), '_blank');
     } catch (e) { status(esc(e.message), true); }
   }

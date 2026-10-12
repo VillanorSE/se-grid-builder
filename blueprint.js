@@ -222,33 +222,40 @@ export function blueprintFolderName(name) {
 // x (towards the grid's Forward), one empty cell between blocks. Each row starts with a marker behind its first
 // block (the grid's Backward side): 1 cube, 2 stacked on every 5th row, 3 on every 10th, so rows can be counted.
 export function testLayout(shapes, o) {
-  const cells = [], rows = [], marker = shapes.find(s => s.topology === 'Box');
+  const cells = [], rows = [], marker = shapes.find(s => s.topology === 'Box'), turns = testTurns(o);
   shapes.forEach((s, si) => {
     if (o.onlyUsed && !s.use) return;
     const pb = pickBlock(s, o.size, o.armour); if (!pb || !s.solids || !s.solids.length) return;
     const r = rows.length, z = 2 * r;
     rows.push({ row: r + 1, key: s.key, name: s.name, id: s.id, subtype: pb.subtype, sure: pb.sure,
       orient: CARD_ORIENT[s.id] || (pb.orient[0] !== 'Forward' || pb.orient[1] !== 'Up' ? pb.orient : null) });
-    for (let ri = 0; ri < ROTS.length; ri++) cells.push({ x: 2 * ri, y: 0, z, shape: s, si, rot: ri });
+    turns.forEach((ri, k) => cells.push({ x: 2 * k, y: 0, z, shape: s, si, rot: ri }));
     if (marker) { const h = 1 + ((r + 1) % 5 === 0) + ((r + 1) % 10 === 0); for (let k = 0; k < h; k++) cells.push({ x: -2, y: k, z, shape: marker, si: shapes.indexOf(marker), rot: 0, marker: true }); }
   });
-  return { cells, rows };
+  return { cells, rows, turns };
+}
+// o.quick: turn 1 plus one turn that moves both Forward and Up. The 24-turn maths is tested against the game's own
+// orientation code, so a card that is right in these two is right in all 24; only the card's base turn needs eyes.
+export function testTurns(o) {
+  if (!o.quick) return ROTS.map((R, i) => i);
+  const other = ROTS.findIndex(R => { const t = orientOf(R); return t[0] !== 'Forward' && t[0] !== 'Backward' && t[1] !== 'Up' && t[1] !== 'Down'; });
+  return [0, other];
 }
 // the test layout's blocks and a text legend
 export function testBlueprint(shapes, o) {
-  const { cells, rows } = testLayout(shapes, o), blocks = [];
+  const { cells, rows, turns: tl } = testLayout(shapes, o), blocks = [];
   for (const c of cells) {
     const pb = pickBlock(c.shape, o.size, o.armour);
     blocks.push({ typeId: pb.typeId, subtype: pb.subtype, min: gridPos(c.x, c.y, c.z, 1, 'col'), ...gridOrientation(c.rot, pb.orient),
       color: o.color ? colorMaskHSV(c.marker ? '#d04040' : (rows.length && (c.z / 2) % 2 ? '#7090c0' : '#c0c0c0')) : null });
   }
-  const turns = ROTS.map((R, ri) => { const t = orientOf(R); return `${String(ri + 1).padStart(2)}: card Forward -> ${t[0]}, card Up -> ${t[1]}`; });
-  const legend = [`SE Grid Builder test blueprint: ${rows.length} cards x 24 turns, ${o.size} grid, ${o.armour} armour.`,
+  const turns = tl.map(ri => { const t = orientOf(ROTS[ri]); return `${String(ri + 1).padStart(2)}: card Forward -> ${t[0]}, card Up -> ${t[1]}`; });
+  const legend = [`SE Grid Builder test blueprint: ${rows.length} cards x ${tl.length} turns,${o.size} grid, ${o.armour} armour.`,
     '',
     'Layout (seen from above, the grid\'s Forward pointing away from you):',
     '- one row per card, rows side by side from left (row 1) to right; one empty cell between blocks;',
     '- red marker cubes at the back end of each row: 1 cube, 2 on every 5th row, 3 on every 10th;',
-    '- along each row, going forward, the card in the tool\'s 24 turns (below). Turn 1 is the card unturned.',
+    '- along each row, going forward, the card in the turns listed below (t numbers as in the tool). Turn 1 is the card unturned.',
     '',
     'Check: each block should look exactly like the tool draws that card in that turn (layout.png, same view).',
     'Turn 1: the card as its Cube Library thumbnail shows it, with the thumbnail\'s orange arrow pointing to the',
@@ -257,7 +264,7 @@ export function testBlueprint(shapes, o) {
     'Rows:', ...rows.map(r => `${String(r.row).padStart(3)}  ${r.key.padEnd(5)} ${r.name}  [${r.subtype}]` +
       (r.orient ? `  card orientation: block Forward = card ${r.orient[0]}, Up = card ${r.orient[1]}` : '') + (r.sure ? '' : '  (turn on the card not recorded: re-import)')),
     '', 'Turns (the tool\'s rotation of the card, in the tool frame: x front, y up, z side):', ...turns];
-  return { blocks, rows, legend: legend.join('\r\n') + '\r\n', cells };
+  return { blocks, rows, legend: legend.join('\r\n') + '\r\n', cells, turns: tl };
 }
 
 // ---------- zip (stored, no compression) for the download fallback

@@ -95,7 +95,7 @@ export function initBlueprintUI(ctx) {
     return { canvas: out, cam };
   }
   // the test layout drawn by the tool (same blocks, same turns), seen from behind and above like the legend says
-  function renderLayout(cells, rows) {
+  function renderLayout(cells, rows, turns) {
     // about 70 px per row, so each block can be told apart and the row labels don't run into each other
     const W = Math.max(1600, Math.min(8000, 70 * rows.length + 200)), H = Math.round(W * 0.6);
     const { canvas: out, cam } = renderCells(cells, W, H, new THREE.Vector3(-1, 1.3, 0), [[-7.5, 0, 0], [0, 0, -2.5]]);
@@ -104,9 +104,9 @@ export function initBlueprintUI(ctx) {
     const label = (p, text, color) => { const q = p.clone().project(cam); const sx = (q.x + 1) / 2 * W, sy = (1 - q.y) / 2 * H;
       g2.font = 'bold 18px system-ui, sans-serif'; g2.textAlign = 'center'; g2.lineWidth = 4; g2.strokeStyle = '#000'; g2.strokeText(text, sx, sy); g2.fillStyle = color; g2.fillText(text, sx, sy); };
     rows.forEach((rw, i) => { label(new THREE.Vector3(-4.5, 0, 2 * i + .5), String(rw.row), '#ffd27a'); label(new THREE.Vector3(-6.5, 0, 2 * i + .5), rw.key, '#ffd27a'); });
-    for (let t = 0; t < 24; t++) label(new THREE.Vector3(2 * t + .5, 0, -1.5), 't' + (t + 1), '#9fd0ff');
+    turns.forEach((t, k) => label(new THREE.Vector3(2 * k + .5, 0, -1.5), 't' + (t + 1), '#9fd0ff'));
     g2.font = '20px system-ui, sans-serif'; g2.textAlign = 'left'; g2.fillStyle = '#e6e8eb';
-    g2.fillText('SE Grid Builder test layout: rows = cards (numbers as in layout.txt), t1..t24 = turns; grid Forward points away from the viewer.', 16, 30);
+    g2.fillText('SE Grid Builder test layout: rows = cards (numbers as in layout.txt), t numbers = turns; grid Forward points away from the viewer.', 16, 30);
     return out;
   }
   // the blueprint's thumbnail: its blocks seen from the 3D view's direction
@@ -168,14 +168,14 @@ export function initBlueprintUI(ctx) {
   async function exportTest(zip) {
     try {
       const lib = ctx.lib(), size = gridSize(), armour = el('bpArmour').value;
-      const t = testBlueprint(lib, { size, armour, onlyUsed: el('bpTestUsed').checked, color: true });
+      const t = testBlueprint(lib, { size, armour, onlyUsed: el('bpTestUsed').checked, quick: !el('bpTestAll').checked, color: true });
       if (!t.rows.length) throw new Error(`No library card has a ${size.toLowerCase()} grid block.`);
       const folderName = blueprintFolderName(`SGB orientation test ${size} ${armour}`);
       const xml = blueprintXml({ name: folderName, gridSize: size, blocks: t.blocks });
-      const pic = renderLayout(t.cells, t.rows);
+      const pic = renderLayout(t.cells, t.rows, t.turns);
       const png = await new Promise(res => pic.toBlob(res, 'image/png')), thumb = await squarePng(pic, 512);
       await deliver(folderName, [{ name: 'bp.sbc', data: xml }, { name: 'thumb.png', data: thumb }, { name: 'layout.png', data: png }, { name: 'layout.txt', data: t.legend }], zip,
-        `Test blueprint: ${t.rows.length} cards x 24 turns (${t.blocks.length} blocks). Compare it in game with layout.png (opened in a new tab if the browser allows; also in the blueprint folder).`);
+        `Test blueprint: ${t.rows.length} cards x ${t.turns.length} turns (${t.blocks.length} blocks). Compare it in game with layout.png (opened in a new tab if the browser allows; also in the blueprint folder).`);
       window.open(URL.createObjectURL(png), '_blank');
     } catch (e) { status(esc(e.message), true); }
   }

@@ -223,7 +223,8 @@
     <label>Colour <select id="bpColour"><option value="none">game default</option><option value="kind">per block kind</option><option value="one">one colour</option></select>
       <input type="color" id="bpColourPick" value="#8a9099" style="width:28px;padding:0"></label>
     <div class="btnrow"><button id="bpExport" class="primary">Export blueprint</button><button id="bpZip">Download zip</button><button id="bpFolder" title="Choose the Blueprints\local folder again">folder&hellip;</button></div>
-    <div class="btnrow"><button id="bpTest">Test blueprint: every block in 24 turns</button></div>
+    <div class="btnrow"><button id="bpTest">Test blueprint</button></div>
+    <label><input type="checkbox" id="bpTestAll"> all 24 turns (default: 2 turns per block, enough to check each one)</label>
     <label><input type="checkbox" id="bpTestUsed" checked> test only blocks used in builder</label>
     <div id="bpStatus" class="hint"></div>
     <div class="hint">One grid of the block size above, every fitted cell with your edits. Export writes straight into
