@@ -3601,7 +3601,8 @@ const Fit = (() => {
   let url = null;
   try { const src = el('sgbWorker').textContent; if (window.Worker && window.Blob && src.includes('computeGrid')) url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' })); }
   catch (e) { url = null; }
-  const N = Math.max(1, Math.min(6, (navigator.hardwareConcurrency || 4) - 1));   // more than about 6 gains little
+  // half the cores at most (and no more than 4), so the rest of the computer stays usable during a long fit
+  const N = Math.max(1, Math.min(4, Math.floor((navigator.hardwareConcurrency || 4) / 2)));
   let pool = [], current = null;
   const stores = new Map();                // surface scores per grid key, most recent last (a few kept: settings get toggled back)
   const store = key => { let c = stores.get(key); if (c) stores.delete(key); else c = newSurfCache(); stores.set(key, c);
@@ -3664,6 +3665,12 @@ const Fit = (() => {
 let rebuildToken = 0;
 async function rebuild() {
   if (!B.parts) return;
+  // a model whose last fit was long isn't refitted on its own when the page opens: the user starts it
+  if (B.deferFit) {
+    el('info').innerHTML = `Large model: it isn't fitted when the page opens${B.deferFit > 1 ? ` (last fit took ${Math.round(B.deferFit / 1000)} s)` : ''}. <button id="fitNow">Fit now</button>`;
+    el('fitNow').addEventListener('click', () => { B.deferFit = 0; rebuild(); });
+    return;
+  }
   const token = ++rebuildToken;
   el('info').textContent = 'Fitting…';
   const ver = libVersion, T = B.Tver === ver ? B.T : buildTemplates(LIB); B.fitLibVer = ver;
@@ -3677,6 +3684,7 @@ async function rebuild() {
   if (/^fitting/.test(state.textContent)) state.textContent = before;
   installTemplates(T, ver);
   B.grid = grid; B.fitMs = performance.now() - t0;
+  DB.set('lastFitMs', B.fitMs).catch(() => {});
   if (gridSig() !== B.ovKey) { await loadOverrides(); B.selected = null; }
   showSel(); applyModelVisibility(); updateInfo(); drawCells();
 }
@@ -3943,6 +3951,9 @@ window.SGB = { B, SK };   // for debugging in the browser console
   initSketchView(); initBuilderView();
   refreshSketchList(); renderLibrary(); restoreDirs();
   showTab('bPage');                     // the Grid Builder is the working tab; the other two are reference
+  // a long last fit, or a grid more than 60 blocks long (a ship hull), waits for "Fit now" instead of fitting on open
+  const lastFit = await DB.get('lastFitMs'), blocksLong = +el('bLength').value * (+el('scale').value / 100) / +el('block').value;
+  if (lastFit > 15000 || blocksLong > 60) B.deferFit = Math.max(lastFit || 0, 1);
   const m = await DB.get('model'); if (m && m.buf) await setModel(m.name, m.buf, true);
   el('saveState').textContent = 'saved in this browser';
   window.sgbReady = true;
