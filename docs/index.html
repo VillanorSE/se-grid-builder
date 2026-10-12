@@ -2482,8 +2482,8 @@ const orientOf = M => [bpDirName(bpApply(M, [0, 0, -1])), bpDirName(bpApply(M, [
 // sources (tools/se-grid-builder/README.md, "Blueprint export"): the armour tile table in Sandbox.Game.dll
 // (MyCubeGridDefinitions: face normals, full faces, edges), the blocks' mount points (CubeBlocks_Armor*.sbc), and the
 // blocks' construction-stage models (*Construction_3.mwm). All 33 armour shapes and 18 panels agree on one turn; the 10
-// listed here are owner sketches drawn turned. InvCorner2Base is the least certain (three turns fit the mount points and
-// construction models nearly equally; the tile table's cut-face normal picks this one): check it in game first.
+// listed here are owner sketches drawn turned. InvCorner2Base was the least certain (three turns fit the mount points and
+// construction models nearly equally; the tile table's cut-face normal picks this one); confirmed in game 2026-10-11.
 // Imported mod blocks carry their own turn (block.orient, set by the importer); it wins over this table.
 const CARD_ORIENT = {
   'vanilla:Corner2Base': ['Right', 'Up'],
