@@ -297,6 +297,44 @@ export function prepareModel(rawParts, o) {
   parts.forEach(p => { for (let i = 0; i < p.tris.length; i += 3) { p.tris[i] = (p.tris[i] - mn[0]) * s; p.tris[i + 1] = (p.tris[i + 1] - mn[1]) * s; p.tris[i + 2] = (p.tris[i + 2] - cz) * s; } });
   return { parts, size: [(mx[0] - mn[0]) * s, (mx[1] - mn[1]) * s, (mx[2] - mn[2]) * s] };
 }
+// big models (3D-print meshes run to millions of triangles, far finer than the fit's 1/SUB-cell voxels): every corner in
+// the same box of side `size` is merged into one point (the mean of its corners) and triangles that collapse are dropped
+// (vertex clustering). A closed mesh stays closed; walls thinner than the box fold flat, below what the voxels see.
+// Each part keeps its original bounds (lo, hi), so the grid's placement doesn't move.
+// The surface scores depend on mesh density (at least one sample per triangle), so a simplified mesh shifts some
+// near-ties (2026-10-20, 1/24 cell: Littorio 2 of 3134 cells, M13/40 38 of 371): only models too big to fit as they are
+// get it, and the owner's tuned models (all under 500k triangles) keep their exact picks.
+export const CLUSTER_PER_CELL = 24;          // merge box = 1/24 of a cell (a quarter voxel) for the fit
+export const SIMPLIFY_FROM = 500000;         // triangles; smaller models are fitted as they are
+export function clusterParts(parts, size) {
+  return parts.map(p => {
+    const t = p.tris, nv = t.length / 3, lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < t.length; i += 3) for (let k = 0; k < 3; k++) { const v = t[i + k]; if (v < lo[k]) lo[k] = v; if (v > hi[k]) hi[k] = v; }
+    const sz = Math.max(size, (Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) || 1) / 130000);   // keys stay exact integers (< 2^53)
+    const ids = new Int32Array(nv), map = new Map(); let sums = [];
+    for (let v = 0; v < nv; v++) {
+      const x = t[v * 3], y = t[v * 3 + 1], z = t[v * 3 + 2];
+      const key = (Math.floor((x - lo[0]) / sz) * 131072 + Math.floor((y - lo[1]) / sz)) * 131072 + Math.floor((z - lo[2]) / sz);
+      let id = map.get(key); if (id === undefined) { id = map.size; map.set(key, id); sums.push(0, 0, 0, 0); }
+      ids[v] = id; sums[id * 4] += x; sums[id * 4 + 1] += y; sums[id * 4 + 2] += z; sums[id * 4 + 3]++;
+    }
+    const out = new Float32Array(t.length); let o = 0;
+    for (let v = 0; v < nv; v += 3) {
+      const a = ids[v], b = ids[v + 1], c = ids[v + 2]; if (a === b || b === c || a === c) continue;
+      for (const id of [a, b, c]) { const n = sums[id * 4 + 3]; out[o++] = sums[id * 4] / n; out[o++] = sums[id * 4 + 1] / n; out[o++] = sums[id * 4 + 2] / n; }
+    }
+    sums = null;
+    return { ...p, tris: out.slice(0, o), lo, hi };
+  });
+}
+// the scaled bounds of the parts in use (a clustered part's own lo/hi: its original extent)
+function partBounds(parts, o) {
+  const s = o.scale, mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
+  parts.forEach(p => { if (!o.groupsOn.has(p.group)) return;
+    if (p.lo) { for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], Math.fround(p.lo[k] * s)); mx[k] = Math.max(mx[k], Math.fround(p.hi[k] * s)); } return; }
+    for (let i = 0; i < p.tris.length; i += 3) for (let k = 0; k < 3; k++) { const v = Math.fround(p.tris[i + k] * s); mn[k] = Math.min(mn[k], v); mx[k] = Math.max(mx[k], v); } });
+  return { mn, mx };
+}
 // "turret=turret,gun;wheels=wheel" -> group of a part name (first match wins; anything else is "body")
 export function groupOf(name, rules) {
   const n = name.toLowerCase();
@@ -577,10 +615,7 @@ const frameKey = (o, ox, oy, oz, nx, ny, nz) => [o.surfTag || '', o.scale, o.blo
 export const newSurfCache = () => ({ key: null, parts: null, T: null, map: new Map(), fresh: [], complete: false, prep: null, prepKey: null });
 // the cache key computeGrid will use for these parts and options (lets a caller pick stored scores before fitting)
 export function surfCacheKey(parts, o) {
-  const s = o.scale, mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
-  parts.forEach(p => { if (!o.groupsOn.has(p.group)) return;
-    for (let i = 0; i < p.tris.length; i += 3) for (let k = 0; k < 3; k++) { const v = Math.fround(p.tris[i + k] * s); mn[k] = Math.min(mn[k], v); mx[k] = Math.max(mx[k], v); } });
-  const f = gridFrame(mn, mx, o);
+  const { mn, mx } = partBounds(parts, o), f = gridFrame(mn, mx, o);
   return frameKey(o, f.ox, f.oy, f.oz, f.nx, f.ny, f.nz);
 }
 // scores computed since the last call, as flat arrays (to pass between workers); clears the list
@@ -607,8 +642,7 @@ export function computeGrid(parts, o) {
   const s = o.scale, b = o.block, use = parts.filter(p => o.groupsOn.has(p.group));
   if (!use.length) return null;
   const scaled = use.map(p => ({ group: p.group, tris: Float32Array.from(p.tris, x => x * s) }));
-  const mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
-  scaled.forEach(p => { for (let i = 0; i < p.tris.length; i += 3) for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], p.tris[i + k]); mx[k] = Math.max(mx[k], p.tris[i + k]); } });
+  const { mn, mx } = partBounds(use, o);
   const { ox, oy, oz, nx, ny, nz } = gridFrame(mn, mx, o);
   const fb = b / SUB, fn = [nx * SUB, ny * SUB, nz * SUB];
   const surface = o.scoring !== 'volume', N = nx * ny * nz;

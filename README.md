@@ -15,7 +15,8 @@ Made for the *WW2: War in the Mediterranean* scenario mods, usable for any build
   - a block is considered only when the model fills enough of the block's own volume;
   - the winner is the block whose faces best match the model's surface, preferring simple blocks
     (Simplify setting);
-  - hidden part groups (e.g. wheels you'll build from suspension) keep their space clear;
+  - hidden part groups (e.g. wheels you'll build from suspension) keep their space clear; the part checkboxes are under
+    Part groups in Model (wheels and antennas off by default; a hint says when no part matches the wheels words);
   - a layer map shows the result layer by layer, and clicking a cell lists its best matches to pick from.
 - **Cube Library:** every block shape the builder can use:
   - starts with the 33 vanilla light armour shapes and the 18 vanilla armour panels;
@@ -24,10 +25,27 @@ Made for the *WW2: War in the Mediterranean* scenario mods, usable for any build
   - switch blocks on or off for the builder, and export/import the library as JSON.
 - **Sketch:** draw a block's edges on a cube to add or correct a shape; concave shapes work.
 - **Sessions:** **Save session** writes the model, settings, cell edits and library to one file; **Open session** on
-  any browser brings it back. That's how to share a grid with someone.
+  any browser brings it back. That's how to share a grid with someone. The file is `<model>-session.sgb` (the session
+  JSON, then the model's own bytes), so large STLs save in Firefox too; older `-session.json` files still open.
 
 Everything is stored in your browser (IndexedDB). Clearing site data clears it; export the library or save a session
 to keep it.
+
+### Loading a model and big models
+
+A newly loaded model gets **Front axis** set to its longest side (Up stays unless it is that side; then z for an
+.stl, y for an .obj). Type the real length; flip the sign if the front is at the other end.
+
+Big models (3D-print STLs often run to millions of triangles) are handled like this:
+- **Fit:** models over 500,000 triangles are fitted from a simplified copy (`clusterParts` in `core.js`: corners in
+  the same 1/24-cell box merged, collapsed triangles dropped; each part keeps its original bounds, so the grid doesn't
+  move). It is redone when Block size or Build scale changes, and only it goes to the fit workers. The info panel says
+  "model simplified to N triangles". A 5.8-million-triangle car at 5.2 m, small grid, fits in about 7 s.
+- The fit's surface scores depend on mesh density, so simplifying shifts a few near-ties; smaller models are fitted as
+  they are.
+- **3D view:** models over 1 million triangles are drawn simplified (merge box 1/500 of the longest side).
+- **Big grid:** a grid over 50,000 cells waits for "Fit now" with its size shown (usually a wrong Front axis, Up or
+  length).
 
 ### Importing blocks from a world
 
@@ -81,7 +99,8 @@ sources (`test_blueprint.mjs` repeats the check when the game is installed):
 turned (Corner 2x1 Base, Inv. Corner 2x1 Base and Tip, Half Block, Half Slope, Half Slope Corner and its Inverted,
 Sloped Corner Tip, Corner Square Inverted, Square Sloped Corner Tip Inv.), and the map turns them back. Inv. Corner 2x1
 Base was the least certain (three turns fit the mount points and models nearly equally; the tile table's cut face picks
-one). The owner checked the test blueprint in game on 2026-10-11: every card matched. The in-game check is the **test blueprint**: one row per card (only blocks used in builder by default), the card
+one). The owner checked the test blueprint in game on 2026-10-11: every card matched. The in-game check is the **test blueprint** (its button was removed from the page on 2026-10-20
+once every card was confirmed; `testBlueprint` in `blueprint.js` is kept and `test_blueprint.mjs` still checks it): one row per card (only blocks used in builder by default), the card
 in all 24 turns, one empty cell apart, red marker cubes at the back of each row (2 on every 5th row, 3 on every 10th).
 Its folder also holds `layout.png` (the same layout drawn by the tool, row and turn numbers on it) and `layout.txt`
 (the legend). Each block in game should look like the tool's drawing.

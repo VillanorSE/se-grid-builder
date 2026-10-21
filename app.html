@@ -23,8 +23,10 @@
   .view { flex:1; min-height:0; position:relative; }
   h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:16px 0 6px; }
   h2:first-child { margin-top:0; }
-  label { display:flex; align-items:center; gap:6px; margin:4px 0; }
+  label { display:flex; align-items:center; flex-wrap:wrap; gap:4px 6px; margin:4px 0; }
+  label > .hint { flex-basis:100%; }   /* a hint inside a label gets its own line under the control */
   input[type=number], input[type=text], input[type=search], select, textarea { background:#14181c; color:var(--text); border:1px solid var(--line); border-radius:4px; padding:3px 5px; font:12px system-ui; }
+  select { max-width:100%; min-width:0; }
   input[type=number] { width:76px; }
   input[type=range] { flex:1; }
   textarea { width:100%; }
@@ -186,7 +188,7 @@
   <div class="side">
     <h2>Session</h2>
     <div class="btnrow"><button id="sessSave">Save session</button><button id="sessOpen">Open session</button></div>
-    <input type="file" id="sessFile" accept=".json,application/json" hidden>
+    <input type="file" id="sessFile" accept=".sgb,.json,application/json" hidden>
     <div class="hint">One file with the model, settings, cell edits and block library, to keep or to send to someone with
     this page.</div>
     <h2>Model</h2>
@@ -199,6 +201,9 @@
       Up <select id="bUp"><option>y</option><option>z</option><option>x</option></select></label>
     <label style="display:block">Part groups <input type="text" id="bGroups" style="width:100%"></label>
     <div class="hint">group=words in part names, separated by ";". Everything else is "body". Parts are the model's objects.</div>
+    <div class="hint" style="margin-top:6px">Build these parts (unticked: not built and hidden, their space kept clear; wheels are off by
+    default because suspension blocks go there):</div>
+    <div id="groups"></div>
 
     <h2>Scale and grid</h2>
     <label>Build scale % <input type="number" id="scale" step="5" value="100"></label>
@@ -223,9 +228,6 @@
     <label>Colour <select id="bpColour"><option value="none">game default</option><option value="kind">per block kind</option><option value="one">one colour</option></select>
       <input type="color" id="bpColourPick" value="#8a9099" style="width:28px;padding:0"></label>
     <div class="btnrow"><button id="bpExport" class="primary">Export blueprint</button><button id="bpZip">Download zip</button><button id="bpFolder" title="Choose the Blueprints\local folder again">folder&hellip;</button></div>
-    <div class="btnrow"><button id="bpTest">Test blueprint</button></div>
-    <label><input type="checkbox" id="bpTestAll"> all 24 turns (default: 2 turns per block, enough to check each one)</label>
-    <label><input type="checkbox" id="bpTestUsed" checked> test only blocks used in builder</label>
     <div id="bpStatus" class="hint"></div>
     <div class="hint">One grid of the block size above, every fitted cell with your edits. Export writes straight into
     %APPDATA%\SpaceEngineers\Blueprints\local\&lt;name&gt; (pick that folder once); in game F10, then paste. The in-game
@@ -237,7 +239,6 @@
     <label><input type="checkbox" id="showCells" checked> Blocks as <select id="cellMode"><option value="shapes">fitted shapes</option><option value="cubes">cubes</option></select></label>
     <label>Block opacity <input type="range" id="cellOpacity" min="0.05" max="1" step="0.05" value="0.75"></label>
     <label><input type="checkbox" id="showGrid" checked> Grid lines on the layer</label>
-    <div id="groups"></div>
 
     <h2>Edit a cell</h2>
     <div class="hint">Click a cell on the layer map to select it. Edits are kept in this browser for this model and grid settings.</div>
@@ -462,7 +463,16 @@ el('libExport').addEventListener('click', () => {
 });
 // ---------------------------------------------------------------- sessions: everything needed to see the same grid elsewhere
 const VIEW_SETTINGS = ['layerMode', 'opacity', 'cellOpacity', 'cellMode'];
-const toB64 = buf => { const u = new Uint8Array(buf); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
+// session file v2: the session JSON, then the model's own bytes, then a fixed-size trailer giving the JSON's length, so
+// no string ever holds the model (a 300 MB STL as base64 inside one JSON string is past Firefox's string limit)
+const SESS_TRAILER = len => `\nSGB-SESSION-2 ${String(len).padStart(12, '0')}\n`, SESS_TRAILER_LEN = SESS_TRAILER(0).length;
+async function readSession(f) {
+  const tail = f.size >= SESS_TRAILER_LEN ? await f.slice(f.size - SESS_TRAILER_LEN).text() : '';
+  const m = /^\nSGB-SESSION-2 (\d{12})\n$/.exec(tail);
+  if (!m) { const d = JSON.parse(await f.text()); return { d, buf: d.model && d.model.data ? fromB64(d.model.data) : null }; }   // v1: all JSON
+  const len = +m[1], d = JSON.parse(await f.slice(0, len).text());
+  return { d, buf: await f.slice(len, f.size - SESS_TRAILER_LEN).arrayBuffer() };
+}
 const fromB64 = b => { const s = atob(b), u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u.buffer; };
 el('sessSave').addEventListener('click', async () => {
   const m = await DB.get('model');
@@ -471,20 +481,21 @@ el('sessSave').addEventListener('click', async () => {
   settings.layer = el('layer').value; settings.showModel = el('showModel').checked; settings.showCells = el('showCells').checked; settings.showGrid = el('showGrid').checked;
   const edits = {};
   for (const k of await DB.keys()) if (typeof k === 'string' && k.startsWith('ov:' + m.name + '|')) edits[k] = await DB.get(k);
-  const data = { format: 'se-grid-builder-session', version: 1, saved: new Date().toISOString(),
-    model: { name: m.name, data: toB64(m.buf) }, settings, groupsOn: [...groupOn], edits,
+  const data = { format: 'se-grid-builder-session', version: 2, saved: new Date().toISOString(),
+    model: { name: m.name, bytes: m.buf.byteLength }, settings, groupsOn: [...groupOn], edits,
     library: LIB.map(s => { const o = stripped(s);
       o.solids = (s.solids || []).map(sol => sol.type === 'tris' ? { type: 'tris', tris: Array.from(sol.tris, v => Math.round(v * 1e4) / 1e4) } : sol); return o; }) };
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([JSON.stringify(data)], { type: 'application/json' }));
-  a.download = m.name.replace(/\.[^.]+$/, '').replace(/[^\w-]+/g, '_') + '-session.json'; a.click();
+  const head = new TextEncoder().encode(JSON.stringify(data));
+  a.href = URL.createObjectURL(new Blob([head, m.buf, SESS_TRAILER(head.length)], { type: 'application/octet-stream' }));
+  a.download = m.name.replace(/\.[^.]+$/, '').replace(/[^\w-]+/g, '_') + '-session.sgb'; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 });
 el('sessOpen').addEventListener('click', () => el('sessFile').click());
 el('sessFile').addEventListener('change', async e => {
   const f = e.target.files[0]; e.target.value = ''; if (!f) return;
-  let d;
-  try { d = JSON.parse(await f.text()); if (d.format !== 'se-grid-builder-session') throw new Error('not an SE Grid Builder session'); }
+  let d, buf;
+  try { ({ d, buf } = await readSession(f)); if (d.format !== 'se-grid-builder-session' || !buf) throw new Error('not an SE Grid Builder session'); }
   catch (err) { alert('Could not open: ' + err.message); return; }
   if (!confirm(`Open the session for ${d.model.name}? This replaces this browser's block library, model and settings (export the library first if you want to keep it).`)) return;
   el('saveState').textContent = 'opening session...';
@@ -494,7 +505,6 @@ el('sessFile').addEventListener('change', async e => {
   for (const [k, v] of Object.entries(d.edits || {})) await DB.set(k, v);
   Object.entries(d.settings || {}).forEach(([id, v]) => { const x = el(id); if (!x) return; if (x.type === 'checkbox') x.checked = !!v; else x.value = v; });
   saveBuilderSettings(); applyDrawOrder();
-  const buf = fromB64(d.model.data);
   await DB.set('model', { name: d.model.name, buf }).catch(() => {});
   B.pendingGroups = d.groupsOn || null; B.ovKey = '';   // reload the edits for these settings
   showTab('bPage');
@@ -765,13 +775,22 @@ function tplGeometry(i) {
 async function loadModelFile(file) {
   const buf = await file.arrayBuffer();
   await DB.set('model', { name: file.name, buf }).catch(() => {});
-  setModel(file.name, buf, true);
+  setModel(file.name, buf, true, true);
 }
-function setModel(name, buf, fresh) {
+// a newly loaded model: Front axis is its longest side (owner, 2026-10-20); Up stays unless it is that side
+function chooseAxes(raw, name) {
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  raw.forEach(p => { const t = p.tris; for (let i = 0; i < t.length; i += 3) for (let k = 0; k < 3; k++) { const v = t[i + k]; if (v < lo[k]) lo[k] = v; if (v > hi[k]) hi[k] = v; } });
+  const ext = hi.map((v, k) => v - lo[k]), a = 'xyz'[ext.indexOf(Math.max(...ext))];
+  if (el('bFront').value[1] !== a) el('bFront').value = '+' + a;
+  if (el('bUp').value === a) el('bUp').value = (/\.stl$/i.test(name) ? ['z', 'y', 'x'] : ['y', 'z', 'x']).find(u => u !== a);
+}
+function setModel(name, buf, fresh, newFile) {
   let done = Promise.resolve();
   try {
     const raw = /\.stl$/i.test(name) ? parseStl(buf) : parseObj(new TextDecoder().decode(buf));
     if (!raw.length) throw new Error('no triangles found');
+    if (newFile) chooseAxes(raw, name);
     B.raw = raw; B.modelName = name;
     el('bModelName').textContent = `${name}: ${raw.length} part${raw.length > 1 ? 's' : ''}, ${raw.reduce((n, p) => n + p.tris.length / 9, 0)} triangles`;
     el('bEmpty').style.display = 'none';
@@ -785,7 +804,7 @@ async function prepare(frame) {
   try { prep = prepareModel(B.raw, { up: el('bUp').value, front: el('bFront').value, length: parseFloat(el('bLength').value) || 1 }); }
   catch (e) { el('bModelName').innerHTML = `<span class="warn">${esc(e.message)}</span>`; return; }
   const rules = el('bGroups').value;
-  B.parts = prep.parts.map(p => ({ ...p, group: groupOf(p.name, rules) })); B.partsVer = (B.partsVer || 0) + 1;
+  B.parts = prep.parts.map(p => ({ ...p, group: groupOf(p.name, rules) })); B.partsVer = (B.partsVer || 0) + 1; B.size = prep.size; B.fitCopy = null;
   groupNames = [...new Set(B.parts.map(p => p.group))].sort((a, b) => ((GROUP_PRIORITY.indexOf(a) + 99) % 99) - ((GROUP_PRIORITY.indexOf(b) + 99) % 99));
   groupOn = B.pendingGroups ? new Set(B.pendingGroups.filter(g => groupNames.includes(g)))
     : new Set(groupNames.filter(g => g !== 'antennas' && g !== 'wheels'));   // wheels: built from suspension blocks
@@ -793,13 +812,18 @@ async function prepare(frame) {
   el('groups').innerHTML = '';
   groupNames.forEach(g => {
     const l = document.createElement('label');
-    l.innerHTML = `<input type="checkbox" ${groupOn.has(g) ? 'checked' : ''}> <span class="sw" style="background:${colorOfGroup(g)}"></span> model: ${esc(g)}`;
+    l.innerHTML = `<input type="checkbox" ${groupOn.has(g) ? 'checked' : ''}> <span class="sw" style="background:${colorOfGroup(g)}"></span> ${esc(g)}`;
     l.querySelector('input').addEventListener('change', e => { e.target.checked ? groupOn.add(g) : groupOn.delete(g); rebuild(); });
     el('groups').appendChild(l);
   });
+  if (!groupNames.includes('wheels')) el('groups').insertAdjacentHTML('beforeend', '<div class="hint">No part matches the wheels words in Part groups, ' +
+    'so wheels cannot be left out (an .stl, or an .obj with the wheels joined to the body, is one part).</div>');
   const v = B.view; disposeGroup(v.modelGroup); modelMeshes = [];
+  // the 3D view draws a big model simplified (merge box 1/500 of its longest side: about 1 cm on a 5 m car)
+  const nTris = B.parts.reduce((k, p) => k + p.tris.length / 9, 0);
+  const shown = nTris > VIEW_MAX_TRIS ? clusterParts(B.parts, Math.max(...prep.size) / 500) : B.parts;
   groupNames.forEach(g => {
-    const list = B.parts.filter(p => p.group === g), total = list.reduce((n, p) => n + p.tris.length, 0), arr = new Float32Array(total); let o = 0;
+    const list = shown.filter(p => p.group === g), total = list.reduce((n, p) => n + p.tris.length, 0), arr = new Float32Array(total); let o = 0;
     list.forEach(p => { arr.set(p.tris, o); o += p.tris.length; });
     const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(arr, 3)); geo.computeVertexNormals();
     // the model is an overlay drawn over the finished block view (see makeView): a depth-only pass, then colour on its
@@ -809,10 +833,12 @@ async function prepare(frame) {
     const color = new THREE.Mesh(geo, mat); color.renderOrder = 2;
     modelMeshes.push({ g, depth, color, mat }); v.modelGroup.add(depth, color);
   });
+  applyModelVisibility();   // unticked parts (wheels) hidden while the first fit runs, not only after it
   saveBuilderSettings();
   await rebuild();
   if (frame && B.grid) frameModel();
 }
+const VIEW_MAX_TRIS = 1000000;
 function frameModel() {
   const g = B.grid, v = B.view, c = new THREE.Vector3(g.ox + g.nx * g.b / 2, g.oy + g.ny * g.b / 2, 0);
   v.controls.target.copy(c); v.camera.position.set(c.x - g.nx * g.b * 0.9, c.y + g.ny * g.b * 1.4, c.z + g.nz * g.b * 2.2);
@@ -904,6 +930,23 @@ const Fit = (() => {
   }
   return { run, get workers() { return url ? N : 0; } };
 })();
+// big models are fitted from a simplified copy (core.js clusterParts), made again when the block size or scale changes;
+// only that copy goes to the fit workers
+function fitParts() {
+  const n = B.parts.reduce((k, p) => k + p.tris.length / 9, 0);
+  if (n < SIMPLIFY_FROM) { B.fitTris = 0; return { parts: B.parts, ver: B.partsVer }; }
+  const o = opts(), size = o.block / o.scale / CLUSTER_PER_CELL, key = B.partsVer + ':' + size;
+  if (!B.fitCopy || B.fitCopy.key !== key) { B.fitCopy = null; const parts = clusterParts(B.parts, size); B.fitCopy = { key, parts }; }
+  B.fitTris = B.fitCopy.parts.reduce((k, p) => k + p.tris.length / 9, 0);
+  return { parts: B.fitCopy.parts, ver: key };
+}
+// a grid this big is probably the wrong Front axis, Up or length (a car turned sideways came to 132,000 cells and ran
+// the browser out of memory): it waits for "Fit now"
+const BIG_GRID = 50000;
+function gridEstimate() {
+  const o = opts(), d = B.size.map(v => Math.ceil(v * o.scale / o.block) + 1);
+  return { nx: d[0], ny: d[1], nz: d[2], cells: d[0] * d[1] * d[2], key: [B.partsVer, o.scale, o.block].join('|') };
+}
 let rebuildToken = 0;
 async function rebuild() {
   if (!B.parts) return;
@@ -913,14 +956,23 @@ async function rebuild() {
     el('fitNow').addEventListener('click', () => { B.deferFit = 0; rebuild(); });
     return;
   }
+  const est = gridEstimate();
+  if (est.cells > BIG_GRID && B.bigOk !== est.key) {
+    ++rebuildToken;
+    el('info').innerHTML = `<span class="warn">Big grid: about ${est.nx} long x ${est.nz} wide x ${est.ny} high blocks (${est.cells.toLocaleString()} cells).</span> ` +
+      `Check Front axis, Up and Real length first; a fit this size can run the browser out of memory. <button id="fitNow">Fit now</button>`;
+    el('fitNow').addEventListener('click', () => { B.bigOk = est.key; rebuild(); });
+    return;
+  }
   const token = ++rebuildToken;
   el('info').textContent = 'Fitting…';
+  const fp = fitParts();
   const ver = libVersion, T = B.Tver === ver ? B.T : buildTemplates(LIB); B.fitLibVer = ver;
   const state = el('saveState'), before = /^fitting/.test(state.textContent) ? B.stateBeforeFit : state.textContent;
   B.stateBeforeFit = before; state.textContent = 'fitting 0%';
   const t0 = performance.now();
   let grid;
-  try { grid = await Fit.run(B.parts, B.partsVer, { ...opts(), shapes: LIB, T }, ver, f => { if (token === rebuildToken) state.textContent = `fitting ${Math.round(100 * f)}%`; }); }
+  try { grid = await Fit.run(fp.parts, fp.ver, { ...opts(), shapes: LIB, T }, ver, f => { if (token === rebuildToken) state.textContent = `fitting ${Math.round(100 * f)}%`; }); }
   catch (e) { if (token === rebuildToken) { state.textContent = before; el('info').textContent = 'The fit failed.'; } throw e; }
   if (token !== rebuildToken || grid === undefined) return;   // a newer fit replaced this one
   if (/^fitting/.test(state.textContent)) state.textContent = before;
@@ -1122,7 +1174,7 @@ function updateInfo() {
   const { nx, ny, nz, b, cell, fit } = g;
   let blocks = 0, none = 0; for (let i = 0; i < cell.length; i++) if (cell[i]) { if (fit[i] >= 0) blocks++; else none++; }
   el('info').innerHTML = `Grid <b>${nx}</b> long x <b>${nz}</b> wide x <b>${ny}</b> high blocks<br>= ${(nx * b).toFixed(1)} x ${(nz * b).toFixed(1)} x ${(ny * b).toFixed(1)} m<br>` +
-    `<b>${blocks}</b> blocks, ${none} cells with no block passing<br><span class="hint">${B.T.list.length} block orientations from ${LIB.filter(s => s.use).length} library blocks, fitted in ${Math.round(B.fitMs)} ms</span>`;
+    `<b>${blocks}</b> blocks, ${none} cells with no block passing<br><span class="hint">${B.T.list.length} block orientations from ${LIB.filter(s => s.use).length} library blocks, fitted in ${Math.round(B.fitMs)} ms${B.fitTris ? `; model simplified to ${B.fitTris.toLocaleString()} triangles for the fit` : ''}</span>`;
   const lay = el('layer'); lay.max = ny; if (parseInt(lay.value) > ny) lay.value = ny;
   el('layerLabel').textContent = `layer ${lay.value} of ${ny}`;
 }

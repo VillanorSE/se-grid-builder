@@ -2,7 +2,7 @@
 // is built by blueprint.js. Bundled into the page by build.py; it gets the page's pieces through initBlueprintUI(ctx),
 // so its own top-level names stay few (one shared module scope).
 import { ROTS } from './core.js';
-import { gridBlocks, blueprintXml, blueprintFolderName, testBlueprint, makeZip } from './blueprint.js';
+import { gridBlocks, blueprintXml, blueprintFolderName, makeZip } from './blueprint.js';
 
 // ctx: { THREE, el, DB, B, lib() -> library, effFit(x, y, z), shapeGeometry(shape), shapeColor(shape) -> THREE.Color }
 export function initBlueprintUI(ctx) {
@@ -47,16 +47,9 @@ export function initBlueprintUI(ctx) {
   };
 
   // ---- pictures
-  // a square PNG of a canvas (centre crop)
-  const squarePng = (src, size) => new Promise(res => {
-    const c = document.createElement('canvas'); c.width = c.height = size;
-    const s = Math.min(src.width, src.height);
-    c.getContext('2d').drawImage(src, (src.width - s) / 2, (src.height - s) / 2, s, s, 0, 0, size, size);
-    c.toBlob(res, 'image/png');
-  });
-  // blocks drawn by the tool, as in the 3D view: cells [{ x, y, z, shape, si, rot, marker? }] in cell units, seen from
+  // blocks drawn by the tool, as in the 3D view: cells [{ x, y, z, shape, si, rot }] in cell units, seen from
   // direction dir (towards the camera), framed to fit. Returns { canvas, cam }.
-  function renderCells(cells, W, H, dir, extra = []) {
+  function renderCells(cells, W, H, dir) {
     const r = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     r.setSize(W, H); r.setPixelRatio(1);
     const scene = new THREE.Scene(); scene.background = new THREE.Color('#16191d');
@@ -71,12 +64,11 @@ export function initBlueprintUI(ctx) {
         geo.set(k, { g, e: new THREE.EdgesGeometry(g, 20) });
       }
       const { g, e } = geo.get(k);
-      const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color: c.marker ? 0xd04040 : ctx.shapeColor(c.shape), flatShading: true, side: THREE.DoubleSide }));
+      const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color: ctx.shapeColor(c.shape), flatShading: true, side: THREE.DoubleSide }));
       m.position.set(c.x + .5, c.y + .5, c.z + .5); scene.add(m);
       const l = new THREE.LineSegments(e, new THREE.LineBasicMaterial({ color: 0x0d1013 })); l.position.copy(m.position); scene.add(l);
       [c.x, c.y, c.z].forEach((v, i) => { lo[i] = Math.min(lo[i], v); hi[i] = Math.max(hi[i], v + 1); });
     }
-    extra.forEach(p => p.forEach((v, i) => { lo[i] = Math.min(lo[i], v); hi[i] = Math.max(hi[i], v); }));   // room for labels
     const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, -1e4, 1e4);
     const centre = new THREE.Vector3((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2);
     cam.position.copy(centre).add(dir.clone().normalize().multiplyScalar(100)); cam.up.set(0, 1, 0); cam.lookAt(centre);
@@ -93,21 +85,6 @@ export function initBlueprintUI(ctx) {
     out.getContext('2d').drawImage(r.domElement, 0, 0);
     geo.forEach(({ g, e }) => { g.dispose(); e.dispose(); }); r.dispose();
     return { canvas: out, cam };
-  }
-  // the test layout drawn by the tool (same blocks, same turns), seen from behind and above like the legend says
-  function renderLayout(cells, rows, turns) {
-    // about 70 px per row, so each block can be told apart and the row labels don't run into each other
-    const W = Math.max(1600, Math.min(8000, 70 * rows.length + 200)), H = Math.round(W * 0.6);
-    const { canvas: out, cam } = renderCells(cells, W, H, new THREE.Vector3(-1, 1.3, 0), [[-7.5, 0, 0], [0, 0, -2.5]]);
-    // labels: row numbers by the markers, turn numbers along the first row
-    const g2 = out.getContext('2d');
-    const label = (p, text, color) => { const q = p.clone().project(cam); const sx = (q.x + 1) / 2 * W, sy = (1 - q.y) / 2 * H;
-      g2.font = 'bold 18px system-ui, sans-serif'; g2.textAlign = 'center'; g2.lineWidth = 4; g2.strokeStyle = '#000'; g2.strokeText(text, sx, sy); g2.fillStyle = color; g2.fillText(text, sx, sy); };
-    rows.forEach((rw, i) => { label(new THREE.Vector3(-4.5, 0, 2 * i + .5), String(rw.row), '#ffd27a'); label(new THREE.Vector3(-6.5, 0, 2 * i + .5), rw.key, '#ffd27a'); });
-    turns.forEach((t, k) => label(new THREE.Vector3(2 * k + .5, 0, -1.5), 't' + (t + 1), '#9fd0ff'));
-    g2.font = '20px system-ui, sans-serif'; g2.textAlign = 'left'; g2.fillStyle = '#e6e8eb';
-    g2.fillText('SE Grid Builder test layout: rows = cards (numbers as in layout.txt), t numbers = turns; grid Forward points away from the viewer.', 16, 30);
-    return out;
   }
   // the blueprint's thumbnail: its blocks seen from the 3D view's direction
   function renderThumb(cells) {
@@ -165,23 +142,8 @@ export function initBlueprintUI(ctx) {
       await deliver(folderName, [{ name: 'bp.sbc', data: xml }, { name: 'thumb.png', data: thumb }], zip, summary(info.blocks.length, info));
     } catch (e) { status(esc(e.message), true); }
   }
-  async function exportTest(zip) {
-    try {
-      const lib = ctx.lib(), size = gridSize(), armour = el('bpArmour').value;
-      const t = testBlueprint(lib, { size, armour, onlyUsed: el('bpTestUsed').checked, quick: !el('bpTestAll').checked, color: true });
-      if (!t.rows.length) throw new Error(`No library card has a ${size.toLowerCase()} grid block.`);
-      const folderName = blueprintFolderName(`SGB orientation test ${size} ${armour}`);
-      const xml = blueprintXml({ name: folderName, gridSize: size, blocks: t.blocks });
-      const pic = renderLayout(t.cells, t.rows, t.turns);
-      const png = await new Promise(res => pic.toBlob(res, 'image/png')), thumb = await squarePng(pic, 512);
-      await deliver(folderName, [{ name: 'bp.sbc', data: xml }, { name: 'thumb.png', data: thumb }, { name: 'layout.png', data: png }, { name: 'layout.txt', data: t.legend }], zip,
-        `Test blueprint: ${t.rows.length} cards x ${t.turns.length} turns (${t.blocks.length} blocks). Compare it in game with layout.png (opened in a new tab if the browser allows; also in the blueprint folder).`);
-      window.open(URL.createObjectURL(png), '_blank');
-    } catch (e) { status(esc(e.message), true); }
-  }
   el('bpExport').addEventListener('click', () => exportFitted(false));
   el('bpZip').addEventListener('click', () => exportFitted(true));
-  el('bpTest').addEventListener('click', () => exportTest(!window.showDirectoryPicker));
   el('bpFolder').addEventListener('click', async () => { const h = await blueprintsFolder(true); if (h) status(`Blueprints go to ${esc(h.name)}.`); });
   if (!window.showDirectoryPicker) { el('bpExport').disabled = true; el('bpFolder').disabled = true; el('bpExport').title = 'This browser can\'t write to folders: use Download zip.'; }
 }

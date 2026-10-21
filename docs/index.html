@@ -23,8 +23,10 @@
   .view { flex:1; min-height:0; position:relative; }
   h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:16px 0 6px; }
   h2:first-child { margin-top:0; }
-  label { display:flex; align-items:center; gap:6px; margin:4px 0; }
+  label { display:flex; align-items:center; flex-wrap:wrap; gap:4px 6px; margin:4px 0; }
+  label > .hint { flex-basis:100%; }   /* a hint inside a label gets its own line under the control */
   input[type=number], input[type=text], input[type=search], select, textarea { background:#14181c; color:var(--text); border:1px solid var(--line); border-radius:4px; padding:3px 5px; font:12px system-ui; }
+  select { max-width:100%; min-width:0; }
   input[type=number] { width:76px; }
   input[type=range] { flex:1; }
   textarea { width:100%; }
@@ -186,7 +188,7 @@
   <div class="side">
     <h2>Session</h2>
     <div class="btnrow"><button id="sessSave">Save session</button><button id="sessOpen">Open session</button></div>
-    <input type="file" id="sessFile" accept=".json,application/json" hidden>
+    <input type="file" id="sessFile" accept=".sgb,.json,application/json" hidden>
     <div class="hint">One file with the model, settings, cell edits and block library, to keep or to send to someone with
     this page.</div>
     <h2>Model</h2>
@@ -199,6 +201,9 @@
       Up <select id="bUp"><option>y</option><option>z</option><option>x</option></select></label>
     <label style="display:block">Part groups <input type="text" id="bGroups" style="width:100%"></label>
     <div class="hint">group=words in part names, separated by ";". Everything else is "body". Parts are the model's objects.</div>
+    <div class="hint" style="margin-top:6px">Build these parts (unticked: not built and hidden, their space kept clear; wheels are off by
+    default because suspension blocks go there):</div>
+    <div id="groups"></div>
 
     <h2>Scale and grid</h2>
     <label>Build scale % <input type="number" id="scale" step="5" value="100"></label>
@@ -223,9 +228,6 @@
     <label>Colour <select id="bpColour"><option value="none">game default</option><option value="kind">per block kind</option><option value="one">one colour</option></select>
       <input type="color" id="bpColourPick" value="#8a9099" style="width:28px;padding:0"></label>
     <div class="btnrow"><button id="bpExport" class="primary">Export blueprint</button><button id="bpZip">Download zip</button><button id="bpFolder" title="Choose the Blueprints\local folder again">folder&hellip;</button></div>
-    <div class="btnrow"><button id="bpTest">Test blueprint</button></div>
-    <label><input type="checkbox" id="bpTestAll"> all 24 turns (default: 2 turns per block, enough to check each one)</label>
-    <label><input type="checkbox" id="bpTestUsed" checked> test only blocks used in builder</label>
     <div id="bpStatus" class="hint"></div>
     <div class="hint">One grid of the block size above, every fitted cell with your edits. Export writes straight into
     %APPDATA%\SpaceEngineers\Blueprints\local\&lt;name&gt; (pick that folder once); in game F10, then paste. The in-game
@@ -237,7 +239,6 @@
     <label><input type="checkbox" id="showCells" checked> Blocks as <select id="cellMode"><option value="shapes">fitted shapes</option><option value="cubes">cubes</option></select></label>
     <label>Block opacity <input type="range" id="cellOpacity" min="0.05" max="1" step="0.05" value="0.75"></label>
     <label><input type="checkbox" id="showGrid" checked> Grid lines on the layer</label>
-    <div id="groups"></div>
 
     <h2>Edit a cell</h2>
     <div class="hint">Click a cell on the layer map to select it. Edits are kept in this browser for this model and grid settings.</div>
@@ -575,6 +576,44 @@ function prepareModel(rawParts, o) {
   parts.forEach(p => { for (let i = 0; i < p.tris.length; i += 3) { p.tris[i] = (p.tris[i] - mn[0]) * s; p.tris[i + 1] = (p.tris[i + 1] - mn[1]) * s; p.tris[i + 2] = (p.tris[i + 2] - cz) * s; } });
   return { parts, size: [(mx[0] - mn[0]) * s, (mx[1] - mn[1]) * s, (mx[2] - mn[2]) * s] };
 }
+// big models (3D-print meshes run to millions of triangles, far finer than the fit's 1/SUB-cell voxels): every corner in
+// the same box of side `size` is merged into one point (the mean of its corners) and triangles that collapse are dropped
+// (vertex clustering). A closed mesh stays closed; walls thinner than the box fold flat, below what the voxels see.
+// Each part keeps its original bounds (lo, hi), so the grid's placement doesn't move.
+// The surface scores depend on mesh density (at least one sample per triangle), so a simplified mesh shifts some
+// near-ties (2026-10-20, 1/24 cell: Littorio 2 of 3134 cells, M13/40 38 of 371): only models too big to fit as they are
+// get it, and the owner's tuned models (all under 500k triangles) keep their exact picks.
+const CLUSTER_PER_CELL = 24;          // merge box = 1/24 of a cell (a quarter voxel) for the fit
+const SIMPLIFY_FROM = 500000;         // triangles; smaller models are fitted as they are
+function clusterParts(parts, size) {
+  return parts.map(p => {
+    const t = p.tris, nv = t.length / 3, lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < t.length; i += 3) for (let k = 0; k < 3; k++) { const v = t[i + k]; if (v < lo[k]) lo[k] = v; if (v > hi[k]) hi[k] = v; }
+    const sz = Math.max(size, (Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) || 1) / 130000);   // keys stay exact integers (< 2^53)
+    const ids = new Int32Array(nv), map = new Map(); let sums = [];
+    for (let v = 0; v < nv; v++) {
+      const x = t[v * 3], y = t[v * 3 + 1], z = t[v * 3 + 2];
+      const key = (Math.floor((x - lo[0]) / sz) * 131072 + Math.floor((y - lo[1]) / sz)) * 131072 + Math.floor((z - lo[2]) / sz);
+      let id = map.get(key); if (id === undefined) { id = map.size; map.set(key, id); sums.push(0, 0, 0, 0); }
+      ids[v] = id; sums[id * 4] += x; sums[id * 4 + 1] += y; sums[id * 4 + 2] += z; sums[id * 4 + 3]++;
+    }
+    const out = new Float32Array(t.length); let o = 0;
+    for (let v = 0; v < nv; v += 3) {
+      const a = ids[v], b = ids[v + 1], c = ids[v + 2]; if (a === b || b === c || a === c) continue;
+      for (const id of [a, b, c]) { const n = sums[id * 4 + 3]; out[o++] = sums[id * 4] / n; out[o++] = sums[id * 4 + 1] / n; out[o++] = sums[id * 4 + 2] / n; }
+    }
+    sums = null;
+    return { ...p, tris: out.slice(0, o), lo, hi };
+  });
+}
+// the scaled bounds of the parts in use (a clustered part's own lo/hi: its original extent)
+function partBounds(parts, o) {
+  const s = o.scale, mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
+  parts.forEach(p => { if (!o.groupsOn.has(p.group)) return;
+    if (p.lo) { for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], Math.fround(p.lo[k] * s)); mx[k] = Math.max(mx[k], Math.fround(p.hi[k] * s)); } return; }
+    for (let i = 0; i < p.tris.length; i += 3) for (let k = 0; k < 3; k++) { const v = Math.fround(p.tris[i + k] * s); mn[k] = Math.min(mn[k], v); mx[k] = Math.max(mx[k], v); } });
+  return { mn, mx };
+}
 // "turret=turret,gun;wheels=wheel" -> group of a part name (first match wins; anything else is "body")
 function groupOf(name, rules) {
   const n = name.toLowerCase();
@@ -855,10 +894,7 @@ const frameKey = (o, ox, oy, oz, nx, ny, nz) => [o.surfTag || '', o.scale, o.blo
 const newSurfCache = () => ({ key: null, parts: null, T: null, map: new Map(), fresh: [], complete: false, prep: null, prepKey: null });
 // the cache key computeGrid will use for these parts and options (lets a caller pick stored scores before fitting)
 function surfCacheKey(parts, o) {
-  const s = o.scale, mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
-  parts.forEach(p => { if (!o.groupsOn.has(p.group)) return;
-    for (let i = 0; i < p.tris.length; i += 3) for (let k = 0; k < 3; k++) { const v = Math.fround(p.tris[i + k] * s); mn[k] = Math.min(mn[k], v); mx[k] = Math.max(mx[k], v); } });
-  const f = gridFrame(mn, mx, o);
+  const { mn, mx } = partBounds(parts, o), f = gridFrame(mn, mx, o);
   return frameKey(o, f.ox, f.oy, f.oz, f.nx, f.ny, f.nz);
 }
 // scores computed since the last call, as flat arrays (to pass between workers); clears the list
@@ -885,8 +921,7 @@ function computeGrid(parts, o) {
   const s = o.scale, b = o.block, use = parts.filter(p => o.groupsOn.has(p.group));
   if (!use.length) return null;
   const scaled = use.map(p => ({ group: p.group, tris: Float32Array.from(p.tris, x => x * s) }));
-  const mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
-  scaled.forEach(p => { for (let i = 0; i < p.tris.length; i += 3) for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], p.tris[i + k]); mx[k] = Math.max(mx[k], p.tris[i + k]); } });
+  const { mn, mx } = partBounds(use, o);
   const { ox, oy, oz, nx, ny, nz } = gridFrame(mn, mx, o);
   const fb = b / SUB, fn = [nx * SUB, ny * SUB, nz * SUB];
   const surface = o.scoring !== 'volume', N = nx * ny * nz;
@@ -1634,6 +1669,44 @@ function prepareModel(rawParts, o) {
   parts.forEach(p => { for (let i = 0; i < p.tris.length; i += 3) { p.tris[i] = (p.tris[i] - mn[0]) * s; p.tris[i + 1] = (p.tris[i + 1] - mn[1]) * s; p.tris[i + 2] = (p.tris[i + 2] - cz) * s; } });
   return { parts, size: [(mx[0] - mn[0]) * s, (mx[1] - mn[1]) * s, (mx[2] - mn[2]) * s] };
 }
+// big models (3D-print meshes run to millions of triangles, far finer than the fit's 1/SUB-cell voxels): every corner in
+// the same box of side `size` is merged into one point (the mean of its corners) and triangles that collapse are dropped
+// (vertex clustering). A closed mesh stays closed; walls thinner than the box fold flat, below what the voxels see.
+// Each part keeps its original bounds (lo, hi), so the grid's placement doesn't move.
+// The surface scores depend on mesh density (at least one sample per triangle), so a simplified mesh shifts some
+// near-ties (2026-10-20, 1/24 cell: Littorio 2 of 3134 cells, M13/40 38 of 371): only models too big to fit as they are
+// get it, and the owner's tuned models (all under 500k triangles) keep their exact picks.
+const CLUSTER_PER_CELL = 24;          // merge box = 1/24 of a cell (a quarter voxel) for the fit
+const SIMPLIFY_FROM = 500000;         // triangles; smaller models are fitted as they are
+function clusterParts(parts, size) {
+  return parts.map(p => {
+    const t = p.tris, nv = t.length / 3, lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < t.length; i += 3) for (let k = 0; k < 3; k++) { const v = t[i + k]; if (v < lo[k]) lo[k] = v; if (v > hi[k]) hi[k] = v; }
+    const sz = Math.max(size, (Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) || 1) / 130000);   // keys stay exact integers (< 2^53)
+    const ids = new Int32Array(nv), map = new Map(); let sums = [];
+    for (let v = 0; v < nv; v++) {
+      const x = t[v * 3], y = t[v * 3 + 1], z = t[v * 3 + 2];
+      const key = (Math.floor((x - lo[0]) / sz) * 131072 + Math.floor((y - lo[1]) / sz)) * 131072 + Math.floor((z - lo[2]) / sz);
+      let id = map.get(key); if (id === undefined) { id = map.size; map.set(key, id); sums.push(0, 0, 0, 0); }
+      ids[v] = id; sums[id * 4] += x; sums[id * 4 + 1] += y; sums[id * 4 + 2] += z; sums[id * 4 + 3]++;
+    }
+    const out = new Float32Array(t.length); let o = 0;
+    for (let v = 0; v < nv; v += 3) {
+      const a = ids[v], b = ids[v + 1], c = ids[v + 2]; if (a === b || b === c || a === c) continue;
+      for (const id of [a, b, c]) { const n = sums[id * 4 + 3]; out[o++] = sums[id * 4] / n; out[o++] = sums[id * 4 + 1] / n; out[o++] = sums[id * 4 + 2] / n; }
+    }
+    sums = null;
+    return { ...p, tris: out.slice(0, o), lo, hi };
+  });
+}
+// the scaled bounds of the parts in use (a clustered part's own lo/hi: its original extent)
+function partBounds(parts, o) {
+  const s = o.scale, mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
+  parts.forEach(p => { if (!o.groupsOn.has(p.group)) return;
+    if (p.lo) { for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], Math.fround(p.lo[k] * s)); mx[k] = Math.max(mx[k], Math.fround(p.hi[k] * s)); } return; }
+    for (let i = 0; i < p.tris.length; i += 3) for (let k = 0; k < 3; k++) { const v = Math.fround(p.tris[i + k] * s); mn[k] = Math.min(mn[k], v); mx[k] = Math.max(mx[k], v); } });
+  return { mn, mx };
+}
 // "turret=turret,gun;wheels=wheel" -> group of a part name (first match wins; anything else is "body")
 function groupOf(name, rules) {
   const n = name.toLowerCase();
@@ -1914,10 +1987,7 @@ const frameKey = (o, ox, oy, oz, nx, ny, nz) => [o.surfTag || '', o.scale, o.blo
 const newSurfCache = () => ({ key: null, parts: null, T: null, map: new Map(), fresh: [], complete: false, prep: null, prepKey: null });
 // the cache key computeGrid will use for these parts and options (lets a caller pick stored scores before fitting)
 function surfCacheKey(parts, o) {
-  const s = o.scale, mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
-  parts.forEach(p => { if (!o.groupsOn.has(p.group)) return;
-    for (let i = 0; i < p.tris.length; i += 3) for (let k = 0; k < 3; k++) { const v = Math.fround(p.tris[i + k] * s); mn[k] = Math.min(mn[k], v); mx[k] = Math.max(mx[k], v); } });
-  const f = gridFrame(mn, mx, o);
+  const { mn, mx } = partBounds(parts, o), f = gridFrame(mn, mx, o);
   return frameKey(o, f.ox, f.oy, f.oz, f.nx, f.ny, f.nz);
 }
 // scores computed since the last call, as flat arrays (to pass between workers); clears the list
@@ -1944,8 +2014,7 @@ function computeGrid(parts, o) {
   const s = o.scale, b = o.block, use = parts.filter(p => o.groupsOn.has(p.group));
   if (!use.length) return null;
   const scaled = use.map(p => ({ group: p.group, tris: Float32Array.from(p.tris, x => x * s) }));
-  const mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
-  scaled.forEach(p => { for (let i = 0; i < p.tris.length; i += 3) for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], p.tris[i + k]); mx[k] = Math.max(mx[k], p.tris[i + k]); } });
+  const { mn, mx } = partBounds(use, o);
   const { ox, oy, oz, nx, ny, nz } = gridFrame(mn, mx, o);
   const fb = b / SUB, fn = [nx * SUB, ny * SUB, nz * SUB];
   const surface = o.scoring !== 'volume', N = nx * ny * nz;
@@ -2902,16 +2971,9 @@ function initBlueprintUI(ctx) {
   };
 
   // ---- pictures
-  // a square PNG of a canvas (centre crop)
-  const squarePng = (src, size) => new Promise(res => {
-    const c = document.createElement('canvas'); c.width = c.height = size;
-    const s = Math.min(src.width, src.height);
-    c.getContext('2d').drawImage(src, (src.width - s) / 2, (src.height - s) / 2, s, s, 0, 0, size, size);
-    c.toBlob(res, 'image/png');
-  });
-  // blocks drawn by the tool, as in the 3D view: cells [{ x, y, z, shape, si, rot, marker? }] in cell units, seen from
+  // blocks drawn by the tool, as in the 3D view: cells [{ x, y, z, shape, si, rot }] in cell units, seen from
   // direction dir (towards the camera), framed to fit. Returns { canvas, cam }.
-  function renderCells(cells, W, H, dir, extra = []) {
+  function renderCells(cells, W, H, dir) {
     const r = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     r.setSize(W, H); r.setPixelRatio(1);
     const scene = new THREE.Scene(); scene.background = new THREE.Color('#16191d');
@@ -2926,12 +2988,11 @@ function initBlueprintUI(ctx) {
         geo.set(k, { g, e: new THREE.EdgesGeometry(g, 20) });
       }
       const { g, e } = geo.get(k);
-      const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color: c.marker ? 0xd04040 : ctx.shapeColor(c.shape), flatShading: true, side: THREE.DoubleSide }));
+      const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color: ctx.shapeColor(c.shape), flatShading: true, side: THREE.DoubleSide }));
       m.position.set(c.x + .5, c.y + .5, c.z + .5); scene.add(m);
       const l = new THREE.LineSegments(e, new THREE.LineBasicMaterial({ color: 0x0d1013 })); l.position.copy(m.position); scene.add(l);
       [c.x, c.y, c.z].forEach((v, i) => { lo[i] = Math.min(lo[i], v); hi[i] = Math.max(hi[i], v + 1); });
     }
-    extra.forEach(p => p.forEach((v, i) => { lo[i] = Math.min(lo[i], v); hi[i] = Math.max(hi[i], v); }));   // room for labels
     const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, -1e4, 1e4);
     const centre = new THREE.Vector3((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2);
     cam.position.copy(centre).add(dir.clone().normalize().multiplyScalar(100)); cam.up.set(0, 1, 0); cam.lookAt(centre);
@@ -2948,21 +3009,6 @@ function initBlueprintUI(ctx) {
     out.getContext('2d').drawImage(r.domElement, 0, 0);
     geo.forEach(({ g, e }) => { g.dispose(); e.dispose(); }); r.dispose();
     return { canvas: out, cam };
-  }
-  // the test layout drawn by the tool (same blocks, same turns), seen from behind and above like the legend says
-  function renderLayout(cells, rows, turns) {
-    // about 70 px per row, so each block can be told apart and the row labels don't run into each other
-    const W = Math.max(1600, Math.min(8000, 70 * rows.length + 200)), H = Math.round(W * 0.6);
-    const { canvas: out, cam } = renderCells(cells, W, H, new THREE.Vector3(-1, 1.3, 0), [[-7.5, 0, 0], [0, 0, -2.5]]);
-    // labels: row numbers by the markers, turn numbers along the first row
-    const g2 = out.getContext('2d');
-    const label = (p, text, color) => { const q = p.clone().project(cam); const sx = (q.x + 1) / 2 * W, sy = (1 - q.y) / 2 * H;
-      g2.font = 'bold 18px system-ui, sans-serif'; g2.textAlign = 'center'; g2.lineWidth = 4; g2.strokeStyle = '#000'; g2.strokeText(text, sx, sy); g2.fillStyle = color; g2.fillText(text, sx, sy); };
-    rows.forEach((rw, i) => { label(new THREE.Vector3(-4.5, 0, 2 * i + .5), String(rw.row), '#ffd27a'); label(new THREE.Vector3(-6.5, 0, 2 * i + .5), rw.key, '#ffd27a'); });
-    turns.forEach((t, k) => label(new THREE.Vector3(2 * k + .5, 0, -1.5), 't' + (t + 1), '#9fd0ff'));
-    g2.font = '20px system-ui, sans-serif'; g2.textAlign = 'left'; g2.fillStyle = '#e6e8eb';
-    g2.fillText('SE Grid Builder test layout: rows = cards (numbers as in layout.txt), t numbers = turns; grid Forward points away from the viewer.', 16, 30);
-    return out;
   }
   // the blueprint's thumbnail: its blocks seen from the 3D view's direction
   function renderThumb(cells) {
@@ -3020,23 +3066,8 @@ function initBlueprintUI(ctx) {
       await deliver(folderName, [{ name: 'bp.sbc', data: xml }, { name: 'thumb.png', data: thumb }], zip, summary(info.blocks.length, info));
     } catch (e) { status(esc(e.message), true); }
   }
-  async function exportTest(zip) {
-    try {
-      const lib = ctx.lib(), size = gridSize(), armour = el('bpArmour').value;
-      const t = testBlueprint(lib, { size, armour, onlyUsed: el('bpTestUsed').checked, quick: !el('bpTestAll').checked, color: true });
-      if (!t.rows.length) throw new Error(`No library card has a ${size.toLowerCase()} grid block.`);
-      const folderName = blueprintFolderName(`SGB orientation test ${size} ${armour}`);
-      const xml = blueprintXml({ name: folderName, gridSize: size, blocks: t.blocks });
-      const pic = renderLayout(t.cells, t.rows, t.turns);
-      const png = await new Promise(res => pic.toBlob(res, 'image/png')), thumb = await squarePng(pic, 512);
-      await deliver(folderName, [{ name: 'bp.sbc', data: xml }, { name: 'thumb.png', data: thumb }, { name: 'layout.png', data: png }, { name: 'layout.txt', data: t.legend }], zip,
-        `Test blueprint: ${t.rows.length} cards x ${t.turns.length} turns (${t.blocks.length} blocks). Compare it in game with layout.png (opened in a new tab if the browser allows; also in the blueprint folder).`);
-      window.open(URL.createObjectURL(png), '_blank');
-    } catch (e) { status(esc(e.message), true); }
-  }
   el('bpExport').addEventListener('click', () => exportFitted(false));
   el('bpZip').addEventListener('click', () => exportFitted(true));
-  el('bpTest').addEventListener('click', () => exportTest(!window.showDirectoryPicker));
   el('bpFolder').addEventListener('click', async () => { const h = await blueprintsFolder(true); if (h) status(`Blueprints go to ${esc(h.name)}.`); });
   if (!window.showDirectoryPicker) { el('bpExport').disabled = true; el('bpFolder').disabled = true; el('bpExport').title = 'This browser can\'t write to folders: use Download zip.'; }
 }
@@ -3220,7 +3251,16 @@ el('libExport').addEventListener('click', () => {
 });
 // ---------------------------------------------------------------- sessions: everything needed to see the same grid elsewhere
 const VIEW_SETTINGS = ['layerMode', 'opacity', 'cellOpacity', 'cellMode'];
-const toB64 = buf => { const u = new Uint8Array(buf); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
+// session file v2: the session JSON, then the model's own bytes, then a fixed-size trailer giving the JSON's length, so
+// no string ever holds the model (a 300 MB STL as base64 inside one JSON string is past Firefox's string limit)
+const SESS_TRAILER = len => `\nSGB-SESSION-2 ${String(len).padStart(12, '0')}\n`, SESS_TRAILER_LEN = SESS_TRAILER(0).length;
+async function readSession(f) {
+  const tail = f.size >= SESS_TRAILER_LEN ? await f.slice(f.size - SESS_TRAILER_LEN).text() : '';
+  const m = /^\nSGB-SESSION-2 (\d{12})\n$/.exec(tail);
+  if (!m) { const d = JSON.parse(await f.text()); return { d, buf: d.model && d.model.data ? fromB64(d.model.data) : null }; }   // v1: all JSON
+  const len = +m[1], d = JSON.parse(await f.slice(0, len).text());
+  return { d, buf: await f.slice(len, f.size - SESS_TRAILER_LEN).arrayBuffer() };
+}
 const fromB64 = b => { const s = atob(b), u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u.buffer; };
 el('sessSave').addEventListener('click', async () => {
   const m = await DB.get('model');
@@ -3229,20 +3269,21 @@ el('sessSave').addEventListener('click', async () => {
   settings.layer = el('layer').value; settings.showModel = el('showModel').checked; settings.showCells = el('showCells').checked; settings.showGrid = el('showGrid').checked;
   const edits = {};
   for (const k of await DB.keys()) if (typeof k === 'string' && k.startsWith('ov:' + m.name + '|')) edits[k] = await DB.get(k);
-  const data = { format: 'se-grid-builder-session', version: 1, saved: new Date().toISOString(),
-    model: { name: m.name, data: toB64(m.buf) }, settings, groupsOn: [...groupOn], edits,
+  const data = { format: 'se-grid-builder-session', version: 2, saved: new Date().toISOString(),
+    model: { name: m.name, bytes: m.buf.byteLength }, settings, groupsOn: [...groupOn], edits,
     library: LIB.map(s => { const o = stripped(s);
       o.solids = (s.solids || []).map(sol => sol.type === 'tris' ? { type: 'tris', tris: Array.from(sol.tris, v => Math.round(v * 1e4) / 1e4) } : sol); return o; }) };
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([JSON.stringify(data)], { type: 'application/json' }));
-  a.download = m.name.replace(/\.[^.]+$/, '').replace(/[^\w-]+/g, '_') + '-session.json'; a.click();
+  const head = new TextEncoder().encode(JSON.stringify(data));
+  a.href = URL.createObjectURL(new Blob([head, m.buf, SESS_TRAILER(head.length)], { type: 'application/octet-stream' }));
+  a.download = m.name.replace(/\.[^.]+$/, '').replace(/[^\w-]+/g, '_') + '-session.sgb'; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 });
 el('sessOpen').addEventListener('click', () => el('sessFile').click());
 el('sessFile').addEventListener('change', async e => {
   const f = e.target.files[0]; e.target.value = ''; if (!f) return;
-  let d;
-  try { d = JSON.parse(await f.text()); if (d.format !== 'se-grid-builder-session') throw new Error('not an SE Grid Builder session'); }
+  let d, buf;
+  try { ({ d, buf } = await readSession(f)); if (d.format !== 'se-grid-builder-session' || !buf) throw new Error('not an SE Grid Builder session'); }
   catch (err) { alert('Could not open: ' + err.message); return; }
   if (!confirm(`Open the session for ${d.model.name}? This replaces this browser's block library, model and settings (export the library first if you want to keep it).`)) return;
   el('saveState').textContent = 'opening session...';
@@ -3252,7 +3293,6 @@ el('sessFile').addEventListener('change', async e => {
   for (const [k, v] of Object.entries(d.edits || {})) await DB.set(k, v);
   Object.entries(d.settings || {}).forEach(([id, v]) => { const x = el(id); if (!x) return; if (x.type === 'checkbox') x.checked = !!v; else x.value = v; });
   saveBuilderSettings(); applyDrawOrder();
-  const buf = fromB64(d.model.data);
   await DB.set('model', { name: d.model.name, buf }).catch(() => {});
   B.pendingGroups = d.groupsOn || null; B.ovKey = '';   // reload the edits for these settings
   showTab('bPage');
@@ -3523,13 +3563,22 @@ function tplGeometry(i) {
 async function loadModelFile(file) {
   const buf = await file.arrayBuffer();
   await DB.set('model', { name: file.name, buf }).catch(() => {});
-  setModel(file.name, buf, true);
+  setModel(file.name, buf, true, true);
 }
-function setModel(name, buf, fresh) {
+// a newly loaded model: Front axis is its longest side (owner, 2026-10-20); Up stays unless it is that side
+function chooseAxes(raw, name) {
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  raw.forEach(p => { const t = p.tris; for (let i = 0; i < t.length; i += 3) for (let k = 0; k < 3; k++) { const v = t[i + k]; if (v < lo[k]) lo[k] = v; if (v > hi[k]) hi[k] = v; } });
+  const ext = hi.map((v, k) => v - lo[k]), a = 'xyz'[ext.indexOf(Math.max(...ext))];
+  if (el('bFront').value[1] !== a) el('bFront').value = '+' + a;
+  if (el('bUp').value === a) el('bUp').value = (/\.stl$/i.test(name) ? ['z', 'y', 'x'] : ['y', 'z', 'x']).find(u => u !== a);
+}
+function setModel(name, buf, fresh, newFile) {
   let done = Promise.resolve();
   try {
     const raw = /\.stl$/i.test(name) ? parseStl(buf) : parseObj(new TextDecoder().decode(buf));
     if (!raw.length) throw new Error('no triangles found');
+    if (newFile) chooseAxes(raw, name);
     B.raw = raw; B.modelName = name;
     el('bModelName').textContent = `${name}: ${raw.length} part${raw.length > 1 ? 's' : ''}, ${raw.reduce((n, p) => n + p.tris.length / 9, 0)} triangles`;
     el('bEmpty').style.display = 'none';
@@ -3543,7 +3592,7 @@ async function prepare(frame) {
   try { prep = prepareModel(B.raw, { up: el('bUp').value, front: el('bFront').value, length: parseFloat(el('bLength').value) || 1 }); }
   catch (e) { el('bModelName').innerHTML = `<span class="warn">${esc(e.message)}</span>`; return; }
   const rules = el('bGroups').value;
-  B.parts = prep.parts.map(p => ({ ...p, group: groupOf(p.name, rules) })); B.partsVer = (B.partsVer || 0) + 1;
+  B.parts = prep.parts.map(p => ({ ...p, group: groupOf(p.name, rules) })); B.partsVer = (B.partsVer || 0) + 1; B.size = prep.size; B.fitCopy = null;
   groupNames = [...new Set(B.parts.map(p => p.group))].sort((a, b) => ((GROUP_PRIORITY.indexOf(a) + 99) % 99) - ((GROUP_PRIORITY.indexOf(b) + 99) % 99));
   groupOn = B.pendingGroups ? new Set(B.pendingGroups.filter(g => groupNames.includes(g)))
     : new Set(groupNames.filter(g => g !== 'antennas' && g !== 'wheels'));   // wheels: built from suspension blocks
@@ -3551,13 +3600,18 @@ async function prepare(frame) {
   el('groups').innerHTML = '';
   groupNames.forEach(g => {
     const l = document.createElement('label');
-    l.innerHTML = `<input type="checkbox" ${groupOn.has(g) ? 'checked' : ''}> <span class="sw" style="background:${colorOfGroup(g)}"></span> model: ${esc(g)}`;
+    l.innerHTML = `<input type="checkbox" ${groupOn.has(g) ? 'checked' : ''}> <span class="sw" style="background:${colorOfGroup(g)}"></span> ${esc(g)}`;
     l.querySelector('input').addEventListener('change', e => { e.target.checked ? groupOn.add(g) : groupOn.delete(g); rebuild(); });
     el('groups').appendChild(l);
   });
+  if (!groupNames.includes('wheels')) el('groups').insertAdjacentHTML('beforeend', '<div class="hint">No part matches the wheels words in Part groups, ' +
+    'so wheels cannot be left out (an .stl, or an .obj with the wheels joined to the body, is one part).</div>');
   const v = B.view; disposeGroup(v.modelGroup); modelMeshes = [];
+  // the 3D view draws a big model simplified (merge box 1/500 of its longest side: about 1 cm on a 5 m car)
+  const nTris = B.parts.reduce((k, p) => k + p.tris.length / 9, 0);
+  const shown = nTris > VIEW_MAX_TRIS ? clusterParts(B.parts, Math.max(...prep.size) / 500) : B.parts;
   groupNames.forEach(g => {
-    const list = B.parts.filter(p => p.group === g), total = list.reduce((n, p) => n + p.tris.length, 0), arr = new Float32Array(total); let o = 0;
+    const list = shown.filter(p => p.group === g), total = list.reduce((n, p) => n + p.tris.length, 0), arr = new Float32Array(total); let o = 0;
     list.forEach(p => { arr.set(p.tris, o); o += p.tris.length; });
     const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(arr, 3)); geo.computeVertexNormals();
     // the model is an overlay drawn over the finished block view (see makeView): a depth-only pass, then colour on its
@@ -3567,10 +3621,12 @@ async function prepare(frame) {
     const color = new THREE.Mesh(geo, mat); color.renderOrder = 2;
     modelMeshes.push({ g, depth, color, mat }); v.modelGroup.add(depth, color);
   });
+  applyModelVisibility();   // unticked parts (wheels) hidden while the first fit runs, not only after it
   saveBuilderSettings();
   await rebuild();
   if (frame && B.grid) frameModel();
 }
+const VIEW_MAX_TRIS = 1000000;
 function frameModel() {
   const g = B.grid, v = B.view, c = new THREE.Vector3(g.ox + g.nx * g.b / 2, g.oy + g.ny * g.b / 2, 0);
   v.controls.target.copy(c); v.camera.position.set(c.x - g.nx * g.b * 0.9, c.y + g.ny * g.b * 1.4, c.z + g.nz * g.b * 2.2);
@@ -3662,6 +3718,23 @@ const Fit = (() => {
   }
   return { run, get workers() { return url ? N : 0; } };
 })();
+// big models are fitted from a simplified copy (core.js clusterParts), made again when the block size or scale changes;
+// only that copy goes to the fit workers
+function fitParts() {
+  const n = B.parts.reduce((k, p) => k + p.tris.length / 9, 0);
+  if (n < SIMPLIFY_FROM) { B.fitTris = 0; return { parts: B.parts, ver: B.partsVer }; }
+  const o = opts(), size = o.block / o.scale / CLUSTER_PER_CELL, key = B.partsVer + ':' + size;
+  if (!B.fitCopy || B.fitCopy.key !== key) { B.fitCopy = null; const parts = clusterParts(B.parts, size); B.fitCopy = { key, parts }; }
+  B.fitTris = B.fitCopy.parts.reduce((k, p) => k + p.tris.length / 9, 0);
+  return { parts: B.fitCopy.parts, ver: key };
+}
+// a grid this big is probably the wrong Front axis, Up or length (a car turned sideways came to 132,000 cells and ran
+// the browser out of memory): it waits for "Fit now"
+const BIG_GRID = 50000;
+function gridEstimate() {
+  const o = opts(), d = B.size.map(v => Math.ceil(v * o.scale / o.block) + 1);
+  return { nx: d[0], ny: d[1], nz: d[2], cells: d[0] * d[1] * d[2], key: [B.partsVer, o.scale, o.block].join('|') };
+}
 let rebuildToken = 0;
 async function rebuild() {
   if (!B.parts) return;
@@ -3671,14 +3744,23 @@ async function rebuild() {
     el('fitNow').addEventListener('click', () => { B.deferFit = 0; rebuild(); });
     return;
   }
+  const est = gridEstimate();
+  if (est.cells > BIG_GRID && B.bigOk !== est.key) {
+    ++rebuildToken;
+    el('info').innerHTML = `<span class="warn">Big grid: about ${est.nx} long x ${est.nz} wide x ${est.ny} high blocks (${est.cells.toLocaleString()} cells).</span> ` +
+      `Check Front axis, Up and Real length first; a fit this size can run the browser out of memory. <button id="fitNow">Fit now</button>`;
+    el('fitNow').addEventListener('click', () => { B.bigOk = est.key; rebuild(); });
+    return;
+  }
   const token = ++rebuildToken;
   el('info').textContent = 'Fitting…';
+  const fp = fitParts();
   const ver = libVersion, T = B.Tver === ver ? B.T : buildTemplates(LIB); B.fitLibVer = ver;
   const state = el('saveState'), before = /^fitting/.test(state.textContent) ? B.stateBeforeFit : state.textContent;
   B.stateBeforeFit = before; state.textContent = 'fitting 0%';
   const t0 = performance.now();
   let grid;
-  try { grid = await Fit.run(B.parts, B.partsVer, { ...opts(), shapes: LIB, T }, ver, f => { if (token === rebuildToken) state.textContent = `fitting ${Math.round(100 * f)}%`; }); }
+  try { grid = await Fit.run(fp.parts, fp.ver, { ...opts(), shapes: LIB, T }, ver, f => { if (token === rebuildToken) state.textContent = `fitting ${Math.round(100 * f)}%`; }); }
   catch (e) { if (token === rebuildToken) { state.textContent = before; el('info').textContent = 'The fit failed.'; } throw e; }
   if (token !== rebuildToken || grid === undefined) return;   // a newer fit replaced this one
   if (/^fitting/.test(state.textContent)) state.textContent = before;
@@ -3880,7 +3962,7 @@ function updateInfo() {
   const { nx, ny, nz, b, cell, fit } = g;
   let blocks = 0, none = 0; for (let i = 0; i < cell.length; i++) if (cell[i]) { if (fit[i] >= 0) blocks++; else none++; }
   el('info').innerHTML = `Grid <b>${nx}</b> long x <b>${nz}</b> wide x <b>${ny}</b> high blocks<br>= ${(nx * b).toFixed(1)} x ${(nz * b).toFixed(1)} x ${(ny * b).toFixed(1)} m<br>` +
-    `<b>${blocks}</b> blocks, ${none} cells with no block passing<br><span class="hint">${B.T.list.length} block orientations from ${LIB.filter(s => s.use).length} library blocks, fitted in ${Math.round(B.fitMs)} ms</span>`;
+    `<b>${blocks}</b> blocks, ${none} cells with no block passing<br><span class="hint">${B.T.list.length} block orientations from ${LIB.filter(s => s.use).length} library blocks, fitted in ${Math.round(B.fitMs)} ms${B.fitTris ? `; model simplified to ${B.fitTris.toLocaleString()} triangles for the fit` : ''}</span>`;
   const lay = el('layer'); lay.max = ny; if (parseInt(lay.value) > ny) lay.value = ny;
   el('layerLabel').textContent = `layer ${lay.value} of ${ny}`;
 }
