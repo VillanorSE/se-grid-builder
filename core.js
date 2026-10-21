@@ -239,6 +239,13 @@ export function rotateTemplate(T, ti, axis) {
   const r = T.bySig.get(maskSig(permute(T.list[ti].mask, TURN_MAP[axis])));
   return r === undefined ? ti : r;
 }
+// the block mirrored across the hull centreline (Z, the width): the template whose mask is this one flipped in Z, or -1
+// when the library has no such block (a left/right-handed shape without its twin in use). The cell editor's mirror.
+const MIRROR_Z = SAMPLE.map(p => sIndex([p[0] - .5, p[1] - .5, .5 - p[2]]));
+export function mirrorTemplate(T, ti) {
+  const r = T.bySig.get(maskSig(permute(T.list[ti].mask, MIRROR_Z)));
+  return r === undefined ? -1 : r;
+}
 // rotation-independent signature of a shape's mask (finds duplicate shapes)
 export const shapeKeySig = mask => ROT_MAP.map(map => maskSig(permute(mask, map))).sort()[0];
 

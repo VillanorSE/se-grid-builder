@@ -18,6 +18,19 @@ Made for the *WW2: War in the Mediterranean* scenario mods, usable for any build
   - hidden part groups (e.g. wheels you'll build from suspension) keep their space clear; the part checkboxes are under
     Part groups in Model (wheels and antennas off by default; a hint says when no part matches the wheels words);
   - a layer map shows the result layer by layer, and clicking a cell lists its best matches to pick from.
+- **Cell editor** (Grid Builder): select a cell on the layer map, or click a block in the 3D view (a click on empty
+  space picks the shown layer's cell under the pointer).
+  - **All blocks in use** is a palette grouped like the library: click one for the cell, then pick its turn from
+    pictures of every turn, drawn from the 3D view's direction with the model's surface in that cell (red) over the
+    block.
+  - **Pick up** copies the cell's block as turned; **paint** then puts it wherever you click or drag on the map or
+    click in the 3D view (Esc stops).
+  - **Mirror** (on by default) makes every edit on the other side of the centreline too, with the mirrored turn (a
+    block with no mirror-image block in use leaves the other side as it was and says so).
+  - **Undo** (Ctrl+Z) steps back through edits; a paint stroke is one step.
+  - Keyboard: type a block's key to use it (Enter for a key that starts a longer one), 1/2/3 turn
+    vertical/length/width, Delete or 0 no block, Backspace auto, arrows and Page Up/Down move, Tab/Shift+Tab the
+    next/previous cell with material, Ctrl+C pick up, Ctrl+V put it in the selected cell.
 - **Cube Library:** every block shape the builder can use:
   - starts with the 33 vanilla light armour shapes and the 18 vanilla armour panels;
   - **Import from world** reads a world's mod list and brings in the one-cell armour, panel and plate blocks from its
@@ -61,7 +74,10 @@ a command line instead, then use **Import JSON** in the Cube Library:
 
     node import_world.mjs "%APPDATA%\SpaceEngineers\Saves\<id>\<world>"
 
-Imported mod blocks start switched off: turn on the ones you build with. Blocks larger than one cell (most wings) are
+Imported mod blocks start switched off: turn on the ones you build with (Cube Library: filter by source, "Use
+shown"). A mod block shaped like an existing card joins that card (a mod's thickness variants share one card, and many
+mod blocks land on vanilla armour and panel cards). Filtering by a source shows both the mod's own cards and the cards
+holding its blocks, and a card names the other mods it holds ("Vanilla armour + 6 mods"). Blocks larger than one cell (most wings) are
 counted but not imported yet (see `design/multicell-blocks.md`).
 
 ## Blueprint export

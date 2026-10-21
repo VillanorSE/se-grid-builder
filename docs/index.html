@@ -77,6 +77,23 @@
   #altList button.alt.on { border-color:var(--accent); }
   #altList .k { display:inline-block; min-width:22px; padding:0 5px; border-radius:4px; color:#101316; font-weight:700; text-align:center; }
   #altList .hint { margin-left:auto; }
+  #map.paint { cursor:crosshair; }
+  #paintBtn.on { border-color:var(--accent); color:var(--accent); }
+  #brushInfo { min-height:1.4em; }
+  #palette { height:200px; overflow-y:auto; border:1px solid var(--line); border-radius:4px; padding:4px; background:#14181c; }
+  #palette .grp { color:var(--muted); font-size:11px; margin:4px 2px 2px; }
+  #palette .row { display:flex; flex-wrap:wrap; gap:3px; }
+  .pal { position:relative; width:42px; height:42px; padding:0; border-radius:4px; overflow:hidden; background:#101316; }
+  .pal img { width:100%; height:100%; display:block; }
+  .pal .k { position:absolute; left:1px; bottom:1px; font-size:9px; font-weight:700; color:#101316; padding:0 3px; border-radius:3px; }
+  .pal.on { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
+  #turns { height:212px; overflow-y:auto; display:flex; flex-wrap:wrap; gap:4px; align-content:flex-start; margin-top:4px; }
+  .turn { width:61px; height:61px; padding:0; border-radius:4px; overflow:hidden; background:#101316; }
+  .turn img { width:100%; height:100%; display:block; }
+  .turn.on { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent); }
+  #keyBuf { color:var(--accent); font-weight:700; }
+  .keys { font-size:12px; color:var(--muted); }
+  .keys b { color:var(--text); font-weight:600; }
   .drop { border:1px dashed var(--line); border-radius:6px; padding:10px; text-align:center; color:var(--muted); }
   .drop.over { border-color:var(--accent); color:var(--text); }
   .empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--muted); pointer-events:none; text-align:center; padding:20px; }
@@ -241,12 +258,25 @@
     <label><input type="checkbox" id="showGrid" checked> Grid lines on the layer</label>
 
     <h2>Edit a cell</h2>
-    <div class="hint">Click a cell on the layer map to select it. Edits are kept in this browser for this model and grid settings.</div>
+    <div class="hint">Click a cell on the layer map, or a block in the 3D view, to select it. Edits are kept in this browser for
+    this model and grid settings.</div>
     <div class="btnrow"><button data-act="prev">&#9664; shape</button><button data-act="next">shape &#9654;</button><button data-act="none">no block</button></div>
     <div class="btnrow"><button data-act="ry">turn vertical</button><button data-act="rx">turn length</button><button data-act="rz">turn width</button></div>
-    <div class="btnrow"><button data-act="reset">auto</button><button data-act="resetAll">clear all edits</button></div>
+    <div class="btnrow"><button data-act="reset">auto</button><button data-act="undo">undo</button><button data-act="resetAll">clear all edits</button></div>
+    <div class="btnrow"><button id="pickUp" title="Copy the selected cell's block, turned as it is (Ctrl+C)">pick up</button><button id="paintBtn" title="Click or drag on the layer map, or click blocks in the 3D view, to put the picked-up block there (Esc to stop)">paint</button>
+      <label title="Every edit is also made on the other side of the centreline, mirrored"><input type="checkbox" id="mirror" checked> mirror</label></div>
+    <div id="brushInfo" class="hint"></div>
     <div id="selInfo" class="hint">No cell selected.</div>
     <div id="altList"></div>
+    <div class="hint">All blocks in use: click one for this cell, then pick its turn below. <span id="keyBuf"></span></div>
+    <div id="palette"></div>
+    <div id="turns"></div>
+    <details class="keys"><summary>Keyboard</summary>
+      <div>Type a block's key (the letters on the map, e.g. <b>H</b>, <b>SCT</b>) to use it; <b>Enter</b> takes a key that is
+      also the start of a longer one. <b>1</b> / <b>2</b> / <b>3</b> turn vertical / length / width. <b>Delete</b> or <b>0</b>:
+      no block; <b>Backspace</b>: auto. Arrows move along the layer, <b>Page Up</b> / <b>Page Down</b> change layer,
+      <b>Tab</b> / <b>Shift+Tab</b> the next / previous cell with material. <b>Ctrl+C</b> picks up, <b>Ctrl+V</b> puts the
+      picked-up block in the selected cell, <b>Ctrl+Z</b> undoes, <b>Esc</b> stops painting.</div></details>
     <div class="btnrow"><button id="cellReport">Copy cell report for Claude</button></div>
     <div class="btnrow"><button id="editsExport">Export my edits for Claude</button></div>
     <div class="hint">Saves every cell you've edited (for this model and grid settings) with what the tool had picked, so
@@ -517,6 +547,13 @@ function buildTemplates(shapes) {
 function rotateTemplate(T, ti, axis) {
   const r = T.bySig.get(maskSig(permute(T.list[ti].mask, TURN_MAP[axis])));
   return r === undefined ? ti : r;
+}
+// the block mirrored across the hull centreline (Z, the width): the template whose mask is this one flipped in Z, or -1
+// when the library has no such block (a left/right-handed shape without its twin in use). The cell editor's mirror.
+const MIRROR_Z = SAMPLE.map(p => sIndex([p[0] - .5, p[1] - .5, .5 - p[2]]));
+function mirrorTemplate(T, ti) {
+  const r = T.bySig.get(maskSig(permute(T.list[ti].mask, MIRROR_Z)));
+  return r === undefined ? -1 : r;
 }
 // rotation-independent signature of a shape's mask (finds duplicate shapes)
 const shapeKeySig = mask => ROT_MAP.map(map => maskSig(permute(mask, map))).sort()[0];
@@ -1610,6 +1647,13 @@ function buildTemplates(shapes) {
 function rotateTemplate(T, ti, axis) {
   const r = T.bySig.get(maskSig(permute(T.list[ti].mask, TURN_MAP[axis])));
   return r === undefined ? ti : r;
+}
+// the block mirrored across the hull centreline (Z, the width): the template whose mask is this one flipped in Z, or -1
+// when the library has no such block (a left/right-handed shape without its twin in use). The cell editor's mirror.
+const MIRROR_Z = SAMPLE.map(p => sIndex([p[0] - .5, p[1] - .5, .5 - p[2]]));
+function mirrorTemplate(T, ti) {
+  const r = T.bySig.get(maskSig(permute(T.list[ti].mask, MIRROR_Z)));
+  return r === undefined ? -1 : r;
 }
 // rotation-independent signature of a shape's mask (finds duplicate shapes)
 const shapeKeySig = mask => ROT_MAP.map(map => maskSig(permute(mask, map))).sort()[0];
@@ -3200,11 +3244,13 @@ const thumbObserver = new IntersectionObserver(entries => entries.forEach(e => {
 
 function shownShapes() {
   const q = el('libSearch').value.trim().toLowerCase(), show = el('libShow').value, src = el('libSource').value;
-  return LIB.filter(s => (show === 'all' || (show === 'on') === !!s.use) && (!src || s.source === src) &&
+  // a source also matches cards holding its blocks: a mod block shaped like an existing card joins that card (e.g. 360
+  // KONTAKT blocks sit on 36 vanilla armour and panel cards), so filtering on the card's own source alone hid them
+  return LIB.filter(s => (show === 'all' || (show === 'on') === !!s.use) && (!src || s.source === src || (s.blocks || []).some(b => b.mod === src)) &&
     (!q || [s.name, s.key, s.source, ...(s.blocks || []).flatMap(b => [b.subtype, b.name || '', b.mod || ''])].join(' ').toLowerCase().includes(q)));
 }
 function renderLibrary() {
-  const sources = [...new Set(LIB.map(s => s.source))];
+  const sources = [...new Set(LIB.flatMap(s => [s.source, ...(s.blocks || []).map(b => b.mod).filter(Boolean)]))];
   const cur = el('libSource').value;
   el('libSource').innerHTML = '<option value="">All sources</option>' + sources.map(s => `<option ${s === cur ? 'selected' : ''}>${esc(s)}</option>`).join('');
   const list = shownShapes(), grid = el('libGrid');
@@ -3213,11 +3259,11 @@ function renderLibrary() {
   const frag = document.createDocumentFragment();
   for (const s of list) {
     const c = document.createElement('div'); c.className = 'card' + (s.use ? '' : ' off'); c.dataset.id = s.id;
-    const blocks = s.blocks || [], vol = s.solids && s.solids.length ? Math.round(shapeVolume(s) * 100) : null;
+    const blocks = s.blocks || [], others = [...new Set(blocks.map(b => b.mod).filter(m => m && m !== s.source))], vol = s.solids && s.solids.length ? Math.round(shapeVolume(s) * 100) : null;
     const bl = blocks.length ? blocks.slice(0, 2).map(b => b.name || b.subtype).join(', ') + (blocks.length > 2 ? ` +${blocks.length - 2}` : '') : 'no game blocks linked';
     c.innerHTML = `${thumbCache.has(s.id) ? `<img src="${thumbCache.get(s.id)}">` : `<img data-id="${esc(s.id)}" alt="">`}
       <div class="t"><span class="k" style="background:${shapeColor(s).getStyle()}">${esc(s.key)}</span>${esc(s.name)}</div>
-      <div class="m">${esc(s.source)}${vol === null ? '<span class="tag">no shape yet</span>' : isPlate(s) ? '<span class="tag">plate</span>' : ` &middot; fills ${vol}%`}</div>
+      <div class="m" title="${esc(others.join(', '))}">${esc(s.source)}${others.length ? ` + ${esc(others.length === 1 ? others[0] : others.length + ' mods')}` : ''}${vol === null ? '<span class="tag">no shape yet</span>' : isPlate(s) ? '<span class="tag">plate</span>' : ` &middot; fills ${vol}%`}</div>
       <div class="m" title="${esc(blocks.map(b => `${b.name || b.subtype} (${b.size || '?'}${b.mod ? ', ' + b.mod : ''})`).join('\n'))}">${esc(bl)}</div>
       <label><input type="checkbox" ${s.use ? 'checked' : ''}> use in builder</label>`;
     const img = c.querySelector('img[data-id]'); if (img) thumbObserver.observe(img);
@@ -3530,6 +3576,7 @@ function initBuilderView() {
   v.modelGroup = new THREE.Group(); v.cellGroup = new THREE.Group(); v.gridGroup = new THREE.Group();
   v.selGroup = new THREE.Group(); v.selGroup.renderOrder = 999; v.overlay.add(v.selGroup);   // selected cell: always on top
   v.scene.add(v.gridGroup); applyDrawOrder();
+  initViewPicking();
 }
 // B.T always belongs to B.grid: a fit for a changed library builds its templates first and installs them with its grid
 function installTemplates(T, ver) {
@@ -3640,7 +3687,7 @@ function opts() {
 }
 // manual edits: cell "x,y,z" -> template signature (stable when the library changes), or 'none'; per model + grid settings
 const gridSig = () => { const o = opts(); return [B.modelName, el('bLength').value, el('bFront').value, el('bUp').value, o.scale, o.block, o.centre, o.offX, o.offY].join('|'); };
-async function loadOverrides() { B.ovKey = gridSig(); B.overrides = (await DB.get('ov:' + B.ovKey)) || {}; }
+async function loadOverrides() { B.ovKey = gridSig(); B.overrides = (await DB.get('ov:' + B.ovKey)) || {}; B.undo = []; }
 const saveOverrides = () => DB.set('ov:' + B.ovKey, B.overrides).catch(() => {});
 function effFit(x, y, z) {             // >= 0 template, -2 no block passes, -1 empty, -3 forced no block
   const k = x + ',' + y + ',' + z;
@@ -3787,7 +3834,7 @@ function drawCells() {
         if (!shapes && !cv) continue;
         const key = shapes ? f : 'cube';
         if (!byGeo.has(key)) byGeo.set(key, []);
-        byGeo.get(key).push({ c, v: cv || 1 });
+        byGeo.get(key).push({ c, v: cv || 1, cell: [x, y, z] });
       } }
     const m = new THREE.Matrix4(), col = new THREE.Color();
     byGeo.forEach((list, key) => {
@@ -3810,6 +3857,7 @@ function drawCells() {
         inst.setColorAt(n, col);
         edges.push({ geo: key === 'cube' ? boxEdges : tplEdges[key], c: it.c, s: sz });
       });
+      inst.userData.cells = list.map(it => it.cell);
       v.cellGroup.add(inst);
     });
     const pts = [], faint = [];
@@ -3843,16 +3891,113 @@ function drawCells() {
 }
 
 const mapGeom = { pad: 30, cs: 10 };
-el('map').addEventListener('click', e => {
-  if (!B.grid) return;
+// ---------------------------------------------------------------- cell editor (owner, 2026-10-21: palette and turn
+// pictures, pick up and paint, mirror, keyboard, click blocks in the 3D view)
+// every edit goes through setCell, which also makes it on the mirror cell (other side of the centreline: grid Z is the
+// width, centred on the hull) when Mirror is on, and records it for undo
+B.undo = []; B.brush = null; B.paint = false;
+const cellKey = (x, y, z) => x + ',' + y + ',' + z;
+function mirrorValue(v) {            // a cell value (template sig or 'none') mirrored; undefined when there is no mirror block
+  if (v === 'none' || v == null) return v;
+  const ti = B.T.bySig.get(v); if (ti === undefined) return undefined;
+  const mi = mirrorTemplate(B.T, ti); return mi < 0 ? undefined : B.T.list[mi].sig;
+}
+// v: template sig, 'none', or null (back to auto)
+function setCell(x, y, z, v, undo) {
+  const cells = [[x, y, z, v]];
+  if (el('mirror').checked) {
+    const mz = B.grid.nz - 1 - z;
+    if (mz !== z) { const mv = mirrorValue(v); if (mv !== undefined) cells.push([x, y, mz, mv]); else B.mirrorMiss = true; }
+  }
+  for (const [cx, cy, cz, cv] of cells) {
+    const k = cellKey(cx, cy, cz); undo.push([k, k in B.overrides ? B.overrides[k] : null]);
+    if (cv == null) delete B.overrides[k]; else B.overrides[k] = cv;
+  }
+}
+function commitEdits(undo) {
+  if (undo.length) { B.undo.push(undo); if (B.undo.length > 300) B.undo.shift(); }
+  saveOverrides(); showSel(); drawCells();
+  if (B.mirrorMiss) { B.mirrorMiss = false; el('brushInfo').innerHTML = '<span class="warn">No mirror-image block in use for that one: the other side was left as it was.</span>'; }
+  else showBrush();
+}
+function editSelected(v) {
+  if (!B.grid) { el('selInfo').textContent = 'Load a model first.'; return; }
+  if (!B.selected) { el('selInfo').textContent = 'Select a cell on the layer map or in the 3D view first.'; return; }
+  const u = []; setCell(...B.selected, v, u); if (v != null) B.brush = v; commitEdits(u);
+}
+function undoEdit() {
+  const u = B.undo.pop(); if (!u) { el('brushInfo').textContent = 'Nothing to undo.'; return; }
+  for (let i = u.length - 1; i >= 0; i--) { const [k, prev] = u[i]; if (prev == null) delete B.overrides[k]; else B.overrides[k] = prev; }
+  saveOverrides(); showSel(); drawCells(); showBrush();
+}
+// the cell's value as a brush: its block as turned, or 'none'
+function cellValue(x, y, z) { const f = effFit(x, y, z); return f >= 0 ? B.T.list[f].sig : 'none'; }
+function showBrush() {
+  const b = B.brush, ti = b && b !== 'none' ? B.T.bySig.get(b) : undefined;
+  const what = b === 'none' ? 'no block' : ti !== undefined ? `${LIB[B.T.list[ti].shape].key}: ${LIB[B.T.list[ti].shape].name}` : '';
+  el('paintBtn').classList.toggle('on', B.paint); el('paintBtn').textContent = B.paint ? 'painting' : 'paint';
+  el('map').classList.toggle('paint', B.paint);
+  el('brushInfo').innerHTML = what ? `Picked up: <b>${esc(what)}</b>${B.paint ? ' (click or drag to paint, Esc to stop)' : ''}` : (B.paint ? 'Pick up a block first.' : '');
+}
+el('pickUp').addEventListener('click', () => {
+  if (!B.selected || !B.grid) { el('selInfo').textContent = 'Select a cell to pick up its block.'; return; }
+  B.brush = cellValue(...B.selected); showBrush();
+});
+el('paintBtn').addEventListener('click', () => { B.paint = !B.paint; showBrush(); });
+el('mirror').addEventListener('change', () => DB.set('mirror', el('mirror').checked).catch(() => {}));
+DB.get('mirror').then(v => { if (v === false) el('mirror').checked = false; }).catch(() => {});
+
+function select(x, y, z) { cancelKey(); B.selected = [x, y, z]; B.turnShape = null; showSel(); drawCells(); }
+// layer map: click selects; in paint mode click or drag paints (one undo step per stroke)
+const mapCell = e => {
   const r = el('map').getBoundingClientRect(), k = el('map').width / r.width;
   const x = Math.floor(((e.clientX - r.left) * k - mapGeom.pad) / mapGeom.cs), z = Math.floor(((e.clientY - r.top) * k - mapGeom.pad) / mapGeom.cs);
-  if (x < 0 || z < 0 || x >= B.grid.nx || z >= B.grid.nz) return;
-  B.selected = [x, parseInt(el('layer').value) - 1, z]; showSel(); drawCells();
+  return x < 0 || z < 0 || x >= B.grid.nx || z >= B.grid.nz ? null : [x, parseInt(el('layer').value) - 1, z];
+};
+let stroke = null;
+el('map').addEventListener('mousedown', e => {
+  if (!B.grid || e.button !== 0) return;
+  const c = mapCell(e); if (!c) return;
+  if (!B.paint || B.brush == null) { select(...c); return; }
+  e.preventDefault(); stroke = { undo: [], done: new Set() };
+  paintAt(c);
 });
+el('map').addEventListener('mousemove', e => { if (stroke && B.grid) { const c = mapCell(e); if (c) paintAt(c); } });
+window.addEventListener('mouseup', () => { if (!stroke) return; const u = stroke.undo; stroke = null; commitEdits(u); });
+function paintAt(c) {
+  const k = cellKey(...c); if (stroke.done.has(k)) return; stroke.done.add(k);
+  setCell(...c, B.brush, stroke.undo); B.selected = c; saveOverrides(); drawCells();
+}
+// 3D view: a click (not a drag) selects the block under the pointer, or the cell of the shown layer when there is none;
+// in paint mode it paints that cell
+function initViewPicking() {
+  const v = B.view, cvs = v.renderer.domElement, ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+  let down = null;
+  cvs.addEventListener('pointerdown', e => { down = e.button === 0 ? [e.clientX, e.clientY] : null; });
+  cvs.addEventListener('pointerup', e => {
+    if (!down || !B.grid || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 4) return;
+    const r = cvs.getBoundingClientRect();
+    ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+    ray.setFromCamera(ndc, v.camera);
+    const meshes = v.cellGroup.children.filter(o => o.isInstancedMesh && o.userData.cells);
+    const hit = ray.intersectObjects(meshes, false)[0];
+    let c = hit ? hit.object.userData.cells[hit.instanceId] : null;
+    if (!c) {                         // no block: the cell of the shown layer under the pointer (its grid lines)
+      const g = B.grid, L = parseInt(el('layer').value) - 1, p = new THREE.Vector3();
+      if (ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -(g.oy + L * g.b)), p)) {
+        const x = Math.floor((p.x - g.ox) / g.b), z = Math.floor((p.z - g.oz) / g.b);
+        if (x >= 0 && z >= 0 && x < g.nx && z < g.nz) c = [x, L, z];
+      }
+    }
+    if (!c) return;
+    if (B.paint && B.brush != null) { const u = []; B.selected = c; setCell(...c, B.brush, u); commitEdits(u); }
+    else select(...c);
+  });
+}
+
 function showSel() {
-  if (!B.selected || !B.grid) { el('selInfo').textContent = 'No cell selected.'; return; }
-  const [x, y, z] = B.selected, f = effFit(x, y, z), k = x + ',' + y + ',' + z, g = B.grid;
+  if (!B.selected || !B.grid) { el('selInfo').textContent = 'No cell selected.'; el('altList').innerHTML = ''; showPalette(); showTurns(); return; }
+  const [x, y, z] = B.selected, f = effFit(x, y, z), k = cellKey(x, y, z), g = B.grid;
   let what = f === -3 ? 'no block' : f === -2 ? 'no block (nothing fits well)' : f === -1 ? 'empty' : '';
   if (f >= 0) { const s = LIB[B.T.list[f].shape], bl = (s.blocks || []).map(b => b.name || b.subtype);
     what = `${s.key}: ${s.name}${bl.length ? ' (' + bl.slice(0, 3).join(', ') + (bl.length > 3 ? '…' : '') + ')' : ''}`;
@@ -3862,35 +4007,215 @@ function showSel() {
   const box = el('altList'); box.innerHTML = '';
   const ci = g.idx(x, y, z), list = [];
   for (let a = 0; a < g.ALT; a++) { const ti = g.alt[ci * g.ALT + a]; if (ti >= 0 && ti < B.T.list.length) list.push([ti, g.altScore[ci * g.ALT + a]]); }
-  if (!list.length) return;
-  box.insertAdjacentHTML('beforeend', '<div class="hint">Best matches (click to use):</div>');
-  list.forEach(([ti, sc]) => {
-    const s = LIB[B.T.list[ti].shape], b = document.createElement('button');
-    b.className = 'alt' + (ti === f ? ' on' : '');
-    b.innerHTML = `<span class="k" style="background:${shapeColor(s).getStyle()}">${esc(s.key)}</span>${esc(s.name)} <span class="hint">${Math.round(sc * 100)}</span>`;
-    b.addEventListener('click', () => { B.overrides[k] = B.T.list[ti].sig; saveOverrides(); showSel(); drawCells(); });
-    box.appendChild(b);
-  });
+  if (list.length) {
+    box.insertAdjacentHTML('beforeend', '<div class="hint">Best matches (click to use):</div>');
+    list.forEach(([ti, sc]) => {
+      const s = LIB[B.T.list[ti].shape], b = document.createElement('button');
+      b.className = 'alt' + (ti === f ? ' on' : '');
+      b.innerHTML = `<span class="k" style="background:${shapeColor(s).getStyle()}">${esc(s.key)}</span>${esc(s.name)} <span class="hint">${Math.round(sc * 100)}</span>`;
+      b.addEventListener('click', () => editSelected(B.T.list[ti].sig));
+      box.appendChild(b);
+    });
+  }
+  showPalette(); showTurns();
 }
-document.querySelectorAll('button[data-act]').forEach(btn => btn.addEventListener('click', () => {
-  const act = btn.dataset.act, T = B.T;
-  if (act === 'resetAll') { if (confirm('Clear all edits for these grid settings?')) { B.overrides = {}; saveOverrides(); showSel(); drawCells(); } return; }
+
+// ---- palette: every block in use, grouped like the library; click = use it in the selected cell
+const PAL_GROUPS = [['armour', 'Armour'], ['plate', 'Panels'], ['mine', 'My blocks'], ['mod', 'Mod blocks']];
+const palObserver = new IntersectionObserver(entries => entries.forEach(e => {
+  if (!e.isIntersecting) return; const img = e.target, s = LIB.find(x => x.id === img.dataset.id);
+  if (s) img.src = thumb(s); palObserver.unobserve(img);
+}), { root: el('palette'), rootMargin: '100px' });
+function showPalette() {
+  const box = el('palette');
+  if (!B.T) { box.innerHTML = '<div class="hint">Load a model first.</div>'; B.palT = null; return; }
+  if (B.palT !== B.T) {
+    B.palT = B.T; box.innerHTML = '';
+    const used = [...new Set(B.T.list.map(t => t.shape))];
+    PAL_GROUPS.forEach(([kind, label]) => {
+      const list = used.filter(si => shapeKind(LIB[si]) === kind); if (!list.length) return;
+      box.insertAdjacentHTML('beforeend', `<div class="grp">${label}</div>`);
+      const row = document.createElement('div'); row.className = 'row';
+      list.forEach(si => {
+        const s = LIB[si], b = document.createElement('button'); b.className = 'pal'; b.dataset.si = si; b.title = `${s.key}: ${s.name}`;
+        b.innerHTML = `${thumbCache.has(s.id) ? `<img src="${thumbCache.get(s.id)}">` : `<img data-id="${esc(s.id)}" alt="">`}<span class="k" style="background:${shapeColor(s).getStyle()}">${esc(s.key)}</span>`;
+        const img = b.querySelector('img[data-id]'); if (img) palObserver.observe(img);
+        b.addEventListener('click', () => useShape(si));
+        row.appendChild(b);
+      });
+      box.appendChild(row);
+    });
+  }
+  const f = B.selected && B.grid ? effFit(...B.selected) : -1, cur = B.turnShape ?? (f >= 0 ? B.T.list[f].shape : -1);
+  box.querySelectorAll('.pal').forEach(b => b.classList.toggle('on', +b.dataset.si === cur));
+}
+// a shape for the selected cell: the turn the fit liked best for this cell if it has one, else the current turn if it
+// is already this shape, else its first turn
+function useShape(si) {
+  if (!B.selected || !B.grid) { el('selInfo').textContent = 'Select a cell on the layer map or in the 3D view first.'; return; }
+  const [x, y, z] = B.selected, g = B.grid, ci = g.idx(x, y, z), f = effFit(x, y, z);
+  let ti = -1;
+  for (let a = 0; a < g.ALT && ti < 0; a++) { const t = g.alt[ci * g.ALT + a]; if (t >= 0 && t < B.T.list.length && B.T.list[t].shape === si) ti = t; }
+  if (ti < 0 && f >= 0 && B.T.list[f].shape === si) ti = f;
+  if (ti < 0) ti = B.T.list.findIndex(t => t.shape === si);
+  if (ti < 0) return;
+  B.turnShape = si; editSelected(B.T.list[ti].sig);
+}
+
+// ---- turns: every turn of the cell's block, drawn from the 3D view's direction with the model's surface in that cell
+// (red, see-through) over it, so the right one can be picked by eye
+const TP = { rt: null, scene: null, cam: null, buf: null, canvas: null, size: 128 };
+function turnPictures(tis, [x, y, z]) {
+  const v = B.view, r = v.renderer, g = B.grid, b = g.b, N = TP.size;
+  if (!TP.rt) {
+    TP.rt = new THREE.WebGLRenderTarget(N, N, { samples: 4 });
+    TP.scene = new THREE.Scene(); TP.scene.background = new THREE.Color('#101316');
+    TP.scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.5)); const sun = new THREE.DirectionalLight(0xffffff, 1.3); sun.position.set(5, 10, 7); TP.scene.add(sun);
+    TP.cam = new THREE.PerspectiveCamera(32, 1, 0.001, 1e5); TP.buf = new Uint8Array(N * N * 4);
+    TP.canvas = document.createElement('canvas'); TP.canvas.width = TP.canvas.height = N;
+    r.localClippingEnabled = true;
+  }
+  const c = new THREE.Vector3(g.ox + (x + .5) * b, g.oy + (y + .5) * b, g.oz + (z + .5) * b);
+  const dir = v.camera.position.clone().sub(v.controls.target); if (dir.lengthSq() < 1e-9) dir.set(-1, 1, 1);
+  TP.cam.position.copy(c).addScaledVector(dir.normalize(), b * 3.4); TP.cam.up.copy(v.camera.up); TP.cam.lookAt(c); TP.cam.updateMatrixWorld();
+  // the model's surface inside the cell (a little margin), drawn over the block
+  const e = b * 0.02, lo = [g.ox + x * b - e, g.oy + y * b - e, g.oz + z * b - e], hi = [lo[0] + b + 2 * e, lo[1] + b + 2 * e, lo[2] + b + 2 * e];
+  const planes = [0, 1, 2].flatMap(a => { const n = [0, 0, 0]; n[a] = 1; const m = [0, 0, 0]; m[a] = -1;
+    return [new THREE.Plane(new THREE.Vector3(...n), -lo[a]), new THREE.Plane(new THREE.Vector3(...m), hi[a])]; });
+  const model = new THREE.Group(); model.scale.setScalar(opts().scale);
+  modelMeshes.forEach(m => { if (!groupOn.has(m.g)) return;
+    const mm = new THREE.Mesh(m.color.geometry, new THREE.MeshLambertMaterial({ color: colorOfGroup(m.g), transparent: true, opacity: 0.55, side: THREE.DoubleSide,
+      depthTest: false, depthWrite: false, clippingPlanes: planes })); mm.renderOrder = 2; model.add(mm); });
+  const box = new THREE.LineSegments(boxEdges, new THREE.LineBasicMaterial({ color: 0x55606c })); box.position.copy(c); box.scale.setScalar(b);
+  TP.scene.add(model, box);
+  const out = [], prevTarget = r.getRenderTarget();
+  for (const ti of tis) {
+    const blk = new THREE.Mesh(tplGeometry(ti), new THREE.MeshLambertMaterial({ color: B.T.list[ti].color, flatShading: true, side: THREE.DoubleSide }));
+    const edg = new THREE.LineSegments(tplEdges[ti], new THREE.LineBasicMaterial({ color: 0x0d1013 }));
+    [blk, edg].forEach(o => { o.position.copy(c); o.scale.setScalar(b * 0.98); });
+    TP.scene.add(blk, edg);
+    r.setRenderTarget(TP.rt); r.clear(); r.render(TP.scene, TP.cam);
+    r.readRenderTargetPixels(TP.rt, 0, 0, N, N, TP.buf);
+    const img = new ImageData(N, N), row = N * 4;
+    for (let yy = 0; yy < N; yy++) img.data.set(TP.buf.subarray((N - 1 - yy) * row, (N - yy) * row), yy * row);   // GL rows run bottom-up
+    TP.canvas.getContext('2d').putImageData(img, 0, 0); out.push(TP.canvas.toDataURL('image/png'));
+    TP.scene.remove(blk, edg); blk.material.dispose(); edg.material.dispose();
+  }
+  r.setRenderTarget(prevTarget);
+  TP.scene.remove(model, box); model.children.forEach(m => m.material.dispose()); box.material.dispose();
+  return out;
+}
+let turnsTimer = 0;
+function showTurns() {
+  const box = el('turns');
+  if (!B.selected || !B.grid || !B.T) { box.innerHTML = ''; return; }
+  const f = effFit(...B.selected), si = B.turnShape ?? (f >= 0 ? B.T.list[f].shape : -1);
+  if (si < 0 || !LIB[si]) { box.innerHTML = '<div class="hint">Pick a block above to see its turns.</div>'; return; }
+  // drawn a moment later, once: arrow keys or a drag may select many cells in a row
+  clearTimeout(turnsTimer);
+  turnsTimer = setTimeout(() => {
+    if (!B.selected || !B.grid) return;
+    const tis = B.T.list.map((t, i) => t.shape === si ? i : -1).filter(i => i >= 0), cur = effFit(...B.selected);
+    let pics; try { pics = turnPictures(tis, B.selected); } catch (err) { box.innerHTML = `<div class="warn">Could not draw the turns: ${esc(err.message)}</div>`; return; }
+    box.innerHTML = '';
+    tis.forEach((ti, n) => {
+      const b = document.createElement('button'); b.className = 'turn' + (ti === cur ? ' on' : ''); b.title = `${LIB[si].key} turn ${n + 1} of ${tis.length}`;
+      b.innerHTML = `<img src="${pics[n]}">`; b.addEventListener('click', () => editSelected(B.T.list[ti].sig));
+      box.appendChild(b);
+    });
+  }, 60);
+}
+
+// ---- buttons (the original ones, now through setCell: mirrored and undoable)
+document.querySelectorAll('button[data-act]').forEach(btn => btn.addEventListener('click', () => cellAction(btn.dataset.act)));
+function cellAction(act) {
+  const T = B.T;
+  if (act === 'undo') { undoEdit(); return; }
+  if (act === 'resetAll') {
+    if (confirm('Clear all edits for these grid settings?')) { const u = Object.entries(B.overrides); B.overrides = {}; if (u.length) B.undo.push(u); saveOverrides(); showSel(); drawCells(); }
+    return; }
   if (!B.grid) { el('selInfo').textContent = 'Load a model first.'; return; }
-  if (!B.selected) { el('selInfo').textContent = 'Select a cell on the layer map first, then use these buttons.'; return; }
+  if (!B.selected) { el('selInfo').textContent = 'Select a cell on the layer map or in the 3D view first, then use these buttons.'; return; }
   if (!T.list.length) { el('selInfo').textContent = 'No library blocks are in use (Cube Library: Use shown).'; return; }
-  const [x, y, z] = B.selected, k = x + ',' + y + ',' + z, f = effFit(x, y, z);
+  const [x, y, z] = B.selected, f = effFit(x, y, z);
   const used = [...new Set(T.list.map(t => t.shape))], firstOf = si => T.list.findIndex(t => t.shape === si);
-  if (act === 'reset') delete B.overrides[k];
-  else if (act === 'none') B.overrides[k] = 'none';
+  if (act === 'reset') { B.turnShape = null; editSelected(null); }
+  else if (act === 'none') editSelected('none');
   else if (act === 'next' || act === 'prev') {
-    const cur = f >= 0 ? used.indexOf(T.list[f].shape) : (act === 'next' ? -1 : used.length);
-    B.overrides[k] = T.list[firstOf(used[(cur + (act === 'next' ? 1 : -1) + used.length) % used.length])].sig;
+    const cur = f >= 0 ? used.indexOf(T.list[f].shape) : (act === 'next' ? -1 : used.length), si = used[(cur + (act === 'next' ? 1 : -1) + used.length) % used.length];
+    B.turnShape = si; editSelected(T.list[firstOf(si)].sig);
   } else {
     const base = f >= 0 ? f : firstOf(used[0]);
-    B.overrides[k] = T.list[rotateTemplate(T, base, act === 'rx' ? 0 : act === 'ry' ? 1 : 2)].sig;
+    editSelected(T.list[rotateTemplate(T, base, act === 'rx' ? 0 : act === 'ry' ? 1 : 2)].sig);
   }
-  saveOverrides(); showSel(); drawCells();
-}));
+}
+
+// ---- keyboard (Grid Builder tab; not while typing in a field)
+const keyIn = { buf: '', timer: 0 };
+function cancelKey() { if (!keyIn.buf) return; keyIn.buf = ''; clearTimeout(keyIn.timer); el('keyBuf').textContent = ''; }
+function moveSel(dx, dy, dz) {
+  if (!B.grid) return; const g = B.grid, L = parseInt(el('layer').value) - 1;
+  const [x, y, z] = B.selected || [0, L, 0];
+  const n = [Math.min(g.nx - 1, Math.max(0, x + dx)), Math.min(g.ny - 1, Math.max(0, y + dy)), Math.min(g.nz - 1, Math.max(0, z + dz))];
+  if (n[1] !== L) { el('layer').value = n[1] + 1; el('layer').dispatchEvent(new Event('input')); }
+  B.turnShape = null; select(...n);
+}
+function stepCell(back) {         // the next cell with material (or a block) on the selected layer, in map reading order
+  if (!B.grid) return; const g = B.grid, L = B.selected ? B.selected[1] : parseInt(el('layer').value) - 1;
+  const order = []; for (let z = 0; z < g.nz; z++) for (let x = 0; x < g.nx; x++) order.push([x, z]);
+  const at = B.selected ? order.findIndex(([x, z]) => x === B.selected[0] && z === B.selected[2]) : -1;
+  for (let k = 1; k <= order.length; k++) {
+    const [x, z] = order[((at + (back ? -k : k)) % order.length + order.length) % order.length];
+    if (g.cell[g.idx(x, L, z)] || effFit(x, L, z) >= 0) { B.turnShape = null; select(x, L, z); return; }
+  }
+}
+function applyKey(exactOnly) {
+  const buf = keyIn.buf; keyIn.buf = ''; clearTimeout(keyIn.timer); el('keyBuf').textContent = '';
+  if (!buf || !B.T) return;
+  const si = [...new Set(B.T.list.map(t => t.shape))].find(i => LIB[i].key.toUpperCase() === buf);
+  if (si === undefined) { if (!exactOnly) el('keyBuf').textContent = `no block "${buf}"`; return; }
+  useShape(si);
+}
+function typeKey(ch) {
+  const keys = [...new Set(B.T.list.map(t => t.shape))].map(i => LIB[i].key.toUpperCase());
+  let buf = keyIn.buf + ch;
+  if (!keys.some(k => k.startsWith(buf))) buf = ch;                 // a new key starts
+  keyIn.buf = buf; el('keyBuf').textContent = buf; clearTimeout(keyIn.timer);
+  const longer = keys.some(k => k.startsWith(buf) && k !== buf);
+  if (keys.includes(buf) && !longer) applyKey();
+  else keyIn.timer = setTimeout(() => applyKey(), 900);               // e.g. "S" while "SC" and "SCT" exist
+}
+document.addEventListener('keydown', e => {
+  if (current !== 'bPage' || !B.grid || !B.T) return;
+  const t = e.target; if (t && (t.tagName === 'INPUT' && t.type !== 'checkbox' && t.type !== 'range' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA')) return;
+  const ctrl = e.ctrlKey || e.metaKey, key = e.key;
+  // a key being typed (e.g. "HS" while "HSI" exists) is used on the selected cell before any other key acts
+  const typing = !ctrl && !e.altKey && (/^[a-z]$/i.test(key) || (keyIn.buf && /^[0-9]$/.test(key)));
+  if (keyIn.buf && !typing && key !== 'Escape' && key !== 'Enter' && key !== 'Shift') applyKey();
+  let done = true;
+  if (ctrl && key.toLowerCase() === 'z') undoEdit();
+  else if (ctrl && key.toLowerCase() === 'c') el('pickUp').click();
+  else if (ctrl && key.toLowerCase() === 'v') { if (B.brush != null) editSelected(B.brush); }
+  else if (ctrl || e.altKey) done = false;
+  else if (key === 'ArrowLeft') moveSel(-1, 0, 0);
+  else if (key === 'ArrowRight') moveSel(1, 0, 0);
+  else if (key === 'ArrowUp') moveSel(0, 0, -1);
+  else if (key === 'ArrowDown') moveSel(0, 0, 1);
+  else if (key === 'PageUp') moveSel(0, 1, 0);
+  else if (key === 'PageDown') moveSel(0, -1, 0);
+  else if (key === 'Tab') stepCell(e.shiftKey);
+  else if (key === 'Escape') { keyIn.buf = ''; el('keyBuf').textContent = ''; B.paint = false; showBrush(); }
+  else if (key === 'Enter') applyKey();
+  else if (key === 'Delete') cellAction('none');
+  else if (key === 'Backspace') cellAction('reset');
+  else if (typing) typeKey(key.toUpperCase());
+  else if (key === '0') cellAction('none');
+  else if (key === '1') cellAction('ry');
+  else if (key === '2') cellAction('rx');
+  else if (key === '3') cellAction('rz');
+  else done = false;
+  if (done) e.preventDefault();
+});
 // a cell report: the settings and the top matches, so a wrong pick can be reproduced exactly (and kept as a test)
 // all edits for the current model + grid settings, with the settings and the library in use, as a file (format
 // se-grid-builder-edits v1; read by owner_cases.mjs). Template identity is its mask signature (shape + orientation).
