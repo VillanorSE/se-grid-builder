@@ -71,8 +71,8 @@
   #info { font-variant-numeric:tabular-nums; color:var(--muted); }
   #info b { color:var(--text); }
   #layerLabel { color:var(--accent); font-weight:600; }
-  #selInfo { color:var(--text); margin:6px 0; height:4.2em; overflow:hidden; }   /* fixed sizes: nothing below moves */
-  #altList { height:190px; overflow:hidden; }
+  #selInfo { color:var(--text); margin:4px 0; height:2.8em; overflow:hidden; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; }   /* two lines, fixed: nothing below moves; the full text is its tooltip */
+  #altList { max-height:190px; overflow:hidden; }   /* only as tall as the cell's best matches */
   #altList button.alt { display:flex; align-items:center; gap:6px; width:100%; margin:3px 0; text-align:left; }
   #altList button.alt.on { border-color:var(--accent); }
   #altList .k { display:inline-block; min-width:22px; padding:0 5px; border-radius:4px; color:#101316; font-weight:700; text-align:center; }
@@ -4138,13 +4138,15 @@ function initViewPicking() {
 }
 
 function showSel() {
-  if (!B.selected || !B.grid) { el('selInfo').textContent = 'No cell selected.'; el('altList').innerHTML = ''; showPalette(); showTurns(); return; }
+  if (!B.selected || !B.grid) { el('selInfo').textContent = 'No cell selected.'; el('selInfo').title = ''; el('altList').innerHTML = ''; showPalette(); showTurns(); return; }
   const [x, y, z] = B.selected, f = effFit(x, y, z), k = cellKey(x, y, z), g = B.grid;
-  let what = f === -3 ? 'no block' : f === -2 ? 'no block (nothing fits well)' : f === -1 ? 'empty' : '';
+  let what = f === -3 ? 'no block' : f === -2 ? 'no block (nothing fits well)' : f === -1 ? 'empty' : '', blocks = '';
   if (f >= 0) { const s = LIB[B.T.list[f].shape], bl = (s.blocks || []).map(b => b.name || b.subtype);
-    what = `${s.key}: ${s.name}${bl.length ? ' (' + bl.slice(0, 3).join(', ') + (bl.length > 3 ? '…' : '') + ')' : ''}`;
-    if (!(k in B.overrides)) what += `, fills ${Math.round(g.fill[g.idx(x, y, z)] * 100)}% of the block`; }
-  el('selInfo').textContent = `Column ${x + 1}, row ${z + 1}, layer ${y + 1}: ${what}${k in B.overrides ? ' (edited)' : ' (auto)'}`;
+    what = `${s.key}: ${s.name}`;
+    if (!(k in B.overrides)) what += `, fills ${Math.round(g.fill[g.idx(x, y, z)] * 100)}%`;
+    if (bl.length) blocks = '\nGame blocks: ' + bl.slice(0, 6).join(', ') + (bl.length > 6 ? ` and ${bl.length - 6} more` : ''); }
+  const info = `Column ${x + 1}, row ${z + 1}, layer ${y + 1}: ${what}${k in B.overrides ? ' (edited)' : ' (auto)'}`;
+  el('selInfo').textContent = info; el('selInfo').title = info + blocks;
   // the best-matching blocks for this cell, as one-click choices
   const box = el('altList'); box.innerHTML = '';
   const ci = g.idx(x, y, z), list = [];
