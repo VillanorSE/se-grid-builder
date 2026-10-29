@@ -291,7 +291,7 @@ export function buildTemplates(shapes) {
 // cell centre, a reach card's shift included: told apart from the mask, it shows which way a turn faces where the mask
 // can't (a 1x8 slope piece's 1/8 rise moves it 0.016 to 0.03 of a cell; panel bevels and plate details under 0.001).
 const centreCache = new WeakMap();
-function shapeCentre(sh) {
+export function shapeCentre(sh) {
   if (centreCache.has(sh)) return centreCache.get(sh);
   let A = 0; const c = [0, 0, 0];
   const tri = (p, q, r) => { const a = len(cross(sub(q, p), sub(r, p))) / 2; A += a; for (let k = 0; k < 3; k++) c[k] += a * (p[k] + q[k] + r[k]) / 3; };
@@ -305,7 +305,7 @@ function shapeCentre(sh) {
   centreCache.set(sh, out); return out;
 }
 const CENTRE_TOL = 0.004;
-const sameCentre = (a, b) => a.every((v, k) => Math.abs(v - b[k]) < CENTRE_TOL);
+export const sameCentre = (a, b) => a.every((v, k) => Math.abs(v - b[k]) < CENTRE_TOL);
 // the editor's 90-degree turns as matrices (the turns of turnVec): about X (length), Y (vertical), Z (width)
 const TURN_M = [[[1, 0, 0], [0, 0, -1], [0, 1, 0]], [[0, 0, 1], [0, 1, 0], [-1, 0, 0]], [[0, -1, 0], [1, 0, 0], [0, 0, 1]]];
 const mulM = (A, B) => [0, 1, 2].map(r => [0, 1, 2].map(c => A[r][0] * B[0][c] + A[r][1] * B[1][c] + A[r][2] * B[2][c]));

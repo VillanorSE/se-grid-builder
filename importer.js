@@ -1,7 +1,7 @@
 // Import blocks from a world's mod list into the Cube Library.
 // Folders are { read(path) -> ArrayBuffer | null, list(path) -> [{ name, kind: 'file'|'directory' }] } (async), so the
 // page (File System Access API or a folder upload) and Node (test_core.mjs) share this code.
-import { parseWorldMods, parseBlockDefs, parseResx, blockName, modelToCell, shapeMask, maskCount, shapeKeySig, makeKey, exactVolume } from './core.js';
+import { parseWorldMods, parseBlockDefs, parseResx, blockName, modelToCell, shapeMask, maskCount, shapeKeySig, makeKey, exactVolume, shapeCentre, sameCentre } from './core.js';
 import { readMwm } from './mwm.js';
 import { MOD_PENALTY } from './seed.js';
 import { blockOrientOnCard } from './blueprint.js';
@@ -125,8 +125,15 @@ export async function importWorldBlocks(library, o) {
         if (!maskCount(shape._m.mask)) { sum.noShape++; continue; }
         const sig = sigKey(shape._m.mask, reach && shown.offset);
         const vol = volOf(shape);
-        let s = (bySig.get(sig) || []).find(c => sameVolume(volOf(c), vol, shape._m.plate)), orient = ['Forward', 'Up'];
-        if (s && !reach) { if (!s._m) s._m = shapeMask(s); orient = blockOrientOnCard(s._m.mask, shape._m.mask); }
+        // the card it joins: same mask in some turn, same volume, and that turn puts the surface centres together too
+        let s = null, orient = ['Forward', 'Up'];
+        for (const c of bySig.get(sig) || []) {
+          if (!sameVolume(volOf(c), vol, shape._m.plate)) continue;
+          if (reach) { if (sameCentre(shapeCentre(c), shapeCentre(shape))) { s = c; break; } continue; }
+          if (!c._m) c._m = shapeMask(c);
+          const o = blockOrientOnCard(c._m.mask, shape._m.mask, shapeCentre(c), shapeCentre(shape));
+          if (o) { s = c; orient = o; break; }
+        }
         if (!s) {
           const name = blockName(d, texts);
           let id = 'mesh:' + src.name + ':' + d.subtype;

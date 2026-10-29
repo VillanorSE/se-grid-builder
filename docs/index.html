@@ -2834,9 +2834,11 @@ const BP_ROT_MAP = ROTS.map(R => BP_SAMPLE.map(p => bpIndex([0, 1, 2].map(c => R
 function turnMask(m, ri) { const o = newMask(), map = BP_ROT_MAP[ri]; for (let k = 0; k < NS; k++) if (getBit(m, map[k])) setBit(o, k); return o; }
 const bpSame = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 // How a block sits on a card whose shape matched it in some turn: the block's Forward/Up in the card's frame, or null.
-// cardMask, blockMask: core.js shapeMask(...).mask of the card and of the block's own model (block frame).
-function blockOrientOnCard(cardMask, blockMask) {
-  for (let r = 0; r < ROTS.length; r++) if (bpSame(turnMask(cardMask, r), blockMask)) {
+// cardMask, blockMask: core.js shapeMask(...).mask of the card and of the block's own model (block frame). With their
+// shapeCentre too, the turn must also put the card's surface centre on the block's (the mask can't tell KONTAKT's 1x8
+// slope piece 8 from SETB's Offset Slope Base, half flat and half sloped, of the same volume; their centres differ).
+function blockOrientOnCard(cardMask, blockMask, cardCentre, blockCentre) {
+  for (let r = 0; r < ROTS.length; r++) if (bpSame(turnMask(cardMask, r), blockMask) && (!cardCentre || sameCentre(rotP(ROTS[r], cardCentre), blockCentre))) {
     // block = ROTS[r] . card, so a block direction d is ROTS[r]^T d in the card's frame
     const Rt = [0, 1, 2].map(i => [0, 1, 2].map(j => ROTS[r][j][i]));
     return orientOf(Rt);
@@ -3301,8 +3303,15 @@ async function importWorldBlocks(library, o) {
         if (!maskCount(shape._m.mask)) { sum.noShape++; continue; }
         const sig = sigKey(shape._m.mask, reach && shown.offset);
         const vol = volOf(shape);
-        let s = (bySig.get(sig) || []).find(c => sameVolume(volOf(c), vol, shape._m.plate)), orient = ['Forward', 'Up'];
-        if (s && !reach) { if (!s._m) s._m = shapeMask(s); orient = blockOrientOnCard(s._m.mask, shape._m.mask); }
+        // the card it joins: same mask in some turn, same volume, and that turn puts the surface centres together too
+        let s = null, orient = ['Forward', 'Up'];
+        for (const c of bySig.get(sig) || []) {
+          if (!sameVolume(volOf(c), vol, shape._m.plate)) continue;
+          if (reach) { if (sameCentre(shapeCentre(c), shapeCentre(shape))) { s = c; break; } continue; }
+          if (!c._m) c._m = shapeMask(c);
+          const o = blockOrientOnCard(c._m.mask, shape._m.mask, shapeCentre(c), shapeCentre(shape));
+          if (o) { s = c; orient = o; break; }
+        }
         if (!s) {
           const name = blockName(d, texts);
           let id = 'mesh:' + src.name + ':' + d.subtype;

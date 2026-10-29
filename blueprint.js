@@ -12,7 +12,7 @@
 // - block frame: the game block's own axes (Forward = -Z, Up = +Y, Right = +X); its .mwm model is in this frame.
 // - SE grid frame: the blueprint's CubeGrid. The model's front becomes the grid's Forward (-Z), up stays +Y, so the
 //   tool's +z side becomes the grid's Right (+X): grid = (z, y, -x). ENGINE_CONSTRAINT: grid Forward is -Z.
-import { ROTS, SUB, NS, newMask, setBit, getBit } from './core.js';
+import { ROTS, SUB, NS, newMask, setBit, getBit, rotP, sameCentre } from './core.js';
 
 // ---------- directions
 export const BP_DIRS = { Forward: [0, 0, -1], Backward: [0, 0, 1], Left: [-1, 0, 0], Right: [1, 0, 0], Up: [0, 1, 0], Down: [0, -1, 0] };
@@ -80,9 +80,11 @@ const BP_ROT_MAP = ROTS.map(R => BP_SAMPLE.map(p => bpIndex([0, 1, 2].map(c => R
 export function turnMask(m, ri) { const o = newMask(), map = BP_ROT_MAP[ri]; for (let k = 0; k < NS; k++) if (getBit(m, map[k])) setBit(o, k); return o; }
 const bpSame = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 // How a block sits on a card whose shape matched it in some turn: the block's Forward/Up in the card's frame, or null.
-// cardMask, blockMask: core.js shapeMask(...).mask of the card and of the block's own model (block frame).
-export function blockOrientOnCard(cardMask, blockMask) {
-  for (let r = 0; r < ROTS.length; r++) if (bpSame(turnMask(cardMask, r), blockMask)) {
+// cardMask, blockMask: core.js shapeMask(...).mask of the card and of the block's own model (block frame). With their
+// shapeCentre too, the turn must also put the card's surface centre on the block's (the mask can't tell KONTAKT's 1x8
+// slope piece 8 from SETB's Offset Slope Base, half flat and half sloped, of the same volume; their centres differ).
+export function blockOrientOnCard(cardMask, blockMask, cardCentre, blockCentre) {
+  for (let r = 0; r < ROTS.length; r++) if (bpSame(turnMask(cardMask, r), blockMask) && (!cardCentre || sameCentre(rotP(ROTS[r], cardCentre), blockCentre))) {
     // block = ROTS[r] . card, so a block direction d is ROTS[r]^T d in the card's frame
     const Rt = [0, 1, 2].map(i => [0, 1, 2].map(j => ROTS[r][j][i]));
     return orientOf(Rt);

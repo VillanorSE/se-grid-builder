@@ -81,8 +81,10 @@ shown"). A mod block shaped like an existing card joins that card (a mod's thick
 mod blocks land on vanilla armour and panel cards). Filtering by a source shows both the mod's own cards and the cards
 holding its blocks, and a card names the other mods it holds ("Vanilla armour + 6 mods"). Blocks larger than one cell (most wings) are
 counted but not imported yet (see `design/multicell-blocks.md`).
-A block joins a card only when its exact volume matches too (within 0.006 of a cell and 3%; plates by outline, any
-thickness): the 6-sample shape mask can't tell a 1x8 slope's pieces from a 1x7's or from quarter blocks. A mod's grades
+A block joins a card only when its exact volume matches too (within 0.006 of a cell and 3%; plates within 0.05) and,
+in the turn that matches, its surface is centred where the card's is (within 0.004 of a cell): the 6-sample shape mask
+can't tell a 1x8 slope's pieces from a 1x7's or from quarter blocks, nor KONTAKT's 1x8 piece 8 from SETB's Offset
+Slope Base (half flat, half sloped, the same volume). A mod's grades
 are one model, so they still share a card. Cards the mask can't tell apart each keep their own turns in the builder.
 A card's turns are told apart by where its surface is centred as well as by its mask, so a piece the mask sees as
 symmetric (a 1x8 slope's 1/8 rise, canopies, slope corners) still turns every way it can face.

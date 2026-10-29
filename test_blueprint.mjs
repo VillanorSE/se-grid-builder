@@ -169,6 +169,16 @@ const fourUp = [1, 2, 3, 4].reduce(a => C.rotateTemplate(rsT, a, 1), 0);
 const rm = C.mirrorTemplate(rsT, 0);
 check(rsT.list.length === 24 && up !== 0 && fourUp === 0 && rm >= 0 && Math.abs(rsT.list[rm].cen[2] + rsT.list[0].cen[2]) < 1e-9 && Math.abs(rsT.list[rm].cen[0] - rsT.list[0].cen[0]) < 1e-9,
   `a block rising 1/8 of a cell keeps its 24 turns, turns vertically (four turns back to the start) and mirrors (${rsT.list.length} turns)`);
+// KONTAKT's 1x8 piece 8 (one slope, 0.875 to 1) and SETB's Offset Slope Base (flat half, then 0.75 to 1): same mask,
+// same volume, surfaces centred apart, so a block of one doesn't sit on the other's card
+const pv = [[0, 0, 0], [1, 0, 0], [0, 0, 1], [1, 0, 1], [0, .875, 0], [1, .875, 0], [0, 1, 1], [1, 1, 1]];
+const p8 = { solids: [{ type: 'planes', planes: C.hullPlanes(pv), verts: pv }] };
+const ov = [[0, 0, 0], [1, 0, 0], [0, 0, 1], [1, 0, 1], [0, .75, 0], [1, .75, 0], [0, 1, .5], [1, 1, .5], [0, 1, 1], [1, 1, 1]];
+const osb = { solids: [{ type: 'planes', planes: C.hullPlanes(ov), verts: ov }] };
+const m8 = C.shapeMask(p8).mask, mo = C.shapeMask(osb).mask;
+check(Math.abs(C.exactVolume(p8) - C.exactVolume(osb)) < 1e-9 && BP.blockOrientOnCard(m8, mo) && !BP.blockOrientOnCard(m8, mo, C.shapeCentre(p8), C.shapeCentre(osb)) &&
+  BP.blockOrientOnCard(m8, m8, C.shapeCentre(p8), C.shapeCentre(p8)),
+  'a 1x8 slope piece 8 and an offset slope base (same mask, same volume) are told apart by their surface centres');
 
 // 6. bp.sbc well-formed, and its structure
 function parseXml(s) {               // small strict checker: balanced tags, quoted attributes, known entities only
