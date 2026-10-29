@@ -74,10 +74,7 @@ Chrome and Edge open folders directly and remember them; after a reload they ask
 Import (their prompt's "Allow on every visit" ends that). **Firefox** can't open or keep folders, nor tell the page their
 paths, so each folder button has a path box under it (filled with the usual place, kept in the browser once edited):
 the button copies that path, to paste into the folder window (Ctrl+V, Enter). It lists every file first, which is slow
-for the Workshop folder. Or run the same import from a command line instead, then use **Import JSON** in the Cube
-Library:
-
-    node import_world.mjs "%APPDATA%\SpaceEngineers\Saves\<id>\<world>"
+for the Workshop folder.
 
 Imported mod blocks start switched off: turn on the ones you build with (Cube Library: filter by source, "Use
 shown"). A mod block shaped like an existing card joins that card (a mod's thickness variants share one card, and many
@@ -163,7 +160,6 @@ their licence notice is in `blueprint.js`.
 | `seed.js`, `armor_data.js`, `panel_data.js` | The starting library |
 | `build.py` | Bundles everything into `docs/index.html` (the published page) |
 | `test_core.mjs`, `bench_fit.mjs` | Node tests and the fit benchmark (models built from known blocks) |
-| `import_world.mjs` | The world import from a command line |
 | `tools/extract_panels.mjs` | Regenerates `panel_data.js` from an installed game |
 
 After editing: `python build.py`, then `node test_core.mjs`. Optional real-model checks:
