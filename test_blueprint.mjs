@@ -127,9 +127,11 @@ const { shownCell } = await import(pathToFileURL(path.join(here, 'importer.js'))
 const box = (x0, y0, z0, x1, y1, z1) => { const t = [], q = [[x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0], [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]];
   for (const [a, b, c, d] of [[0, 3, 2, 1], [4, 5, 6, 7], [0, 1, 5, 4], [3, 7, 6, 2], [0, 4, 7, 3], [1, 2, 6, 5]]) t.push(...q[a], ...q[b], ...q[c], ...q[a], ...q[c], ...q[d]);
   return new Float32Array(t); };
-const sc1 = shownCell(box(0, 0, -1, 1, 0.04, 0)), sc2 = shownCell(box(0, -0.04, 0, 1, 0, 1)), sc3 = shownCell(box(-1, 0, 0, 2, 1, 1));
-check(sc1.offset.join() === '0,0,-1' && Math.min(...sc1.tris.filter((v, i) => i % 3 === 2)) === 0 && sc2.offset.join() === '0,0,0' && sc3.spans && sc3.offset.join() === '0,0,0',
-  'shownCell: a plate in the cell in front moves there; one just past its own wall stays; one across three cells stays, cut to its own');
+const sc1 = shownCell(box(0, 0, -1, 1, 0.04, 0)), sc2 = shownCell(box(0, -0.04, -1, 1, 0, 0)), sc3 = shownCell(box(-1, 0, 0, 2, 1, 1));
+const sc4 = shownCell(box(0, -0.03, 0, 1, 0.5, 1));
+check(sc1.offset.join() === '0,0,-1' && Math.min(...sc1.tris.filter((v, i) => i % 3 === 2)) === 0 && sc2.offset.join() === '0,-1,-1' &&
+  sc3.spans && sc3.offset.join() === '0,0,0' && sc4.offset.join() === '0,0,0',
+  'shownCell: a plate on the floor of the cell in front moves there, one just under that floor to the cell below it; one poking a little past its cell stays; one across three cells stays, cut to its own');
 check(Math.abs(C.exactVolume(lib.find(s => s.id === 'vanilla:Slope')) - 0.5) < 1e-9 && Math.abs(C.exactVolume({ solids: [{ type: 'tris', tris: box(0, 0, 0, 1, 0.25, 1) }] }) - 0.25) < 1e-6,
   'exact volume of a plane solid (vanilla slope 0.5) and a triangle solid (quarter block 0.25)');
 // a reach card is the block's own cell, its model drawn shift cells over; the block exports in the cell it is put in

@@ -10,14 +10,17 @@ export const DEFAULT_FILTER = 'armou?r|panel|plate|slope|corner|hull|wing';
 const dec = new TextDecoder();
 // Some blocks are drawn outside their own cell (KONTAKT's mantlet plates sit half a cell or more off, through ModelOffset,
 // so the block goes in a spare cell and its plate shows over the next block). The cell a model shows in: per axis, its own cell when the
-// model stays within it (give or take REACH_TOL of a cell), else the cell holding the middle of its extent. Returns
+// model stays within it (give or take REACH_TOL of a cell) without lying wholly past one of its walls, else the cell
+// holding the middle of its extent (KONTAKT's Mantlet Plate lies on the floor of the cell in front, 0 to 0.04 up;
+// Mantlet Plate (Below) just under that floor, -0.04 to 0: the top of the cell below that). Returns
 // { offset: [x, y, z] (cells, block frame), tris moved into that cell, spans }. A model across several cells (canopies,
 // curved plates bulging past their cell) stays in its own cell, cut to it as before (spans: true).
 export const REACH_TOL = 0.05;
 export function shownCell(tris) {
   const mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
   for (let i = 0; i < tris.length; i += 3) for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], tris[i + k]); mx[k] = Math.max(mx[k], tris[i + k]); }
-  const offset = [0, 1, 2].map(k => mn[k] >= -REACH_TOL && mx[k] <= 1 + REACH_TOL ? 0 : Math.floor((mn[k] + mx[k]) / 2));
+  const past = k => (mx[k] <= 1e-3 && mn[k] < -1e-3) || (mn[k] >= 1 - 1e-3 && mx[k] > 1 + 1e-3);
+  const offset = [0, 1, 2].map(k => mn[k] >= -REACH_TOL && mx[k] <= 1 + REACH_TOL && !past(k) ? 0 : Math.floor((mn[k] + mx[k]) / 2));
   if (offset.some((o, k) => mn[k] - o < -REACH_TOL || mx[k] - o > 1 + REACH_TOL)) return { offset: [0, 0, 0], tris, spans: true };
   if (offset.every(o => o === 0)) return { offset, tris };
   const t = new Float32Array(tris.length);
