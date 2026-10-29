@@ -226,11 +226,10 @@
     <label>Move grid forward (blocks) <input type="number" id="offX" step="0.1" value="0"></label>
     <label>Move grid up (blocks) <input type="number" id="offY" step="0.1" value="0"></label>
     <label>Cells <select id="fill"><option value="solid">all filled cells</option><option value="shell">outer cells only</option></select></label>
-    <label>Min block fill <input type="number" id="minFill" min="0" max="1" step="0.05" value="0.3"></label>
     <label>Simplify <input type="number" id="simplify" min="0" max="6" step="0.5" value="4"> <span class="hint">0 = follow the model exactly; higher = cubes, halves and slopes win more often</span></label>
     <label>Buildable surfaces <select id="buildable"><option value="auto">auto (on for outer cells at large grid)</option><option value="on">on</option><option value="off">off</option></select>
       <span class="hint">round the skin outward, never inward: full blocks on decks and other tops, hull sides kept full width, blocks that hold all of the model where it narrows</span></label>
-    <div class="hint">A block is considered for a cell only when the model fills at least this share of <i>the block's own</i>
+    <div class="hint">A block is considered for a cell only when the model fills at least a fifth of <i>the block's own</i>
     volume (a plate: of the model's thin skin). Among those, the winner is the block whose faces best match the model's
     surface in the cell: the surface should lie on the block's faces, and every face the block shows should have model
     surface on it. Simpler blocks take near-ties. Thin bits of a neighbour poking through a grid line get no block.</div>
@@ -242,7 +241,7 @@
     <label><input type="range" id="layer" min="1" max="1" value="1"> <span id="layerLabel"></span></label>
     <div class="hint">The map is the selected layer seen from above: front on the right, columns numbered from the rear, rows from
     the -Z side (row 1 at the top). Letters are block keys (click a cell for the full name); a dot is a cell the model touches
-    where no block passes the fill rule.</div>
+    where no block fits.</div>
 
     <h2>Edit a cell</h2>
     <div class="hint">Click a cell on the layer map, or a block in the 3D view, to select it. Edits are kept in this browser for
@@ -888,7 +887,7 @@ function frameModel() {
 }
 function opts() {
   return { scale: (parseFloat(el('scale').value) || 100) / 100, block: parseFloat(el('block').value), offX: parseFloat(el('offX').value) || 0,
-    offY: parseFloat(el('offY').value) || 0, centre: el('centre').value, fill: el('fill').value, minFill: parseFloat(el('minFill').value) || 0,
+    offY: parseFloat(el('offY').value) || 0, centre: el('centre').value, fill: el('fill').value,
     penaltyScale: isNaN(parseFloat(el('simplify').value)) ? 4 : parseFloat(el('simplify').value),
     buildable: el('buildable').value === 'auto' ? undefined : el('buildable').value === 'on',
     groupsOn: groupOn, groupNames, groupPriority: GROUP_PRIORITY };
@@ -905,7 +904,7 @@ function effFit(x, y, z) {             // >= 0 template, -2 no block passes, -1 
 // ---------------------------------------------------------------- fitting, off the main thread
 // The fit runs in Web Workers, so the page stays usable while it works (a big library takes seconds). A fit with no
 // stored surface scores for its grid is split over several workers by cell, then one worker does the full fit with all
-// the scores; a refit of the same grid (Min block fill, Simplify, Fill) reuses the stored scores. A new fit request
+// the scores; a refit of the same grid (Simplify, Fill) reuses the stored scores. A new fit request
 // stops the running one (its workers are restarted; scores they already sent are kept). Without Workers, or if they
 // fail, the fit runs on the main thread. The result is the same either way.
 const Fit = (() => {
@@ -1452,7 +1451,7 @@ el('editsExport').addEventListener('click', () => {
   });
   const data = { format: 'se-grid-builder-edits', version: 1, exported: new Date().toISOString(),
     model: { file: B.modelName, length: +el('bLength').value, front: el('bFront').value, up: el('bUp').value, groups: el('bGroups').value, groupsOn: [...groupOn] },
-    grid: { scale: +el('scale').value / 100, block: +el('block').value, centre: el('centre').value, offX: +el('offX').value, offY: +el('offY').value, fill: el('fill').value, minFill: +el('minFill').value, penaltyScale: +el('simplify').value, buildable: opts().buildable },
+    grid: { scale: +el('scale').value / 100, block: +el('block').value, centre: el('centre').value, offX: +el('offX').value, offY: +el('offY').value, fill: el('fill').value, penaltyScale: +el('simplify').value, buildable: opts().buildable },
     library: LIB.filter(s => s.use).map(s => s.id), cells };
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }));
@@ -1467,7 +1466,7 @@ el('cellReport').addEventListener('click', async () => {
   const used = LIB.filter(s => s.use), mods = used.filter(s => s.id.startsWith('mesh:'));
   const text = [`SE Grid Builder cell report`,
     `model: ${B.modelName}; length ${el('bLength').value} m; front ${el('bFront').value}; up ${el('bUp').value}; groups "${el('bGroups').value}"; on: ${[...groupOn].join(', ')}`,
-    `grid: scale ${el('scale').value}%; block ${el('block').value} m; centre ${el('centre').value}; forward ${el('offX').value}; up ${el('offY').value}; cells ${el('fill').value}; min fill ${el('minFill').value}; simplify ${el('simplify').value}; buildable surfaces ${el('buildable').value}`,
+    `grid: scale ${el('scale').value}%; block ${el('block').value} m; centre ${el('centre').value}; forward ${el('offX').value}; up ${el('offY').value}; cells ${el('fill').value}; simplify ${el('simplify').value}; buildable surfaces ${el('buildable').value}`,
     `library: ${used.length} blocks in use (${mods.length} mod blocks${mods.length ? ': ' + mods.slice(0, 12).map(s => s.key).join(' ') + (mods.length > 12 ? ' ...' : '') : ''})`,
     `cell: column ${x + 1}, layer ${y + 1}, row ${z + 1}; shown: ${f >= 0 ? name(f) : f === -3 ? 'no block (edited)' : 'no block'}${(x + ',' + y + ',' + z) in B.overrides ? ' (edited)' : ''}`,
     `best matches: ${alts.join(', ') || 'none'}`,
@@ -1523,10 +1522,10 @@ function applyDrawOrder() {
   v.scene.remove(v.cellGroup, v.modelGroup); v.overlay.remove(v.cellGroup, v.modelGroup);
   if (blocksOnTop) { v.scene.add(v.modelGroup); v.overlay.add(v.cellGroup); } else { v.scene.add(v.cellGroup); v.overlay.add(v.modelGroup); }
 }
-const SETTINGS = ['bLength', 'bFront', 'bUp', 'bGroups', 'scale', 'block', 'centre', 'offX', 'offY', 'fill', 'minFill', 'simplify', 'buildable', 'onTop'];
+const SETTINGS = ['bLength', 'bFront', 'bUp', 'bGroups', 'scale', 'block', 'centre', 'offX', 'offY', 'fill', 'simplify', 'buildable', 'onTop'];
 function saveBuilderSettings() { const s = {}; SETTINGS.forEach(id => s[id] = el(id).value); DB.set('builder', s).catch(() => {}); }
 ['bLength', 'bFront', 'bUp', 'bGroups'].forEach(id => el(id).addEventListener('change', () => prepare(true)));
-['scale', 'block', 'centre', 'offX', 'offY', 'fill', 'minFill', 'simplify', 'buildable'].forEach(id => el(id).addEventListener('change', () => { saveBuilderSettings(); rebuild(); }));
+['scale', 'block', 'centre', 'offX', 'offY', 'fill', 'simplify', 'buildable'].forEach(id => el(id).addEventListener('change', () => { saveBuilderSettings(); rebuild(); }));
 ['showCells', 'showGrid', 'layerMode', 'cellMode'].forEach(id => el(id).addEventListener('change', drawCells));
 el('cellOpacity').addEventListener('input', drawCells);
 el('layer').addEventListener('input', () => { if (B.selected) B.selected[1] = parseInt(el('layer').value) - 1; updateInfo(); showSel(); drawCells(); });

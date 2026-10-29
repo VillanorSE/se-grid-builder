@@ -596,7 +596,7 @@ function partSolid(tris, org, fb, fn, out, gi, prio) {
 }
 
 // parts: [{group, tris}] in metres (prepared). o: { scale, block, offX, offY, centre: 'col'|'line', fill: 'solid'|'shell',
-// minFill, groupsOn: Set, groupNames: [], groupPriority: [], shapes, T (from buildTemplates) }
+// minFill?, groupsOn: Set, groupNames: [], groupPriority: [], shapes, T (from buildTemplates) }
 // Fit rule (owner, 2026-10-01): a block may go in a cell when the model fills at least minFill of that block's own
 // volume (solid blocks against the model's inside samples; plates, in thin-skin cells, against its surface samples).
 // Among the allowed blocks, the best overlap (IoU with the cell's model samples) minus the shape's penalty wins.
@@ -618,7 +618,7 @@ function gridFrame(mn, mx, o) {
 const frameKey = (o, ox, oy, oz, nx, ny, nz) => [o.surfTag || '', o.scale, o.block, ox, oy, oz, nx, ny, nz, [...o.groupsOn].sort().join(','),
   SURF_D, SURF_STEP, NORMAL_POW, o.wallWeight ?? 2].join('|');
 // a cache of surface scores for computeGrid (o.surfCache): fits of the same model, library and grid placement reuse
-// them, so changing Min block fill or Simplify refits in a fraction of the time. Results are identical either way.
+// them, so changing Simplify or Fill refits in a fraction of the time. Results are identical either way.
 export const newSurfCache = () => ({ key: null, parts: null, T: null, map: new Map(), fresh: [], complete: false, prep: null, prepKey: null });
 // the cache key computeGrid will use for these parts and options (lets a caller pick stored scores before fitting)
 export function surfCacheKey(parts, o) {
@@ -645,7 +645,11 @@ export function addSurfScores(cache, d) {
   for (let i = 0; i < d.keys.length; i++) cache.map.set(d.keys[i], [d.m2b[i], d.b2m[i]]);
 }
 
+// minFill: no longer a page setting (2026-10-28). Against the owner's edit sets, 0 to 0.2 fit best (Panhard 66/156,
+// Littorio 80/116) and higher only lost agreement (0.5: 60, 70), since skin, buildable and surface rules now decide
+export const MIN_FILL = 0.2;
 export function computeGrid(parts, o) {
+  o = { ...o, minFill: o.minFill ?? MIN_FILL };
   const s = o.scale, b = o.block, use = parts.filter(p => o.groupsOn.has(p.group));
   if (!use.length) return null;
   const scaled = use.map(p => ({ group: p.group, tris: Float32Array.from(p.tris, x => x * s) }));
