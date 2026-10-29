@@ -68,6 +68,23 @@ if (fs.existsSync(obj)) {
   }
 }
 
+// armour skin (owner, R35 hull): a box 4 x 1.9 x 3 cells, one free cell in front and one under it. The floor's panels go
+// under the hull, the front's in front of it, the top's on the top face inside (the top is 0.9 up its cell), the inside
+// stays empty
+{
+  const box = (x0, y0, z0, x1, y1, z1) => { const v = [[x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0], [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]];
+    return [[0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7], [0, 1, 5], [0, 5, 4], [3, 7, 6], [3, 6, 2], [0, 4, 7], [0, 7, 3], [1, 2, 6], [1, 6, 5]].flatMap(f => f.flatMap(i => v[i])); };
+  const parts = [{ name: 'hull', group: 'body', tris: Float32Array.from(box(0, 0, -0.75, 2, 0.95, 0.75)) }];
+  const g = C.computeGrid(parts, { scale: 1, block: 0.5, offX: -1, offY: -1, centre: 'col', fill: 'skin', penaltyScale: 3,
+    groupsOn: new Set(['body']), groupNames: ['body'], groupPriority: ['body'], shapes: lib, T });
+  const panelOn = (x, y, z, w) => { const f = g.fit[g.idx(x, y, z)], t = f >= 0 ? T.list[f] : null; return !!t && t.plate && t.walls.every((v, k) => v === (k === w)); };
+  check(g.nx === 5 && g.ny === 3 && g.nz === 3, `armour skin: grid ${g.nx} x ${g.ny} x ${g.nz} (want 5 x 3 x 3)`);
+  check([2, 3].every(x => panelOn(x, 0, 1, 3)), 'armour skin: floor panels under the hull');
+  check([2, 3].every(x => g.fit[g.idx(x, 1, 1)] < 0), 'armour skin: inside left empty');
+  check([2, 3].every(x => panelOn(x, 2, 1, 3)), 'armour skin: top panels on the top face of the top cells');
+  check(panelOn(0, 1, 1, 1), 'armour skin: front panel in the cell in front');
+}
+
 // 4. STL round trip (binary)
 {
   const tri = [0,0,0, 1,0,0, 0,1,0], buf = new ArrayBuffer(84 + 50); const dv = new DataView(buf); dv.setUint32(80, 1, true);

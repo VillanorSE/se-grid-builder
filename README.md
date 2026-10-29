@@ -17,6 +17,11 @@ Made for the *WW2: War in the Mediterranean* scenario mods, usable for any build
     (Simplify setting);
   - hidden part groups (e.g. wheels you'll build from suspension) keep their space clear; the part checkboxes are under
     Part groups in Model (wheels and antennas off by default; a hint says when no part matches the wheels words);
+  - **Cells**: all filled cells, outer cells only, or **armour skin (hollow hull)** for vehicles: the inside stays
+    empty for functional blocks, flat sides get armour panels (outside the model where it fills its cells right up to
+    the side, so the floor's panels go in the layer under the hull; on the face inside the cell on top and where the
+    side lies within a cell), sloped sides keep the shaped blocks the fit picks, and slivers of the model past its
+    solid cells get nothing;
   - a layer map shows the result layer by layer, and clicking a cell lists its best matches to pick from.
 - **Cell editor** (Grid Builder): select a cell on the layer map, or click a block in the 3D view (a click on empty
   space picks the shown layer's cell under the pointer).

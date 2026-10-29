@@ -230,7 +230,8 @@
     <label>Width centre on <select id="centre"><option value="col">a block column (odd width)</option><option value="line">a grid line (even width)</option></select></label>
     <label>Move grid forward (blocks) <input type="number" id="offX" step="0.1" value="0"></label>
     <label>Move grid up (blocks) <input type="number" id="offY" step="0.1" value="0"></label>
-    <label>Cells <select id="fill"><option value="solid">all filled cells</option><option value="shell">outer cells only</option></select></label>
+    <label>Cells <select id="fill"><option value="solid">all filled cells</option><option value="shell">outer cells only</option><option value="skin">armour skin (hollow hull)</option></select>
+      <span class="hint">armour skin: the inside stays empty for functional blocks; flat sides get panels (the floor's under the hull), sloped ones shaped blocks</span></label>
     <label>Simplify <input type="number" id="simplify" min="0" max="6" step="0.5" value="4"> <span class="hint">0 = follow the model exactly; higher = cubes, halves and slopes win more often</span></label>
     <label>Buildable surfaces <select id="buildable"><option value="auto">auto (on for outer cells at large grid)</option><option value="on">on</option><option value="off">off</option></select>
       <span class="hint">round the skin outward, never inward: full blocks on decks and other tops, hull sides kept full width, blocks that hold all of the model where it narrows</span></label>
@@ -1213,7 +1214,7 @@ function computeGrid(parts, o) {
     const ci = idx(x, y, z);
     let best = 1; for (let g = 1; g < cnt.length; g++) if (cnt[g] > cnt[best]) best = g;
     const inside = ni === NS && !ns;
-    if (o.fill === 'shell' && inside) continue;
+    if ((o.fill === 'shell' || o.fill === 'skin') && inside) continue;
     // a cell with hardly any model in it (a speck past the hull) gets no block
     if (matOf[ci] < (o.minMaterial ?? 0.08) * NS) { fit[ci] = -2; if (o.skipped) o.skipped(x, y, z, 'speck', ni, ns); continue; }
     mh.fill(0); let nh = 0, hidTop = -1;
@@ -1350,6 +1351,66 @@ function computeGrid(parts, o) {
       }
       if (best) fit[ci] = best.ti;
     });
+  }
+  if (o.fill === 'skin') armourSkin();
+  // armour skin (owner, 2026-10-29, R35 hull): the model's inside is kept for functional blocks and the armour wraps it.
+  // Solid cells (a quarter or more inside) facing no outside air are emptied. One whose every outside face is flat skin
+  // (the model's material over most of that wall), or that was fitted as a cube, is emptied too and each flat face gets a
+  // panel: in the open cell beyond it where the model fills the cell right up to that wall (so the floor's panels go in
+  // the layer under the hull), else, and on top faces, on the face inside the cell (a deck stays at the model's height).
+  // Solid cells with sloped skin keep the shaped block the fit chose; open cells (slivers and edges of the model) get
+  // only the panels asked of them.
+  function armourSkin() {
+    const solid = c => niOf[c] >= NS / 4, step = [[-1, 0, 0], [1, 0, 0], [0, -1, 0], [0, 1, 0], [0, 0, -1], [0, 0, 1]];
+    const nb = (x, y, z, w) => { const X = x + step[w][0], Y = y + step[w][1], Z = z + step[w][2];
+      return X < 0 || Y < 0 || Z < 0 || X >= nx || Y >= ny || Z >= nz ? -1 : idx(X, Y, Z); };
+    // outside air: open cells reached from the grid's edge through open cells (inner cavities are not outside)
+    const air = new Uint8Array(N), queue = [];
+    for (let y = 0; y < ny; y++) for (let z = 0; z < nz; z++) for (let x = 0; x < nx; x++)
+      if ((x === 0 || y === 0 || z === 0 || x === nx - 1 || y === ny - 1 || z === nz - 1) && !solid(idx(x, y, z))) { air[idx(x, y, z)] = 1; queue.push(x, y, z); }
+    for (let q = 0; q < queue.length; q += 3) for (let w = 0; w < 6; w++) {
+      const n = nb(queue[q], queue[q + 1], queue[q + 2], w); if (n < 0 || air[n] || solid(n)) continue;
+      air[n] = 1; queue.push(queue[q] + step[w][0], queue[q + 1] + step[w][1], queue[q + 2] + step[w][2]);
+    }
+    // share of a cell's wall w with model material within depth sample layers of it (inside samples, or surface ones too)
+    const cover = (x, y, z, w, depth, surf) => { const ax = w >> 1; let hit = 0;
+      for (let u = 0; u < SUB; u++) for (let v = 0; v < SUB; v++) { let on = false;
+        for (let d = 0; d < depth && !on; d++) { const q = [x * SUB, y * SUB, z * SUB]; q[ax] += w & 1 ? SUB - 1 - d : d;
+          q[(ax + 1) % 3] += u; q[(ax + 2) % 3] += v; const f = fidx(q[0], q[1], q[2]); if (fine.g[f] || (surf && fine.s[f])) on = true; }
+        if (on) hit++; }
+      return hit / (SUB * SUB); };
+    const flat = (x, y, z, w) => cover(x, y, z, w, 2, true) >= 0.6, filled = (x, y, z, w) => cover(x, y, z, w, 1, false) === 1;
+    const base = Int32Array.from(fit), cleared = new Set(), want = new Map(), asked = new Map();   // asked: open cell -> [[solid cell, face]]
+    const add = (c, w) => { if (!want.has(c)) want.set(c, new Set()); want.get(c).add(w); };
+    for (let c = 0; c < N; c++) if (!solid(c)) fit[c] = -1;
+    for (let y = 0; y < ny; y++) for (let z = 0; z < nz; z++) for (let x = 0; x < nx; x++) {
+      const ci = idx(x, y, z); if (!solid(ci)) continue;
+      const out = [0, 1, 2, 3, 4, 5].filter(w => { const n = nb(x, y, z, w); return n < 0 || air[n]; });
+      if (!out.length) { fit[ci] = -1; continue; }
+      if (!out.every(w => flat(x, y, z, w)) && base[ci] !== cubeTi) continue;
+      fit[ci] = -1; cleared.add(ci);
+      for (const w of out) {
+        if (!flat(x, y, z, w)) continue;
+        const n = nb(x, y, z, w);
+        if (n >= 0 && w !== 3 && filled(x, y, z, w)) { if (!asked.has(n)) asked.set(n, []); asked.get(n).push([ci, w]); }
+        else add(ci, w);
+      }
+    }
+    // an open cell asked by two solid cells takes the floor's or ceiling's panel (a track guard under an overhang) and
+    // the other cell puts its panel on its own face; two faces of one solid cell there make an edge plate
+    for (const [n, asks] of asked) {
+      const keep = (asks.find(([, w]) => w >> 1 === 1) || asks[0])[0];
+      for (const [ci, w] of asks) if (ci === keep) add(n, w ^ 1); else add(ci, w);
+    }
+    // each cell takes the plate covering just the faces asked of it (a panel; an L or U plate on an edge), the simplest
+    // first; with no such plate, an emptied cell keeps its block
+    for (const [c, ws] of want) {
+      let best = -1;
+      for (let ti = 0; ti < T.length; ti++) { const tp = T[ti];
+        if (!tp.plate || tp.hand || !tp.walls.every((v, w) => v === ws.has(w))) continue;
+        if (best < 0 || pen[ti] < pen[best] || (pen[ti] === pen[best] && tp.n < T[best].n)) best = ti; }
+      if (best >= 0) fit[c] = best; else if (cleared.has(c)) fit[c] = base[c];
+    }
   }
   return { nx, ny, nz, b, ox, oy, oz, cell, fit, fill, idx, alt, altScore, ALT, hiddenShare: seen ? hidden / seen : 0 };
 
@@ -2405,7 +2466,7 @@ function computeGrid(parts, o) {
     const ci = idx(x, y, z);
     let best = 1; for (let g = 1; g < cnt.length; g++) if (cnt[g] > cnt[best]) best = g;
     const inside = ni === NS && !ns;
-    if (o.fill === 'shell' && inside) continue;
+    if ((o.fill === 'shell' || o.fill === 'skin') && inside) continue;
     // a cell with hardly any model in it (a speck past the hull) gets no block
     if (matOf[ci] < (o.minMaterial ?? 0.08) * NS) { fit[ci] = -2; if (o.skipped) o.skipped(x, y, z, 'speck', ni, ns); continue; }
     mh.fill(0); let nh = 0, hidTop = -1;
@@ -2542,6 +2603,66 @@ function computeGrid(parts, o) {
       }
       if (best) fit[ci] = best.ti;
     });
+  }
+  if (o.fill === 'skin') armourSkin();
+  // armour skin (owner, 2026-10-29, R35 hull): the model's inside is kept for functional blocks and the armour wraps it.
+  // Solid cells (a quarter or more inside) facing no outside air are emptied. One whose every outside face is flat skin
+  // (the model's material over most of that wall), or that was fitted as a cube, is emptied too and each flat face gets a
+  // panel: in the open cell beyond it where the model fills the cell right up to that wall (so the floor's panels go in
+  // the layer under the hull), else, and on top faces, on the face inside the cell (a deck stays at the model's height).
+  // Solid cells with sloped skin keep the shaped block the fit chose; open cells (slivers and edges of the model) get
+  // only the panels asked of them.
+  function armourSkin() {
+    const solid = c => niOf[c] >= NS / 4, step = [[-1, 0, 0], [1, 0, 0], [0, -1, 0], [0, 1, 0], [0, 0, -1], [0, 0, 1]];
+    const nb = (x, y, z, w) => { const X = x + step[w][0], Y = y + step[w][1], Z = z + step[w][2];
+      return X < 0 || Y < 0 || Z < 0 || X >= nx || Y >= ny || Z >= nz ? -1 : idx(X, Y, Z); };
+    // outside air: open cells reached from the grid's edge through open cells (inner cavities are not outside)
+    const air = new Uint8Array(N), queue = [];
+    for (let y = 0; y < ny; y++) for (let z = 0; z < nz; z++) for (let x = 0; x < nx; x++)
+      if ((x === 0 || y === 0 || z === 0 || x === nx - 1 || y === ny - 1 || z === nz - 1) && !solid(idx(x, y, z))) { air[idx(x, y, z)] = 1; queue.push(x, y, z); }
+    for (let q = 0; q < queue.length; q += 3) for (let w = 0; w < 6; w++) {
+      const n = nb(queue[q], queue[q + 1], queue[q + 2], w); if (n < 0 || air[n] || solid(n)) continue;
+      air[n] = 1; queue.push(queue[q] + step[w][0], queue[q + 1] + step[w][1], queue[q + 2] + step[w][2]);
+    }
+    // share of a cell's wall w with model material within depth sample layers of it (inside samples, or surface ones too)
+    const cover = (x, y, z, w, depth, surf) => { const ax = w >> 1; let hit = 0;
+      for (let u = 0; u < SUB; u++) for (let v = 0; v < SUB; v++) { let on = false;
+        for (let d = 0; d < depth && !on; d++) { const q = [x * SUB, y * SUB, z * SUB]; q[ax] += w & 1 ? SUB - 1 - d : d;
+          q[(ax + 1) % 3] += u; q[(ax + 2) % 3] += v; const f = fidx(q[0], q[1], q[2]); if (fine.g[f] || (surf && fine.s[f])) on = true; }
+        if (on) hit++; }
+      return hit / (SUB * SUB); };
+    const flat = (x, y, z, w) => cover(x, y, z, w, 2, true) >= 0.6, filled = (x, y, z, w) => cover(x, y, z, w, 1, false) === 1;
+    const base = Int32Array.from(fit), cleared = new Set(), want = new Map(), asked = new Map();   // asked: open cell -> [[solid cell, face]]
+    const add = (c, w) => { if (!want.has(c)) want.set(c, new Set()); want.get(c).add(w); };
+    for (let c = 0; c < N; c++) if (!solid(c)) fit[c] = -1;
+    for (let y = 0; y < ny; y++) for (let z = 0; z < nz; z++) for (let x = 0; x < nx; x++) {
+      const ci = idx(x, y, z); if (!solid(ci)) continue;
+      const out = [0, 1, 2, 3, 4, 5].filter(w => { const n = nb(x, y, z, w); return n < 0 || air[n]; });
+      if (!out.length) { fit[ci] = -1; continue; }
+      if (!out.every(w => flat(x, y, z, w)) && base[ci] !== cubeTi) continue;
+      fit[ci] = -1; cleared.add(ci);
+      for (const w of out) {
+        if (!flat(x, y, z, w)) continue;
+        const n = nb(x, y, z, w);
+        if (n >= 0 && w !== 3 && filled(x, y, z, w)) { if (!asked.has(n)) asked.set(n, []); asked.get(n).push([ci, w]); }
+        else add(ci, w);
+      }
+    }
+    // an open cell asked by two solid cells takes the floor's or ceiling's panel (a track guard under an overhang) and
+    // the other cell puts its panel on its own face; two faces of one solid cell there make an edge plate
+    for (const [n, asks] of asked) {
+      const keep = (asks.find(([, w]) => w >> 1 === 1) || asks[0])[0];
+      for (const [ci, w] of asks) if (ci === keep) add(n, w ^ 1); else add(ci, w);
+    }
+    // each cell takes the plate covering just the faces asked of it (a panel; an L or U plate on an edge), the simplest
+    // first; with no such plate, an emptied cell keeps its block
+    for (const [c, ws] of want) {
+      let best = -1;
+      for (let ti = 0; ti < T.length; ti++) { const tp = T[ti];
+        if (!tp.plate || tp.hand || !tp.walls.every((v, w) => v === ws.has(w))) continue;
+        if (best < 0 || pen[ti] < pen[best] || (pen[ti] === pen[best] && tp.n < T[best].n)) best = ti; }
+      if (best >= 0) fit[c] = best; else if (cleared.has(c)) fit[c] = base[c];
+    }
   }
   return { nx, ny, nz, b, ox, oy, oz, cell, fit, fill, idx, alt, altScore, ALT, hiddenShare: seen ? hidden / seen : 0 };
 

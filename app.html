@@ -230,7 +230,8 @@
     <label>Width centre on <select id="centre"><option value="col">a block column (odd width)</option><option value="line">a grid line (even width)</option></select></label>
     <label>Move grid forward (blocks) <input type="number" id="offX" step="0.1" value="0"></label>
     <label>Move grid up (blocks) <input type="number" id="offY" step="0.1" value="0"></label>
-    <label>Cells <select id="fill"><option value="solid">all filled cells</option><option value="shell">outer cells only</option></select></label>
+    <label>Cells <select id="fill"><option value="solid">all filled cells</option><option value="shell">outer cells only</option><option value="skin">armour skin (hollow hull)</option></select>
+      <span class="hint">armour skin: the inside stays empty for functional blocks; flat sides get panels (the floor's under the hull), sloped ones shaped blocks</span></label>
     <label>Simplify <input type="number" id="simplify" min="0" max="6" step="0.5" value="4"> <span class="hint">0 = follow the model exactly; higher = cubes, halves and slopes win more often</span></label>
     <label>Buildable surfaces <select id="buildable"><option value="auto">auto (on for outer cells at large grid)</option><option value="on">on</option><option value="off">off</option></select>
       <span class="hint">round the skin outward, never inward: full blocks on decks and other tops, hull sides kept full width, blocks that hold all of the model where it narrows</span></label>
