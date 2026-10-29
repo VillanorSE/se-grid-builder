@@ -470,7 +470,7 @@ function renderLibrary() {
     const bl = blocks.length ? blocks.slice(0, 2).map(b => b.name || b.subtype).join(', ') + (blocks.length > 2 ? ` +${blocks.length - 2}` : '') : 'no game blocks linked';
     c.innerHTML = `${thumbCache.has(s.id) ? `<img src="${thumbCache.get(s.id)}">` : `<img data-id="${esc(s.id)}" alt="">`}
       <div class="t"><span class="k" style="background:${shapeColor(s).getStyle()}">${esc(s.key)}</span>${esc(s.name)}</div>
-      <div class="m" title="${esc(others.join(', '))}">${esc(s.source)}${others.length ? ` + ${esc(others.length === 1 ? others[0] : others.length + ' mods')}` : ''}${vol === null ? '<span class="tag">no shape yet</span>' : isPlate(s) ? '<span class="tag">plate</span>' : ` &middot; fills ${vol}%`}</div>
+      <div class="m" title="${esc(others.join(', '))}">${esc(s.source)}${others.length ? ` + ${esc(others.length === 1 ? others[0] : others.length + ' mods')}` : ''}${vol === null ? '<span class="tag">no shape yet</span>' : isPlate(s) ? '<span class="tag">plate</span>' : ` &middot; fills ${vol}%`}${s.reach ? '<span class="tag" title="Drawn outside its own cell: shown here in the cell where it shows. Pick it by hand in Edit a cell (the fit leaves it out); the blueprint puts the block in its own cell next to it.">offset</span>' : ''}</div>
       <div class="m" title="${esc(blocks.map(b => `${b.name || b.subtype} (${b.size || '?'}${b.mod ? ', ' + b.mod : ''})`).join('\n'))}">${esc(bl)}</div>
       <label><input type="checkbox" ${s.use ? 'checked' : ''}> use in builder</label>`;
     const img = c.querySelector('img[data-id]'); if (img) thumbObserver.observe(img);
@@ -658,8 +658,8 @@ el('impRun').addEventListener('click', async () => {
       filter: el('impFilter').value, includeVanilla: el('impVanilla').checked, log, yieldNow: tick });
     LIB.slice(before).forEach(s => s.rev = 1);
     log(`\nDone in ${((performance.now() - t0) / 1000).toFixed(1)} s. ${sum.matched} matching blocks: ${sum.topology} armour joined the vanilla shapes, ` +
-      `${sum.models} read from models (${sum.newShapes} new cards, switched off: turn on the ones you build with). Skipped: ${sum.multiCell} larger than one cell, ${sum.unreadable} with unreadable models, ` +
-      `${sum.noShape} without a usable shape.`);
+      `${sum.models} read from models (${sum.newShapes} new cards, switched off: turn on the ones you build with; ${sum.reach} drawn outside their own cell, on "offset" cards you pick by hand${sum.moved ? `; ${sum.moved} moved off the cards an older import put them on` : ''}). ` +
+      `${sum.spansCells ? `${sum.spansCells} drawn across several cells, cut to their own. ` : ''}Skipped: ${sum.multiCell} larger than one cell, ${sum.unreadable} with unreadable models, ${sum.noShape} without a usable shape.`);
     nameCardsByFamily(LIB); LIB.forEach(s => thumbCache.delete(s.id));
     libChanged(); renderLibrary(); refreshSketchList();
   } catch (e) { log('Import failed: ' + e.message); }
@@ -920,7 +920,7 @@ const Fit = (() => {
   const stop = () => { pool.forEach(x => x.w.terminate()); pool = []; };
   const plainOpts = o => { const { shapes, T, groupsOn, ...rest } = o; return { ...rest, groupsOn: [...groupsOn] }; };
   // shapes not in use go as stubs (the worker's templates must match the page's, so every index is kept)
-  const libMsg = (shapes, ver) => ({ ver, shapes: shapes.map(s => s.use ? { use: true, solids: s.solids, plate: s.plate, penalty: s.penalty } : { use: false }) });
+  const libMsg = (shapes, ver) => ({ ver, shapes: shapes.map(s => s.use ? { use: true, id: s.id, solids: s.solids, plate: s.plate, penalty: s.penalty, reach: s.reach } : { use: false }) });
   // one message to one worker; resolves with its 'done' reply (null if the job is cancelled)
   function ask(x, msg, job, onProgress) {
     return new Promise((resolve, reject) => {

@@ -105,6 +105,31 @@ export function shapeMask(shape) {
   return { mask: m, plate: !!shape.plate };
 }
 
+// A shape's exact volume (cells^3), finer than its sample mask: triangle solids by the divergence theorem (either
+// winding; the whole model, also where it reaches past the cell), convex plane solids from the hull of their corners.
+// Tells apart shapes the 6-sample mask can't, such as the pieces of a 1x7 and a 1x8 slope (the importer's grouping).
+export function exactVolume(shape) {
+  let v = 0;
+  for (const s of shape.solids || []) {
+    if (s.type === 'tris') {
+      const t = s.tris; let w = 0;
+      for (let i = 0; i < t.length; i += 9)
+        w += t[i] * (t[i + 4] * t[i + 8] - t[i + 5] * t[i + 7]) - t[i + 1] * (t[i + 3] * t[i + 8] - t[i + 5] * t[i + 6]) + t[i + 2] * (t[i + 3] * t[i + 7] - t[i + 4] * t[i + 6]);
+      v += Math.abs(w) / 6;
+    } else if (s.type === 'planes' && s.verts && s.verts.length >= 4) {
+      const V = []; s.verts.forEach(p => { const q = p.map(x => Math.round(x * 1e6) / 1e6 + 0); if (!V.some(r => near(r, q))) V.push(q); });
+      const c = [0, 1, 2].map(k => V.reduce((a, p) => a + p[k], 0) / V.length);
+      for (const q of hullPlanes(V)) {   // each hull face: a fan of tetrahedra from the centre
+        const F = V.filter(p => Math.abs(q[0] * p[0] + q[1] * p[1] + q[2] * p[2] - q[3]) < 1e-6); if (F.length < 3) continue;
+        const f = [0, 1, 2].map(k => F.reduce((a, p) => a + p[k], 0) / F.length), e1 = sub(F[0], f), e2 = cross(q, e1);
+        F.sort((a, b) => Math.atan2(dot(sub(a, f), e2), dot(sub(a, f), e1)) - Math.atan2(dot(sub(b, f), e2), dot(sub(b, f), e1)));
+        for (let i = 0; i < F.length; i++) v += Math.abs(dot(sub(F[i], c), cross(sub(F[(i + 1) % F.length], c), sub(f, c)))) / 6;
+      }
+    }
+  }
+  return v;
+}
+
 // convex hull of a point set as half-spaces (brute force; fine for a handful of points)
 export function hullPlanes(points) {
   const P = points, planes = [];
@@ -210,17 +235,23 @@ function earClip(poly, pts) {
 }
 
 // ---------- templates: every distinct (shape, rotation) of the shapes in use, as bit masks
-// shapes: library entries ({ solids, use, plate?, penalty? }); the mask is cached on the entry as _m
+// shapes: library entries ({ solids, use, plate?, penalty?, reach? }); the mask is cached on the entry as _m. A reach
+// card (a block drawn outside its own cell, importer.js) gives hand-only templates: the cell editor offers them, the fit doesn't.
+// A template's sig is its mask; cards the mask can't tell apart (a 1x7 and a 1x8 slope piece, a mantlet plate and a
+// panel: the importer keeps them apart by volume) each keep their templates, the second and later ones with
+// "#<card id>" added (the first card in the library keeps the plain mask, as cell edits saved before this have it).
 export function buildTemplates(shapes) {
-  const list = [], bySig = new Map();
+  const list = [], bySig = new Map(), owner = new Map();   // mask sig -> the card whose templates have it plain
   shapes.forEach((sh, si) => {
     if (!sh.use || !sh.solids || !sh.solids.length) return;
     if (!sh._m) sh._m = shapeMask(sh);
     const { mask, plate } = sh._m;
     if (!maskCount(mask)) return;
     ROT_MAP.forEach((map, ri) => {
-      const m = permute(mask, map), sig = maskSig(m);
-      if (bySig.has(sig)) return;
+      const m = permute(mask, map), ms = maskSig(m);
+      if (!owner.has(ms)) owner.set(ms, si);
+      const sig = owner.get(ms) === si ? ms : ms + '#' + sh.id;
+      if (bySig.has(sig)) return;   // the card's own turns that look alike
       bySig.set(sig, list.length);
       let minY = SUB; for (let k = 0; k < NS && minY === SUB; k++) if (getBit(m, k)) minY = Math.floor(k / (SUB * SUB));   // lowest sample layer
       const walls = [0, 1, 2, 3, 4, 5].map(w => { const ax = w >> 1, at = w & 1 ? SUB - 1 : 0;
@@ -229,21 +260,23 @@ export function buildTemplates(shapes) {
       const face = [0, 1, 2, 3, 4, 5].map(w => { const ax = w >> 1, at = w & 1 ? SUB - 1 : 0, f = new Uint8Array(SUB * SUB);
         for (let u = 0; u < SUB; u++) for (let v = 0; v < SUB; v++) { const q = [0, 0, 0]; q[ax] = at; q[(ax + 1) % 3] = u; q[(ax + 2) % 3] = v;
           f[u * SUB + v] = getBit(m, (q[1] * SUB + q[2]) * SUB + q[0]); } return f; });
-      list.push({ shape: si, rot: ri, mask: m, n: maskCount(m), plate, sig, minY, walls, face });
+      list.push({ shape: si, rot: ri, mask: m, n: maskCount(m), plate, sig, card: sh.id, minY, walls, face, ...(sh.reach ? { hand: true } : {}) });
     });
   });
   return { list, bySig };
 }
 // the same shape turned 90 degrees about an axis (0 = X length, 1 = Y vertical, 2 = Z width)
+// a mask's template of the same card when it has one of its own (see buildTemplates), else whichever card has it
+const sameCard = (T, ti, ms) => T.bySig.get(ms + '#' + T.list[ti].card) ?? T.bySig.get(ms);
 export function rotateTemplate(T, ti, axis) {
-  const r = T.bySig.get(maskSig(permute(T.list[ti].mask, TURN_MAP[axis])));
+  const r = sameCard(T, ti, maskSig(permute(T.list[ti].mask, TURN_MAP[axis])));
   return r === undefined ? ti : r;
 }
 // the block mirrored across the hull centreline (Z, the width): the template whose mask is this one flipped in Z, or -1
 // when the library has no such block (a left/right-handed shape without its twin in use). The cell editor's mirror.
 const MIRROR_Z = SAMPLE.map(p => sIndex([p[0] - .5, p[1] - .5, .5 - p[2]]));
 export function mirrorTemplate(T, ti) {
-  const r = T.bySig.get(maskSig(permute(T.list[ti].mask, MIRROR_Z)));
+  const r = sameCard(T, ti, maskSig(permute(T.list[ti].mask, MIRROR_Z)));
   return r === undefined ? -1 : r;
 }
 // rotation-independent signature of a shape's mask (finds duplicate shapes)
@@ -745,7 +778,7 @@ export function computeGrid(parts, o) {
   // owner's style (2026-10-01 edits): shaped blocks only on the outside. A cell with model material in all six
   // neighbours and at least interiorFill of its own volume filled is part of the solid core: a cube.
   const interiorFill = o.interiorFill ?? 0.5, occupied = (o.occupiedFill ?? 0.1) * NS;
-  const cubeTi = T.findIndex(tp => tp.n === NS && !tp.plate);
+  const cubeTi = T.findIndex(tp => tp.n === NS && !tp.plate && !tp.hand);
   const isInterior = (x, y, z) => [[x - 1, y, z], [x + 1, y, z], [x, y - 1, z], [x, y + 1, z], [x, y, z - 1], [x, y, z + 1]]
     .every(([X, Y, Z]) => X >= 0 && Y >= 0 && Z >= 0 && X < nx && Y < ny && Z < nz && matOf[idx(X, Y, Z)] >= occupied);
   // a thin cell whose material hugs a wall and carries straight on from the neighbour's solid there is that neighbour
@@ -835,7 +868,7 @@ export function computeGrid(parts, o) {
     cand.length = 0;
     for (let ti = 0; ti < T.length; ti++) {
       const tp = T[ti];
-      if (tp.plate && (!thin || poke)) continue;
+      if (tp.hand || (tp.plate && (!thin || poke))) continue;
       // cheap bound first: the overlap can't exceed the cell's own sample count, so too small a cell for this block's
       // volume fails the fill rule without counting bits (unless the skin rule lets it skip the fill rule)
       if ((tp.plate ? ns : ni) / tp.n < o.minFill && !(anySkin && !tp.plate && tp.walls.some((c, w) => c && skin[w]))) continue;
@@ -857,7 +890,7 @@ export function computeGrid(parts, o) {
       let nm = 0; for (let w = 0; w < W; w++) { mm[w] = mi[w] | ms[w]; nm += pop(mm[w]); }
       let best = 1e9; const cost = new Map();
       for (let ti = 0; ti < T.length; ti++) {
-        const tp = T[ti]; if (tp.plate) continue;
+        const tp = T[ti]; if (tp.plate || tp.hand) continue;
         let im = 0; for (let w = 0; w < W; w++) im += pop(tp.mask[w] & mm[w]);
         if (im < coverMin * nm) continue;
         const cst = (tp.n - im) / NS + PEN_SCALE * pen[ti]; cost.set(ti, cst); if (cst < best) best = cst;

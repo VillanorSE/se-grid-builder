@@ -122,6 +122,33 @@ const mLib = [...gLib.slice(0, 3), tip, mir]; BP.nameCardsByFamily(mLib);
 check(tip.name === 'Armour Half Tip (2 grades)' && mir.name === 'Armour Half Tip Mirror (2 grades)' && BP.nameCardsByFamily(mLib) === 0,
   'a block and its mirror sharing a display name get different card names');
 
+// blocks drawn outside their own cell (KONTAKT mantlet plates): the cell they show in, and where the export puts them
+const { shownCell } = await import(pathToFileURL(path.join(here, 'importer.js')));
+const box = (x0, y0, z0, x1, y1, z1) => { const t = [], q = [[x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0], [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]];
+  for (const [a, b, c, d] of [[0, 3, 2, 1], [4, 5, 6, 7], [0, 1, 5, 4], [3, 7, 6, 2], [0, 4, 7, 3], [1, 2, 6, 5]]) t.push(...q[a], ...q[b], ...q[c], ...q[a], ...q[c], ...q[d]);
+  return new Float32Array(t); };
+const sc1 = shownCell(box(0, 0, -1, 1, 0.04, 0)), sc2 = shownCell(box(0, -0.04, 0, 1, 0, 1)), sc3 = shownCell(box(-1, 0, 0, 2, 1, 1));
+check(sc1.offset.join() === '0,0,-1' && Math.min(...sc1.tris.filter((v, i) => i % 3 === 2)) === 0 && sc2.offset.join() === '0,0,0' && sc3.spans && sc3.offset.join() === '0,0,0',
+  'shownCell: a plate in the cell in front moves there; one just past its own wall stays; one across three cells stays, cut to its own');
+check(Math.abs(C.exactVolume(lib.find(s => s.id === 'vanilla:Slope')) - 0.5) < 1e-9 && Math.abs(C.exactVolume({ solids: [{ type: 'tris', tris: box(0, 0, 0, 1, 0.25, 1) }] }) - 0.25) < 1e-6,
+  'exact volume of a plane solid (vanilla slope 0.5) and a triangle solid (quarter block 0.25)');
+const reachCard = { id: 'mesh:M:P', name: 'Mantlet P', reach: true, blocks: [{ subtype: 'P', size: 'Small', mod: 'M', typeId: 'CubeBlock', orient: ['Forward', 'Up'], offset: [0, 0, -1] }] };
+const cube = lib.find(s => s.id === 'vanilla:Box');
+const rb = (cells, nz = 3) => BP.gridBlocks({ nx: 3, ny: 1, nz, centre: 'col' }, (x, y, z) => cells[[x, y, z].join()] || null, { size: 'Small', armour: 'light' });
+const r1 = rb({ '1,0,1': { shape: reachCard, rot: 0 } }), r2 = rb({ '1,0,1': { shape: reachCard, rot: 0 }, '1,0,2': { shape: cube, rot: 0 } });
+// shows at tool (1,0,1) = grid (0,0,-1); its own cell is one tool cell further along +z (the block's Forward is the
+// tool's -z here), grid +X
+check(r1.blocks.length === 1 && r1.blocks[0].min.join() === '1,0,-1' && r1.moved === 1, `a reach block goes back by its offset to its own cell (${r1.blocks[0] && r1.blocks[0].min})`);
+check(r2.blocks.length === 1 && r2.blocks[0].subtype === 'SmallBlockArmorBlock' && Object.keys(r2.skipped)[0].includes('has a block'),
+  'a reach block whose own cell has a block is left out and listed');
+const rT = C.buildTemplates([{ ...cube, use: true, reach: true }]);
+check(rT.list.length && rT.list.every(t => t.hand), 'reach cards give hand-only templates (left out of the fit)');
+const slope = lib.find(s => s.id === 'vanilla:Slope'), twin = { ...slope, id: 'mesh:M:SlopeTwin', _m: undefined };
+const dT = C.buildTemplates([{ ...slope, use: true }, { ...twin, use: true }]), d0 = dT.list.filter(t => t.shape === 0), d1 = dT.list.filter(t => t.shape === 1);
+const turned = C.rotateTemplate(dT, dT.list.indexOf(d1[0]), 1);
+check(d0.length === 12 && d1.length === 12 && d0.every(t => !t.sig.includes('#')) && d1.every(t => t.sig.endsWith('#mesh:M:SlopeTwin')) && dT.list[turned].shape === 1,
+  'two cards with the same mask both keep their templates (the second keyed by its id), and turning stays on the card');
+
 // 6. bp.sbc well-formed, and its structure
 function parseXml(s) {               // small strict checker: balanced tags, quoted attributes, known entities only
   const stack = [], tree = { name: '#doc', kids: [] }, nodes = [tree];

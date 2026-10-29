@@ -421,6 +421,31 @@ function shapeMask(shape) {
   return { mask: m, plate: !!shape.plate };
 }
 
+// A shape's exact volume (cells^3), finer than its sample mask: triangle solids by the divergence theorem (either
+// winding; the whole model, also where it reaches past the cell), convex plane solids from the hull of their corners.
+// Tells apart shapes the 6-sample mask can't, such as the pieces of a 1x7 and a 1x8 slope (the importer's grouping).
+function exactVolume(shape) {
+  let v = 0;
+  for (const s of shape.solids || []) {
+    if (s.type === 'tris') {
+      const t = s.tris; let w = 0;
+      for (let i = 0; i < t.length; i += 9)
+        w += t[i] * (t[i + 4] * t[i + 8] - t[i + 5] * t[i + 7]) - t[i + 1] * (t[i + 3] * t[i + 8] - t[i + 5] * t[i + 6]) + t[i + 2] * (t[i + 3] * t[i + 7] - t[i + 4] * t[i + 6]);
+      v += Math.abs(w) / 6;
+    } else if (s.type === 'planes' && s.verts && s.verts.length >= 4) {
+      const V = []; s.verts.forEach(p => { const q = p.map(x => Math.round(x * 1e6) / 1e6 + 0); if (!V.some(r => near(r, q))) V.push(q); });
+      const c = [0, 1, 2].map(k => V.reduce((a, p) => a + p[k], 0) / V.length);
+      for (const q of hullPlanes(V)) {   // each hull face: a fan of tetrahedra from the centre
+        const F = V.filter(p => Math.abs(q[0] * p[0] + q[1] * p[1] + q[2] * p[2] - q[3]) < 1e-6); if (F.length < 3) continue;
+        const f = [0, 1, 2].map(k => F.reduce((a, p) => a + p[k], 0) / F.length), e1 = sub(F[0], f), e2 = cross(q, e1);
+        F.sort((a, b) => Math.atan2(dot(sub(a, f), e2), dot(sub(a, f), e1)) - Math.atan2(dot(sub(b, f), e2), dot(sub(b, f), e1)));
+        for (let i = 0; i < F.length; i++) v += Math.abs(dot(sub(F[i], c), cross(sub(F[(i + 1) % F.length], c), sub(f, c)))) / 6;
+      }
+    }
+  }
+  return v;
+}
+
 // convex hull of a point set as half-spaces (brute force; fine for a handful of points)
 function hullPlanes(points) {
   const P = points, planes = [];
@@ -526,17 +551,23 @@ function earClip(poly, pts) {
 }
 
 // ---------- templates: every distinct (shape, rotation) of the shapes in use, as bit masks
-// shapes: library entries ({ solids, use, plate?, penalty? }); the mask is cached on the entry as _m
+// shapes: library entries ({ solids, use, plate?, penalty?, reach? }); the mask is cached on the entry as _m. A reach
+// card (a block drawn outside its own cell, importer.js) gives hand-only templates: the cell editor offers them, the fit doesn't.
+// A template's sig is its mask; cards the mask can't tell apart (a 1x7 and a 1x8 slope piece, a mantlet plate and a
+// panel: the importer keeps them apart by volume) each keep their templates, the second and later ones with
+// "#<card id>" added (the first card in the library keeps the plain mask, as cell edits saved before this have it).
 function buildTemplates(shapes) {
-  const list = [], bySig = new Map();
+  const list = [], bySig = new Map(), owner = new Map();   // mask sig -> the card whose templates have it plain
   shapes.forEach((sh, si) => {
     if (!sh.use || !sh.solids || !sh.solids.length) return;
     if (!sh._m) sh._m = shapeMask(sh);
     const { mask, plate } = sh._m;
     if (!maskCount(mask)) return;
     ROT_MAP.forEach((map, ri) => {
-      const m = permute(mask, map), sig = maskSig(m);
-      if (bySig.has(sig)) return;
+      const m = permute(mask, map), ms = maskSig(m);
+      if (!owner.has(ms)) owner.set(ms, si);
+      const sig = owner.get(ms) === si ? ms : ms + '#' + sh.id;
+      if (bySig.has(sig)) return;   // the card's own turns that look alike
       bySig.set(sig, list.length);
       let minY = SUB; for (let k = 0; k < NS && minY === SUB; k++) if (getBit(m, k)) minY = Math.floor(k / (SUB * SUB));   // lowest sample layer
       const walls = [0, 1, 2, 3, 4, 5].map(w => { const ax = w >> 1, at = w & 1 ? SUB - 1 : 0;
@@ -545,21 +576,23 @@ function buildTemplates(shapes) {
       const face = [0, 1, 2, 3, 4, 5].map(w => { const ax = w >> 1, at = w & 1 ? SUB - 1 : 0, f = new Uint8Array(SUB * SUB);
         for (let u = 0; u < SUB; u++) for (let v = 0; v < SUB; v++) { const q = [0, 0, 0]; q[ax] = at; q[(ax + 1) % 3] = u; q[(ax + 2) % 3] = v;
           f[u * SUB + v] = getBit(m, (q[1] * SUB + q[2]) * SUB + q[0]); } return f; });
-      list.push({ shape: si, rot: ri, mask: m, n: maskCount(m), plate, sig, minY, walls, face });
+      list.push({ shape: si, rot: ri, mask: m, n: maskCount(m), plate, sig, card: sh.id, minY, walls, face, ...(sh.reach ? { hand: true } : {}) });
     });
   });
   return { list, bySig };
 }
 // the same shape turned 90 degrees about an axis (0 = X length, 1 = Y vertical, 2 = Z width)
+// a mask's template of the same card when it has one of its own (see buildTemplates), else whichever card has it
+const sameCard = (T, ti, ms) => T.bySig.get(ms + '#' + T.list[ti].card) ?? T.bySig.get(ms);
 function rotateTemplate(T, ti, axis) {
-  const r = T.bySig.get(maskSig(permute(T.list[ti].mask, TURN_MAP[axis])));
+  const r = sameCard(T, ti, maskSig(permute(T.list[ti].mask, TURN_MAP[axis])));
   return r === undefined ? ti : r;
 }
 // the block mirrored across the hull centreline (Z, the width): the template whose mask is this one flipped in Z, or -1
 // when the library has no such block (a left/right-handed shape without its twin in use). The cell editor's mirror.
 const MIRROR_Z = SAMPLE.map(p => sIndex([p[0] - .5, p[1] - .5, .5 - p[2]]));
 function mirrorTemplate(T, ti) {
-  const r = T.bySig.get(maskSig(permute(T.list[ti].mask, MIRROR_Z)));
+  const r = sameCard(T, ti, maskSig(permute(T.list[ti].mask, MIRROR_Z)));
   return r === undefined ? -1 : r;
 }
 // rotation-independent signature of a shape's mask (finds duplicate shapes)
@@ -1061,7 +1094,7 @@ function computeGrid(parts, o) {
   // owner's style (2026-10-01 edits): shaped blocks only on the outside. A cell with model material in all six
   // neighbours and at least interiorFill of its own volume filled is part of the solid core: a cube.
   const interiorFill = o.interiorFill ?? 0.5, occupied = (o.occupiedFill ?? 0.1) * NS;
-  const cubeTi = T.findIndex(tp => tp.n === NS && !tp.plate);
+  const cubeTi = T.findIndex(tp => tp.n === NS && !tp.plate && !tp.hand);
   const isInterior = (x, y, z) => [[x - 1, y, z], [x + 1, y, z], [x, y - 1, z], [x, y + 1, z], [x, y, z - 1], [x, y, z + 1]]
     .every(([X, Y, Z]) => X >= 0 && Y >= 0 && Z >= 0 && X < nx && Y < ny && Z < nz && matOf[idx(X, Y, Z)] >= occupied);
   // a thin cell whose material hugs a wall and carries straight on from the neighbour's solid there is that neighbour
@@ -1151,7 +1184,7 @@ function computeGrid(parts, o) {
     cand.length = 0;
     for (let ti = 0; ti < T.length; ti++) {
       const tp = T[ti];
-      if (tp.plate && (!thin || poke)) continue;
+      if (tp.hand || (tp.plate && (!thin || poke))) continue;
       // cheap bound first: the overlap can't exceed the cell's own sample count, so too small a cell for this block's
       // volume fails the fill rule without counting bits (unless the skin rule lets it skip the fill rule)
       if ((tp.plate ? ns : ni) / tp.n < o.minFill && !(anySkin && !tp.plate && tp.walls.some((c, w) => c && skin[w]))) continue;
@@ -1173,7 +1206,7 @@ function computeGrid(parts, o) {
       let nm = 0; for (let w = 0; w < W; w++) { mm[w] = mi[w] | ms[w]; nm += pop(mm[w]); }
       let best = 1e9; const cost = new Map();
       for (let ti = 0; ti < T.length; ti++) {
-        const tp = T[ti]; if (tp.plate) continue;
+        const tp = T[ti]; if (tp.plate || tp.hand) continue;
         let im = 0; for (let w = 0; w < W; w++) im += pop(tp.mask[w] & mm[w]);
         if (im < coverMin * nm) continue;
         const cst = (tp.n - im) / NS + PEN_SCALE * pen[ti]; cost.set(ti, cst); if (cst < best) best = cst;
@@ -1525,6 +1558,31 @@ function shapeMask(shape) {
   return { mask: m, plate: !!shape.plate };
 }
 
+// A shape's exact volume (cells^3), finer than its sample mask: triangle solids by the divergence theorem (either
+// winding; the whole model, also where it reaches past the cell), convex plane solids from the hull of their corners.
+// Tells apart shapes the 6-sample mask can't, such as the pieces of a 1x7 and a 1x8 slope (the importer's grouping).
+function exactVolume(shape) {
+  let v = 0;
+  for (const s of shape.solids || []) {
+    if (s.type === 'tris') {
+      const t = s.tris; let w = 0;
+      for (let i = 0; i < t.length; i += 9)
+        w += t[i] * (t[i + 4] * t[i + 8] - t[i + 5] * t[i + 7]) - t[i + 1] * (t[i + 3] * t[i + 8] - t[i + 5] * t[i + 6]) + t[i + 2] * (t[i + 3] * t[i + 7] - t[i + 4] * t[i + 6]);
+      v += Math.abs(w) / 6;
+    } else if (s.type === 'planes' && s.verts && s.verts.length >= 4) {
+      const V = []; s.verts.forEach(p => { const q = p.map(x => Math.round(x * 1e6) / 1e6 + 0); if (!V.some(r => near(r, q))) V.push(q); });
+      const c = [0, 1, 2].map(k => V.reduce((a, p) => a + p[k], 0) / V.length);
+      for (const q of hullPlanes(V)) {   // each hull face: a fan of tetrahedra from the centre
+        const F = V.filter(p => Math.abs(q[0] * p[0] + q[1] * p[1] + q[2] * p[2] - q[3]) < 1e-6); if (F.length < 3) continue;
+        const f = [0, 1, 2].map(k => F.reduce((a, p) => a + p[k], 0) / F.length), e1 = sub(F[0], f), e2 = cross(q, e1);
+        F.sort((a, b) => Math.atan2(dot(sub(a, f), e2), dot(sub(a, f), e1)) - Math.atan2(dot(sub(b, f), e2), dot(sub(b, f), e1)));
+        for (let i = 0; i < F.length; i++) v += Math.abs(dot(sub(F[i], c), cross(sub(F[(i + 1) % F.length], c), sub(f, c)))) / 6;
+      }
+    }
+  }
+  return v;
+}
+
 // convex hull of a point set as half-spaces (brute force; fine for a handful of points)
 function hullPlanes(points) {
   const P = points, planes = [];
@@ -1630,17 +1688,23 @@ function earClip(poly, pts) {
 }
 
 // ---------- templates: every distinct (shape, rotation) of the shapes in use, as bit masks
-// shapes: library entries ({ solids, use, plate?, penalty? }); the mask is cached on the entry as _m
+// shapes: library entries ({ solids, use, plate?, penalty?, reach? }); the mask is cached on the entry as _m. A reach
+// card (a block drawn outside its own cell, importer.js) gives hand-only templates: the cell editor offers them, the fit doesn't.
+// A template's sig is its mask; cards the mask can't tell apart (a 1x7 and a 1x8 slope piece, a mantlet plate and a
+// panel: the importer keeps them apart by volume) each keep their templates, the second and later ones with
+// "#<card id>" added (the first card in the library keeps the plain mask, as cell edits saved before this have it).
 function buildTemplates(shapes) {
-  const list = [], bySig = new Map();
+  const list = [], bySig = new Map(), owner = new Map();   // mask sig -> the card whose templates have it plain
   shapes.forEach((sh, si) => {
     if (!sh.use || !sh.solids || !sh.solids.length) return;
     if (!sh._m) sh._m = shapeMask(sh);
     const { mask, plate } = sh._m;
     if (!maskCount(mask)) return;
     ROT_MAP.forEach((map, ri) => {
-      const m = permute(mask, map), sig = maskSig(m);
-      if (bySig.has(sig)) return;
+      const m = permute(mask, map), ms = maskSig(m);
+      if (!owner.has(ms)) owner.set(ms, si);
+      const sig = owner.get(ms) === si ? ms : ms + '#' + sh.id;
+      if (bySig.has(sig)) return;   // the card's own turns that look alike
       bySig.set(sig, list.length);
       let minY = SUB; for (let k = 0; k < NS && minY === SUB; k++) if (getBit(m, k)) minY = Math.floor(k / (SUB * SUB));   // lowest sample layer
       const walls = [0, 1, 2, 3, 4, 5].map(w => { const ax = w >> 1, at = w & 1 ? SUB - 1 : 0;
@@ -1649,21 +1713,23 @@ function buildTemplates(shapes) {
       const face = [0, 1, 2, 3, 4, 5].map(w => { const ax = w >> 1, at = w & 1 ? SUB - 1 : 0, f = new Uint8Array(SUB * SUB);
         for (let u = 0; u < SUB; u++) for (let v = 0; v < SUB; v++) { const q = [0, 0, 0]; q[ax] = at; q[(ax + 1) % 3] = u; q[(ax + 2) % 3] = v;
           f[u * SUB + v] = getBit(m, (q[1] * SUB + q[2]) * SUB + q[0]); } return f; });
-      list.push({ shape: si, rot: ri, mask: m, n: maskCount(m), plate, sig, minY, walls, face });
+      list.push({ shape: si, rot: ri, mask: m, n: maskCount(m), plate, sig, card: sh.id, minY, walls, face, ...(sh.reach ? { hand: true } : {}) });
     });
   });
   return { list, bySig };
 }
 // the same shape turned 90 degrees about an axis (0 = X length, 1 = Y vertical, 2 = Z width)
+// a mask's template of the same card when it has one of its own (see buildTemplates), else whichever card has it
+const sameCard = (T, ti, ms) => T.bySig.get(ms + '#' + T.list[ti].card) ?? T.bySig.get(ms);
 function rotateTemplate(T, ti, axis) {
-  const r = T.bySig.get(maskSig(permute(T.list[ti].mask, TURN_MAP[axis])));
+  const r = sameCard(T, ti, maskSig(permute(T.list[ti].mask, TURN_MAP[axis])));
   return r === undefined ? ti : r;
 }
 // the block mirrored across the hull centreline (Z, the width): the template whose mask is this one flipped in Z, or -1
 // when the library has no such block (a left/right-handed shape without its twin in use). The cell editor's mirror.
 const MIRROR_Z = SAMPLE.map(p => sIndex([p[0] - .5, p[1] - .5, .5 - p[2]]));
 function mirrorTemplate(T, ti) {
-  const r = T.bySig.get(maskSig(permute(T.list[ti].mask, MIRROR_Z)));
+  const r = sameCard(T, ti, maskSig(permute(T.list[ti].mask, MIRROR_Z)));
   return r === undefined ? -1 : r;
 }
 // rotation-independent signature of a shape's mask (finds duplicate shapes)
@@ -2165,7 +2231,7 @@ function computeGrid(parts, o) {
   // owner's style (2026-10-01 edits): shaped blocks only on the outside. A cell with model material in all six
   // neighbours and at least interiorFill of its own volume filled is part of the solid core: a cube.
   const interiorFill = o.interiorFill ?? 0.5, occupied = (o.occupiedFill ?? 0.1) * NS;
-  const cubeTi = T.findIndex(tp => tp.n === NS && !tp.plate);
+  const cubeTi = T.findIndex(tp => tp.n === NS && !tp.plate && !tp.hand);
   const isInterior = (x, y, z) => [[x - 1, y, z], [x + 1, y, z], [x, y - 1, z], [x, y + 1, z], [x, y, z - 1], [x, y, z + 1]]
     .every(([X, Y, Z]) => X >= 0 && Y >= 0 && Z >= 0 && X < nx && Y < ny && Z < nz && matOf[idx(X, Y, Z)] >= occupied);
   // a thin cell whose material hugs a wall and carries straight on from the neighbour's solid there is that neighbour
@@ -2255,7 +2321,7 @@ function computeGrid(parts, o) {
     cand.length = 0;
     for (let ti = 0; ti < T.length; ti++) {
       const tp = T[ti];
-      if (tp.plate && (!thin || poke)) continue;
+      if (tp.hand || (tp.plate && (!thin || poke))) continue;
       // cheap bound first: the overlap can't exceed the cell's own sample count, so too small a cell for this block's
       // volume fails the fill rule without counting bits (unless the skin rule lets it skip the fill rule)
       if ((tp.plate ? ns : ni) / tp.n < o.minFill && !(anySkin && !tp.plate && tp.walls.some((c, w) => c && skin[w]))) continue;
@@ -2277,7 +2343,7 @@ function computeGrid(parts, o) {
       let nm = 0; for (let w = 0; w < W; w++) { mm[w] = mi[w] | ms[w]; nm += pop(mm[w]); }
       let best = 1e9; const cost = new Map();
       for (let ti = 0; ti < T.length; ti++) {
-        const tp = T[ti]; if (tp.plate) continue;
+        const tp = T[ti]; if (tp.plate || tp.hand) continue;
         let im = 0; for (let w = 0; w < W; w++) im += pop(tp.mask[w] & mm[w]);
         if (im < coverMin * nm) continue;
         const cst = (tp.n - im) / NS + PEN_SCALE * pen[ti]; cost.set(ti, cst); if (cst < best) best = cst;
@@ -2680,6 +2746,7 @@ const gradeParts = subtype => subtype.split('_');
 function modGrades(shapes) {
   const mods = new Map(), modOf = m => { if (!mods.has(m)) mods.set(m, { subs: new Set(), cards: new Map(), own: false }); return mods.get(m); };
   for (const s of shapes) {
+    if (s.reach) continue;      // blocks drawn outside their cell: picked by hand, not armour
     const groups = new Map();   // a mod's blocks on this card, by grid size and number of parts
     for (const b of s.blocks || []) {
       if (!b.mod || b.mod === 'Vanilla' || !b.subtype) continue;
@@ -2767,7 +2834,7 @@ function modLabel(mod, subs) {
 
 // ---------- which game block a card becomes
 // size: 'Large' | 'Small'; armour: 'light' | 'heavy' | a grade (armourGrades). Returns { typeId, subtype, orient: [F, U],
-// sure, other } or null when the card has no block of that grid size. sure = false: an imported block whose turn on the
+// sure, other, offset? } or null when the card has no block of that grid size. sure = false: an imported block whose turn on the
 // card was never recorded. other = true: a grade was asked for but the card has no block of it, so it gets the light one.
 function pickBlock(shape, size, armour = 'light') {
   const heavy = armour === 'heavy', cardOrient = CARD_ORIENT[shape.id] || ['Forward', 'Up'], g = parseGrade(armour);
@@ -2786,7 +2853,8 @@ function pickBlock(shape, size, armour = 'light') {
 function modBlock(shape, b, cardOrient) {
   const defining = shape.id === 'mesh:' + b.mod + ':' + b.subtype;   // the block the card's shape was read from
   const orient = b.orient || cardOrient;
-  return { typeId: b.typeId || 'CubeBlock', subtype: b.subtype, orient, sure: !!(b.orient || !shape.id.startsWith('mesh:') || defining), other: false };
+  return { typeId: b.typeId || 'CubeBlock', subtype: b.subtype, orient, sure: !!(b.orient || !shape.id.startsWith('mesh:') || defining), other: false,
+    ...(b.offset ? { offset: b.offset } : {}) };
 }
 
 // a template's block orientation in the SE grid: rot = the tool's turn of the card (ROTS index), orient = pickBlock's
@@ -2815,10 +2883,13 @@ function colorMaskHSV(hex) {
 // ---------- blocks of a fitted grid
 // grid: { nx, ny, nz, centre }; cellAt(x, y, z) -> { shape: library entry, rot } | null (empty / no block)
 // o: { size, armour, color(shape) -> '#rrggbb' | null }
-// Returns { blocks, skipped: { reason: count }, unsure, other (blocks without the chosen grade), mirror }
+// A block drawn outside its own cell (pickBlock offset) shows in the cell it was put in, so it goes back by its offset,
+// turned with it, to its own cell; when that cell already has a block it is left out and listed.
+// Returns { blocks, skipped: { reason: count }, unsure, other (blocks without the chosen grade), moved (blocks put in a
+// neighbouring cell), mirror }
 function gridBlocks(grid, cellAt, o) {
-  const blocks = [], skipped = {}, skip = r => { skipped[r] = (skipped[r] || 0) + 1; };
-  let unsure = 0, other = 0;
+  const blocks = [], skipped = {}, skip = r => { skipped[r] = (skipped[r] || 0) + 1; }, later = [];
+  let unsure = 0, other = 0, moved = 0;
   for (let y = 0; y < grid.ny; y++) for (let z = 0; z < grid.nz; z++) for (let x = 0; x < grid.nx; x++) {
     const c = cellAt(x, y, z); if (!c) continue;
     const pb = pickBlock(c.shape, o.size, o.armour);
@@ -2826,10 +2897,21 @@ function gridBlocks(grid, cellAt, o) {
     if (!pb.sure) unsure++;
     if (pb.other) other++;
     const col = o.color ? o.color(c.shape) : null;
-    blocks.push({ typeId: pb.typeId, subtype: pb.subtype, min: gridPos(x, y, z, grid.nz, grid.centre), ...gridOrientation(c.rot, pb.orient),
-      color: col ? colorMaskHSV(col) : null, card: c.shape.id });
+    const b = { typeId: pb.typeId, subtype: pb.subtype, min: gridPos(x, y, z, grid.nz, grid.centre), ...gridOrientation(c.rot, pb.orient),
+      color: col ? colorMaskHSV(col) : null, card: c.shape.id };
+    if (pb.offset) {
+      const d = bpApply(bpMul(TOOL_TO_GRID, bpMul(ROTS[c.rot], orientMatrix(pb.orient[0], pb.orient[1]))), pb.offset);
+      b.min = b.min.map((v, i) => v - Math.round(d[i]));
+      later.push([b, c.shape.name]);
+    } else blocks.push(b);
   }
-  return { blocks, skipped, unsure, other, mirror: mirrorPlane(grid.centre) };
+  const taken = new Set(blocks.map(b => b.min.join(',')));
+  for (const [b, name] of later) {
+    const k = b.min.join(',');
+    if (taken.has(k)) { skip(`${name} (its own cell, next to where it shows, has a block)`); continue; }
+    taken.add(k); blocks.push(b); moved++;
+  }
+  return { blocks, skipped, unsure, other, moved, mirror: mirrorPlane(grid.centre) };
 }
 
 // ---------- bp.sbc
@@ -3002,6 +3084,22 @@ function makeZip(files) {
 
 const DEFAULT_FILTER = 'armou?r|panel|plate|slope|corner|hull|wing';
 const dec = new TextDecoder();
+// Some blocks are drawn outside their own cell (KONTAKT's mantlet plates sit half a cell or more off, through ModelOffset,
+// so a plate can show in a cell that holds another block). The cell a model shows in: per axis, its own cell when the
+// model stays within it (give or take REACH_TOL of a cell), else the cell holding the middle of its extent. Returns
+// { offset: [x, y, z] (cells, block frame), tris moved into that cell, spans }. A model across several cells (canopies,
+// curved plates bulging past their cell) stays in its own cell, cut to it as before (spans: true).
+const REACH_TOL = 0.05;
+function shownCell(tris) {
+  const mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < tris.length; i += 3) for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], tris[i + k]); mx[k] = Math.max(mx[k], tris[i + k]); }
+  const offset = [0, 1, 2].map(k => mn[k] >= -REACH_TOL && mx[k] <= 1 + REACH_TOL ? 0 : Math.floor((mn[k] + mx[k]) / 2));
+  if (offset.some((o, k) => mn[k] - o < -REACH_TOL || mx[k] - o > 1 + REACH_TOL)) return { offset: [0, 0, 0], tris, spans: true };
+  if (offset.every(o => o === 0)) return { offset, tris };
+  const t = new Float32Array(tris.length);
+  for (let i = 0; i < tris.length; i += 3) for (let k = 0; k < 3; k++) t[i + k] = Math.round((tris[i + k] - offset[k]) * 1e4) / 1e4;
+  return { offset, tris: t };
+}
 const text = async (fs, p) => { const b = await fs.read(p); return b ? dec.decode(b) : null; };
 
 async function sbcFiles(fs, dir) {
@@ -3035,17 +3133,39 @@ async function importWorldBlocks(library, o) {
 
   const re = new RegExp(o.filter || DEFAULT_FILTER, 'i');
   const byTopology = new Map(library.filter(s => s.topology).map(s => [s.topology, s]));
-  const bySig = new Map();
-  for (const s of library) { if (!s.solids || !s.solids.length) continue; if (!s._m) s._m = shapeMask(s); if (maskCount(s._m.mask)) bySig.set(shapeKeySig(s._m.mask), s); }
+  // A block joins a card whose sample mask matches in some turn and whose volume matches too: the 6-sample mask alone
+  // can't tell a 1x8 slope's pieces from a 1x7's or from quarter blocks. A mod's grades are one model (same volume);
+  // the same piece from different modders differs by up to 0.6% of its volume, the 1x7 and 1x8 tips by 1%. Plates
+  // (panels) group by outline, whatever their thickness.
+  // Blocks drawn outside their cell get cards of their own ("reach" cards, keyed apart), never joining an in-cell card.
+  const bySig = new Map(), sigKey = (sig, reach) => (reach ? 'reach:' : '') + sig, vols = new WeakMap();
+  const volOf = s => { if (!vols.has(s)) vols.set(s, exactVolume(s)); return vols.get(s); };
+  const sameVolume = (a, b, plate) => { const d = Math.abs(a - b); return plate ? d < 0.05 : d < 0.006 && d < 0.03 * Math.max(a, b); };
+  const addCard = (sig, s) => { if (!bySig.has(sig)) bySig.set(sig, []); bySig.get(sig).push(s); };
+  for (const s of library) { if (!s.solids || !s.solids.length) continue; if (!s._m) s._m = shapeMask(s); if (maskCount(s._m.mask)) addCard(sigKey(shapeKeySig(s._m.mask), s.reach), s); }
+  // where each block is now, so a block read again moves to its right card (an older import may have put it elsewhere)
+  const blockKey = (subtype, size) => subtype + '|' + size, cardOf = new Map();
+  for (const s of library) for (const b of s.blocks || []) cardOf.set(blockKey(b.subtype, b.size), s);
   const keys = new Set(library.map(s => s.key));
-  const sum = { mods: sources.length, defs: 0, matched: 0, topology: 0, models: 0, newShapes: 0, multiCell: 0, noShape: 0, unreadable: 0, filteredOut: 0 };
+  const sum = { mods: sources.length, defs: 0, matched: 0, topology: 0, models: 0, newShapes: 0, multiCell: 0, reach: 0, spansCells: 0, noShape: 0, unreadable: 0, filteredOut: 0, moved: 0 };
   // orient: for a block read from its model, how it sits on the card (its Forward and Up as card directions; the card
   // may hold it turned, since cards group shapes in any turn). Blueprint export needs it (blueprint.js).
-  const addBlock = (s, d, src, orient) => {
+  // offset: for a block drawn outside its cell, where it shows from its own cell (cells, block frame); the export puts
+  // the block that far back (blueprint.js gridBlocks)
+  const addBlock = (s, d, src, orient, offset) => {
     s.blocks ||= [];
+    const k = blockKey(d.subtype, d.cubeSize), was = cardOf.get(k);
+    if (was && was !== s) {
+      const b = was.blocks.find(b => b.subtype === d.subtype && b.size === d.cubeSize);
+      // the card was named after this block (not by hand): it takes a remaining block's name below
+      if (was.id === 'mesh:' + b.mod + ':' + b.subtype && (was.name === b.name || was.name === was.autoName)) was._lostName = true;
+      was.blocks = was.blocks.filter(x => x !== b); sum.moved++;
+    }
+    cardOf.set(k, s);
     const cur = s.blocks.find(b => b.subtype === d.subtype && b.size === d.cubeSize);
-    if (!cur) s.blocks.push({ subtype: d.subtype, size: d.cubeSize, mod: src.name, name: blockName(d, texts), typeId: d.typeId, ...(orient ? { orient } : {}) });
-    else if (orient && !cur.orient) cur.orient = orient;
+    const off = offset && offset.some(v => v) ? { offset } : {};
+    if (!cur) s.blocks.push({ subtype: d.subtype, size: d.cubeSize, mod: src.name, name: blockName(d, texts), typeId: d.typeId, ...(orient ? { orient } : {}), ...off });
+    else { if (orient && !cur.orient) cur.orient = orient; if (off.offset) cur.offset = off.offset; }
   };
   for (const src of sources) {
     const files = await sbcFiles(src.fs, (src.root ? src.root + '/' : '') + 'Data');
@@ -3067,28 +3187,45 @@ async function importWorldBlocks(library, o) {
         const mp = d.model.split('\\').join('/');
         let buf = await src.fs.read((src.root ? src.root + '/' : '') + mp);
         if (!buf && o.content) buf = await o.content.read(mp);
-        let tris;
-        try { if (!buf) throw new Error('missing'); tris = modelToCell(readMwm(buf).tris, d); } catch (e) { sum.unreadable++; continue; }
+        let shown;
+        try { if (!buf) throw new Error('missing'); shown = shownCell(modelToCell(readMwm(buf).tris, d)); } catch (e) { sum.unreadable++; continue; }
+        if (shown.spans) sum.spansCells++;
+        const reach = shown.offset.some(v => v);
         // blocks called panels or plates are plates even when their thin model happens to cover sample points
-        const shape = { plate: /panel|plate/i.test(d.subtype + ' ' + blockName(d, texts)), solids: [{ type: 'tris', tris }] };
+        const shape = { plate: /panel|plate/i.test(d.subtype + ' ' + blockName(d, texts)), solids: [{ type: 'tris', tris: shown.tris }] };
         shape._m = shapeMask(shape);
         if (!maskCount(shape._m.mask)) { sum.noShape++; continue; }
-        const sig = shapeKeySig(shape._m.mask);
-        let s = bySig.get(sig), orient = ['Forward', 'Up'];
+        const sig = sigKey(shapeKeySig(shape._m.mask), reach);
+        const vol = volOf(shape);
+        let s = (bySig.get(sig) || []).find(c => sameVolume(volOf(c), vol, shape._m.plate)), orient = ['Forward', 'Up'];
         if (s) { if (!s._m) s._m = shapeMask(s); orient = blockOrientOnCard(s._m.mask, shape._m.mask); }
         if (!s) {
           const name = blockName(d, texts);
-          s = Object.assign(shape, { id: 'mesh:' + src.name + ':' + d.subtype, key: makeKey(name, keys), name, source: src.name,
-            blocks: [], use: false, penalty: MOD_PENALTY, lines: [], rev: 1 });   // mod blocks start off: switch on the ones you build with
-          keys.add(s.key); library.push(s); bySig.set(sig, s); sum.newShapes++;
+          let id = 'mesh:' + src.name + ':' + d.subtype;
+          if (library.some(x => x.id === id)) id += '~' + library.length;   // its card from an older import is still there: tidied below
+          // reach cards are picked by hand (Edit a cell), never by the fit: the block itself sits in another cell
+          s = Object.assign(shape, { id, key: makeKey(name, keys), name, source: src.name,
+            blocks: [], use: false, penalty: MOD_PENALTY, lines: [], rev: 1, ...(reach ? { reach: true } : {}) });   // mod blocks start off: switch on the ones you build with
+          keys.add(s.key); library.push(s); addCard(sig, s); sum.newShapes++;
         }
-        addBlock(s, d, src, orient); sum.models++; n++;
+        addBlock(s, d, src, orient, shown.offset); sum.models++; if (reach) sum.reach++; n++;
         if (n % 25 === 0) await pause();
       }
     }
     log(`  ${src.name}: ${n} blocks`);
     await pause();
   }
+  // imported cards left with no blocks (their blocks moved to better cards) go; one that lost the block it was read from
+  // is named after a block it still holds; a card that had to take a stand-in id gets its own back
+  for (let i = library.length - 1; i >= 0; i--) if (library[i].id.startsWith('mesh:') && library[i].blocks && !library[i].blocks.length) library.splice(i, 1);
+  for (const s of library) {
+    if (!s.id.startsWith('mesh:') || !s.blocks || s.blocks.some(b => s.id === 'mesh:' + b.mod + ':' + b.subtype)) { delete s._lostName; continue; }
+    const b = s.blocks.find(b => b.mod), id = b && 'mesh:' + b.mod + ':' + b.subtype;
+    if (id && !library.some(x => x.id === id)) s.id = id;
+    if (s._lostName && b) { s.name = b.name || b.subtype; delete s.autoName; }
+    delete s._lostName;
+  }
+  for (const s of library) { const m = s.id.match(/^(mesh:.*)~\d+$/); if (m && !library.some(x => x.id === m[1])) s.id = m[1]; }
   return sum;
 }
 
@@ -3147,6 +3284,7 @@ function initBlueprintUI(ctx) {
   const summary = (n, info) => {
     const sk = Object.entries(info.skipped || {}).map(([k, v]) => `${v} x ${esc(k)}`);
     return `${n} blocks, ${gridSize().toLowerCase()} grid, ${esc(armourLabel())} armour.` +
+      (info.moved ? `<br>${info.moved} blocks drawn outside their own cell (mantlet plates and the like) sit in the cell next to where they show.` : '') +
       (info.other ? `<br><span class="warn">${info.other} blocks have no ${esc(armourLabel())} block on their card: they are light armour (or the card's own block).</span>` : '') +
       (sk.length ? `<br><span class="warn">Left out: ${sk.join(', ')}.</span>` : '') +
       (info.unsure ? `<br><span class="warn">${info.unsure} imported blocks have no recorded turn on their card (imported before 2026-10-11): ` +
@@ -3405,7 +3543,7 @@ function renderLibrary() {
     const bl = blocks.length ? blocks.slice(0, 2).map(b => b.name || b.subtype).join(', ') + (blocks.length > 2 ? ` +${blocks.length - 2}` : '') : 'no game blocks linked';
     c.innerHTML = `${thumbCache.has(s.id) ? `<img src="${thumbCache.get(s.id)}">` : `<img data-id="${esc(s.id)}" alt="">`}
       <div class="t"><span class="k" style="background:${shapeColor(s).getStyle()}">${esc(s.key)}</span>${esc(s.name)}</div>
-      <div class="m" title="${esc(others.join(', '))}">${esc(s.source)}${others.length ? ` + ${esc(others.length === 1 ? others[0] : others.length + ' mods')}` : ''}${vol === null ? '<span class="tag">no shape yet</span>' : isPlate(s) ? '<span class="tag">plate</span>' : ` &middot; fills ${vol}%`}</div>
+      <div class="m" title="${esc(others.join(', '))}">${esc(s.source)}${others.length ? ` + ${esc(others.length === 1 ? others[0] : others.length + ' mods')}` : ''}${vol === null ? '<span class="tag">no shape yet</span>' : isPlate(s) ? '<span class="tag">plate</span>' : ` &middot; fills ${vol}%`}${s.reach ? '<span class="tag" title="Drawn outside its own cell: shown here in the cell where it shows. Pick it by hand in Edit a cell (the fit leaves it out); the blueprint puts the block in its own cell next to it.">offset</span>' : ''}</div>
       <div class="m" title="${esc(blocks.map(b => `${b.name || b.subtype} (${b.size || '?'}${b.mod ? ', ' + b.mod : ''})`).join('\n'))}">${esc(bl)}</div>
       <label><input type="checkbox" ${s.use ? 'checked' : ''}> use in builder</label>`;
     const img = c.querySelector('img[data-id]'); if (img) thumbObserver.observe(img);
@@ -3593,8 +3731,8 @@ el('impRun').addEventListener('click', async () => {
       filter: el('impFilter').value, includeVanilla: el('impVanilla').checked, log, yieldNow: tick });
     LIB.slice(before).forEach(s => s.rev = 1);
     log(`\nDone in ${((performance.now() - t0) / 1000).toFixed(1)} s. ${sum.matched} matching blocks: ${sum.topology} armour joined the vanilla shapes, ` +
-      `${sum.models} read from models (${sum.newShapes} new cards, switched off: turn on the ones you build with). Skipped: ${sum.multiCell} larger than one cell, ${sum.unreadable} with unreadable models, ` +
-      `${sum.noShape} without a usable shape.`);
+      `${sum.models} read from models (${sum.newShapes} new cards, switched off: turn on the ones you build with; ${sum.reach} drawn outside their own cell, on "offset" cards you pick by hand${sum.moved ? `; ${sum.moved} moved off the cards an older import put them on` : ''}). ` +
+      `${sum.spansCells ? `${sum.spansCells} drawn across several cells, cut to their own. ` : ''}Skipped: ${sum.multiCell} larger than one cell, ${sum.unreadable} with unreadable models, ${sum.noShape} without a usable shape.`);
     nameCardsByFamily(LIB); LIB.forEach(s => thumbCache.delete(s.id));
     libChanged(); renderLibrary(); refreshSketchList();
   } catch (e) { log('Import failed: ' + e.message); }
@@ -3855,7 +3993,7 @@ const Fit = (() => {
   const stop = () => { pool.forEach(x => x.w.terminate()); pool = []; };
   const plainOpts = o => { const { shapes, T, groupsOn, ...rest } = o; return { ...rest, groupsOn: [...groupsOn] }; };
   // shapes not in use go as stubs (the worker's templates must match the page's, so every index is kept)
-  const libMsg = (shapes, ver) => ({ ver, shapes: shapes.map(s => s.use ? { use: true, solids: s.solids, plate: s.plate, penalty: s.penalty } : { use: false }) });
+  const libMsg = (shapes, ver) => ({ ver, shapes: shapes.map(s => s.use ? { use: true, id: s.id, solids: s.solids, plate: s.plate, penalty: s.penalty, reach: s.reach } : { use: false }) });
   // one message to one worker; resolves with its 'done' reply (null if the job is cancelled)
   function ask(x, msg, job, onProgress) {
     return new Promise((resolve, reject) => {

@@ -31,6 +31,6 @@ nameCardsByFamily(lib);
 const shapes = lib.map(({ _m, _s, ...s }) => ({ ...s, solids: (s.solids || []).map(sol => sol.type === 'tris'
   ? { type: 'tris', tris: Array.from(sol.tris, v => Math.round(v * 1e4) / 1e4) } : sol) }));
 fs.writeFileSync(out, JSON.stringify({ format: 'se-grid-builder-library', version: 1, shapes }));
-console.log(`\n${sum.matched} matching blocks: ${sum.topology} joined vanilla armour, ${sum.models} read from models (${sum.newShapes} new cards, switched off until you turn them on); ` +
-  `skipped ${sum.multiCell} larger than one cell, ${sum.unreadable} unreadable models. ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+console.log(`\n${sum.matched} matching blocks: ${sum.topology} joined vanilla armour, ${sum.models} read from models (${sum.newShapes} new cards, switched off until you turn them on; ${sum.reach} drawn outside their own cell, on offset cards); ` +
+  `${sum.spansCells} drawn across several cells, cut to their own; skipped ${sum.multiCell} larger than one cell, ${sum.unreadable} unreadable models. ${((Date.now() - t0) / 1000).toFixed(1)} s`);
 console.log(`Wrote ${path.resolve(out)} (${lib.length} cards). In SE Grid Builder: Cube Library > Import JSON, then Cancel to merge.`);
