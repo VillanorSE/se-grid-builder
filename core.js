@@ -34,6 +34,9 @@ const ROT_MAP = ROTS.map(R => SAMPLE.map(p => sIndex([0, 1, 2].map(c => R[0][c] 
 // 90-degree turns about X, Y, Z as sample permutations (for the cell editor)
 const TURN_MAP = [0, 1, 2].map(axis => SAMPLE.map(p => { const q = [p[0] - .5, p[1] - .5, p[2] - .5];
   const r = axis === 1 ? [-q[2], q[1], q[0]] : axis === 0 ? [q[0], q[2], -q[1]] : [q[1], -q[0], q[2]]; return sIndex(r); }));
+// the same turns (and the centreline mirror) of a direction: where a shape's point at v goes
+export const turnVec = (axis, v) => axis === 1 ? [v[2], v[1], -v[0]] : axis === 0 ? [v[0], -v[2], v[1]] : [-v[1], v[0], v[2]];
+const mirrorVec = v => [v[0], v[1], -v[2]];
 
 // ---------- bit masks over the NS samples
 export const newMask = () => new Uint32Array(W);
@@ -237,6 +240,8 @@ function earClip(poly, pts) {
 // ---------- templates: every distinct (shape, rotation) of the shapes in use, as bit masks
 // shapes: library entries ({ solids, use, plate?, penalty?, reach? }); the mask is cached on the entry as _m. A reach
 // card (a block drawn outside its own cell, importer.js) gives hand-only templates: the cell editor offers them, the fit doesn't.
+// Its solids are where it shows, one cell over by its shift ([x, y, z] cells, card frame); the template's key adds the
+// shift as turned (shiftT), since a plate on one side of its block and on another look alike to the mask.
 // A template's sig is its mask; cards the mask can't tell apart (a 1x7 and a 1x8 slope piece, a mantlet plate and a
 // panel: the importer keeps them apart by volume) each keep their templates, the second and later ones with
 // "#<card id>" added (the first card in the library keeps the plain mask, as cell edits saved before this have it).
@@ -248,7 +253,7 @@ export function buildTemplates(shapes) {
     const { mask, plate } = sh._m;
     if (!maskCount(mask)) return;
     ROT_MAP.forEach((map, ri) => {
-      const m = permute(mask, map), ms = maskSig(m);
+      const m = permute(mask, map), shiftT = sh.shift ? rotP(ROTS[ri], sh.shift) : null, ms = tplKey(maskSig(m), shiftT);
       if (!owner.has(ms)) owner.set(ms, si);
       const sig = owner.get(ms) === si ? ms : ms + '#' + sh.id;
       if (bySig.has(sig)) return;   // the card's own turns that look alike
@@ -260,7 +265,7 @@ export function buildTemplates(shapes) {
       const face = [0, 1, 2, 3, 4, 5].map(w => { const ax = w >> 1, at = w & 1 ? SUB - 1 : 0, f = new Uint8Array(SUB * SUB);
         for (let u = 0; u < SUB; u++) for (let v = 0; v < SUB; v++) { const q = [0, 0, 0]; q[ax] = at; q[(ax + 1) % 3] = u; q[(ax + 2) % 3] = v;
           f[u * SUB + v] = getBit(m, (q[1] * SUB + q[2]) * SUB + q[0]); } return f; });
-      list.push({ shape: si, rot: ri, mask: m, n: maskCount(m), plate, sig, card: sh.id, minY, walls, face, ...(sh.reach ? { hand: true } : {}) });
+      list.push({ shape: si, rot: ri, mask: m, n: maskCount(m), plate, sig, card: sh.id, minY, walls, face, ...(sh.reach ? { hand: true } : {}), ...(shiftT ? { shiftT } : {}) });
     });
   });
   return { list, bySig };
@@ -268,15 +273,16 @@ export function buildTemplates(shapes) {
 // the same shape turned 90 degrees about an axis (0 = X length, 1 = Y vertical, 2 = Z width)
 // a mask's template of the same card when it has one of its own (see buildTemplates), else whichever card has it
 const sameCard = (T, ti, ms) => T.bySig.get(ms + '#' + T.list[ti].card) ?? T.bySig.get(ms);
+const tplKey = (ms, shiftT) => shiftT ? ms + '@' + shiftT.join(',') : ms;
 export function rotateTemplate(T, ti, axis) {
-  const r = sameCard(T, ti, maskSig(permute(T.list[ti].mask, TURN_MAP[axis])));
+  const t = T.list[ti], r = sameCard(T, ti, tplKey(maskSig(permute(t.mask, TURN_MAP[axis])), t.shiftT && turnVec(axis, t.shiftT)));
   return r === undefined ? ti : r;
 }
 // the block mirrored across the hull centreline (Z, the width): the template whose mask is this one flipped in Z, or -1
 // when the library has no such block (a left/right-handed shape without its twin in use). The cell editor's mirror.
 const MIRROR_Z = SAMPLE.map(p => sIndex([p[0] - .5, p[1] - .5, .5 - p[2]]));
 export function mirrorTemplate(T, ti) {
-  const r = sameCard(T, ti, maskSig(permute(T.list[ti].mask, MIRROR_Z)));
+  const t = T.list[ti], r = sameCard(T, ti, tplKey(maskSig(permute(t.mask, MIRROR_Z)), t.shiftT && mirrorVec(t.shiftT)));
   return r === undefined ? -1 : r;
 }
 // rotation-independent signature of a shape's mask (finds duplicate shapes)

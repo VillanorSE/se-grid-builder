@@ -132,17 +132,27 @@ check(sc1.offset.join() === '0,0,-1' && Math.min(...sc1.tris.filter((v, i) => i 
   'shownCell: a plate in the cell in front moves there; one just past its own wall stays; one across three cells stays, cut to its own');
 check(Math.abs(C.exactVolume(lib.find(s => s.id === 'vanilla:Slope')) - 0.5) < 1e-9 && Math.abs(C.exactVolume({ solids: [{ type: 'tris', tris: box(0, 0, 0, 1, 0.25, 1) }] }) - 0.25) < 1e-6,
   'exact volume of a plane solid (vanilla slope 0.5) and a triangle solid (quarter block 0.25)');
-const reachCard = { id: 'mesh:M:P', name: 'Mantlet P', reach: true, blocks: [{ subtype: 'P', size: 'Small', mod: 'M', typeId: 'CubeBlock', orient: ['Forward', 'Up'], offset: [0, 0, -1] }] };
+// a reach card is the block's own cell, its model drawn shift cells over; the block exports in the cell it is put in
+const reachCard = { id: 'mesh:M:P', name: 'Mantlet P', reach: true, shift: [0, 0, -1], solids: [{ type: 'tris', tris: box(0, 0, 0, 1, 0.04, 1) }],
+  blocks: [{ subtype: 'P', size: 'Small', mod: 'M', typeId: 'CubeBlock', orient: ['Forward', 'Up'] }] };
 const cube = lib.find(s => s.id === 'vanilla:Box');
-const rb = (cells, nz = 3) => BP.gridBlocks({ nx: 3, ny: 1, nz, centre: 'col' }, (x, y, z) => cells[[x, y, z].join()] || null, { size: 'Small', armour: 'light' });
-const r1 = rb({ '1,0,1': { shape: reachCard, rot: 0 } }), r2 = rb({ '1,0,1': { shape: reachCard, rot: 0 }, '1,0,2': { shape: cube, rot: 0 } });
-// shows at tool (1,0,1) = grid (0,0,-1); its own cell is one tool cell further along +z (the block's Forward is the
-// tool's -z here), grid +X
-check(r1.blocks.length === 1 && r1.blocks[0].min.join() === '1,0,-1' && r1.moved === 1, `a reach block goes back by its offset to its own cell (${r1.blocks[0] && r1.blocks[0].min})`);
-check(r2.blocks.length === 1 && r2.blocks[0].subtype === 'SmallBlockArmorBlock' && Object.keys(r2.skipped)[0].includes('has a block'),
-  'a reach block whose own cell has a block is left out and listed');
-const rT = C.buildTemplates([{ ...cube, use: true, reach: true }]);
+const r1 = BP.gridBlocks({ nx: 3, ny: 1, nz: 3, centre: 'col' }, (x, y, z) => x === 1 && z === 1 ? { shape: reachCard, rot: 0 } : null, { size: 'Small', armour: 'light' });
+check(r1.blocks.length === 1 && r1.blocks[0].min.join() === '0,0,-1', `a reach block exports in its own cell (${r1.blocks[0] && r1.blocks[0].min})`);
+const rT = C.buildTemplates([{ ...reachCard, use: true }]);
 check(rT.list.length && rT.list.every(t => t.hand), 'reach cards give hand-only templates (left out of the fit)');
+// a plate lying flat looks alike in several turns; its shift tells them apart, so all turns of it stay
+check(rT.list.length === 24 && new Set(rT.list.map(t => t.shiftT.join())).size === 6,
+  `a shifted plate keeps a template for every side it can show on (${rT.list.length} templates)`);
+// the shift turns with the mask: a corner speck shifted towards that corner stays pointing at it in every turn, also
+// after the cell editor's turns and its mirror
+const speck = { id: 'mesh:M:S', reach: true, shift: [-1, -1, -1], solids: [{ type: 'tris', tris: box(0, 0, 0, 0.15, 0.15, 0.15) }] };
+const sT = C.buildTemplates([{ ...speck, use: true }]);
+const octant = t => { let k = 0; while (!C.getBit(t.mask, k)) k++; const x = k % C.SUB, z = Math.floor(k / C.SUB) % C.SUB, y = Math.floor(k / C.SUB / C.SUB);
+  return [x, y, z].map(v => v < C.SUB / 2 ? -1 : 1).join(); };
+const turnsOk = sT.list.length === 8 && sT.list.every((t, i) => octant(t) === t.shiftT.join() &&
+  [0, 1, 2].every(a => { const j = C.rotateTemplate(sT, i, a); return j !== i && octant(sT.list[j]) === sT.list[j].shiftT.join(); }));
+const mi = C.mirrorTemplate(sT, 0), mOk = mi >= 0 && octant(sT.list[mi]) === sT.list[mi].shiftT.join() && sT.list[mi].shiftT[2] === -sT.list[0].shiftT[2];
+check(turnsOk && mOk, "a reach card's shift turns with its mask (a turn per corner, the editor's turns and mirror)");
 const slope = lib.find(s => s.id === 'vanilla:Slope'), twin = { ...slope, id: 'mesh:M:SlopeTwin', _m: undefined };
 const dT = C.buildTemplates([{ ...slope, use: true }, { ...twin, use: true }]), d0 = dT.list.filter(t => t.shape === 0), d1 = dT.list.filter(t => t.shape === 1);
 const turned = C.rotateTemplate(dT, dT.list.indexOf(d1[0]), 1);

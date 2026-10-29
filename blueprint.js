@@ -195,7 +195,7 @@ function modLabel(mod, subs) {
 
 // ---------- which game block a card becomes
 // size: 'Large' | 'Small'; armour: 'light' | 'heavy' | a grade (armourGrades). Returns { typeId, subtype, orient: [F, U],
-// sure, other, offset? } or null when the card has no block of that grid size. sure = false: an imported block whose turn on the
+// sure, other } or null when the card has no block of that grid size. sure = false: an imported block whose turn on the
 // card was never recorded. other = true: a grade was asked for but the card has no block of it, so it gets the light one.
 export function pickBlock(shape, size, armour = 'light') {
   const heavy = armour === 'heavy', cardOrient = CARD_ORIENT[shape.id] || ['Forward', 'Up'], g = parseGrade(armour);
@@ -214,8 +214,7 @@ export function pickBlock(shape, size, armour = 'light') {
 function modBlock(shape, b, cardOrient) {
   const defining = shape.id === 'mesh:' + b.mod + ':' + b.subtype;   // the block the card's shape was read from
   const orient = b.orient || cardOrient;
-  return { typeId: b.typeId || 'CubeBlock', subtype: b.subtype, orient, sure: !!(b.orient || !shape.id.startsWith('mesh:') || defining), other: false,
-    ...(b.offset ? { offset: b.offset } : {}) };
+  return { typeId: b.typeId || 'CubeBlock', subtype: b.subtype, orient, sure: !!(b.orient || !shape.id.startsWith('mesh:') || defining), other: false };
 }
 
 // a template's block orientation in the SE grid: rot = the tool's turn of the card (ROTS index), orient = pickBlock's
@@ -244,13 +243,10 @@ export function colorMaskHSV(hex) {
 // ---------- blocks of a fitted grid
 // grid: { nx, ny, nz, centre }; cellAt(x, y, z) -> { shape: library entry, rot } | null (empty / no block)
 // o: { size, armour, color(shape) -> '#rrggbb' | null }
-// A block drawn outside its own cell (pickBlock offset) shows in the cell it was put in, so it goes back by its offset,
-// turned with it, to its own cell; when that cell already has a block it is left out and listed.
-// Returns { blocks, skipped: { reason: count }, unsure, other (blocks without the chosen grade), moved (blocks put in a
-// neighbouring cell), mirror }
+// Returns { blocks, skipped: { reason: count }, unsure, other (blocks without the chosen grade), mirror }
 export function gridBlocks(grid, cellAt, o) {
-  const blocks = [], skipped = {}, skip = r => { skipped[r] = (skipped[r] || 0) + 1; }, later = [];
-  let unsure = 0, other = 0, moved = 0;
+  const blocks = [], skipped = {}, skip = r => { skipped[r] = (skipped[r] || 0) + 1; };
+  let unsure = 0, other = 0;
   for (let y = 0; y < grid.ny; y++) for (let z = 0; z < grid.nz; z++) for (let x = 0; x < grid.nx; x++) {
     const c = cellAt(x, y, z); if (!c) continue;
     const pb = pickBlock(c.shape, o.size, o.armour);
@@ -258,21 +254,10 @@ export function gridBlocks(grid, cellAt, o) {
     if (!pb.sure) unsure++;
     if (pb.other) other++;
     const col = o.color ? o.color(c.shape) : null;
-    const b = { typeId: pb.typeId, subtype: pb.subtype, min: gridPos(x, y, z, grid.nz, grid.centre), ...gridOrientation(c.rot, pb.orient),
-      color: col ? colorMaskHSV(col) : null, card: c.shape.id };
-    if (pb.offset) {
-      const d = bpApply(bpMul(TOOL_TO_GRID, bpMul(ROTS[c.rot], orientMatrix(pb.orient[0], pb.orient[1]))), pb.offset);
-      b.min = b.min.map((v, i) => v - Math.round(d[i]));
-      later.push([b, c.shape.name]);
-    } else blocks.push(b);
+    blocks.push({ typeId: pb.typeId, subtype: pb.subtype, min: gridPos(x, y, z, grid.nz, grid.centre), ...gridOrientation(c.rot, pb.orient),
+      color: col ? colorMaskHSV(col) : null, card: c.shape.id });
   }
-  const taken = new Set(blocks.map(b => b.min.join(',')));
-  for (const [b, name] of later) {
-    const k = b.min.join(',');
-    if (taken.has(k)) { skip(`${name} (its own cell, next to where it shows, has a block)`); continue; }
-    taken.add(k); blocks.push(b); moved++;
-  }
-  return { blocks, skipped, unsure, other, moved, mirror: mirrorPlane(grid.centre) };
+  return { blocks, skipped, unsure, other, mirror: mirrorPlane(grid.centre) };
 }
 
 // ---------- bp.sbc

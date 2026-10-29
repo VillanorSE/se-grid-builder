@@ -350,6 +350,9 @@ const ROT_MAP = ROTS.map(R => SAMPLE.map(p => sIndex([0, 1, 2].map(c => R[0][c] 
 // 90-degree turns about X, Y, Z as sample permutations (for the cell editor)
 const TURN_MAP = [0, 1, 2].map(axis => SAMPLE.map(p => { const q = [p[0] - .5, p[1] - .5, p[2] - .5];
   const r = axis === 1 ? [-q[2], q[1], q[0]] : axis === 0 ? [q[0], q[2], -q[1]] : [q[1], -q[0], q[2]]; return sIndex(r); }));
+// the same turns (and the centreline mirror) of a direction: where a shape's point at v goes
+const turnVec = (axis, v) => axis === 1 ? [v[2], v[1], -v[0]] : axis === 0 ? [v[0], -v[2], v[1]] : [-v[1], v[0], v[2]];
+const mirrorVec = v => [v[0], v[1], -v[2]];
 
 // ---------- bit masks over the NS samples
 const newMask = () => new Uint32Array(W);
@@ -553,6 +556,8 @@ function earClip(poly, pts) {
 // ---------- templates: every distinct (shape, rotation) of the shapes in use, as bit masks
 // shapes: library entries ({ solids, use, plate?, penalty?, reach? }); the mask is cached on the entry as _m. A reach
 // card (a block drawn outside its own cell, importer.js) gives hand-only templates: the cell editor offers them, the fit doesn't.
+// Its solids are where it shows, one cell over by its shift ([x, y, z] cells, card frame); the template's key adds the
+// shift as turned (shiftT), since a plate on one side of its block and on another look alike to the mask.
 // A template's sig is its mask; cards the mask can't tell apart (a 1x7 and a 1x8 slope piece, a mantlet plate and a
 // panel: the importer keeps them apart by volume) each keep their templates, the second and later ones with
 // "#<card id>" added (the first card in the library keeps the plain mask, as cell edits saved before this have it).
@@ -564,7 +569,7 @@ function buildTemplates(shapes) {
     const { mask, plate } = sh._m;
     if (!maskCount(mask)) return;
     ROT_MAP.forEach((map, ri) => {
-      const m = permute(mask, map), ms = maskSig(m);
+      const m = permute(mask, map), shiftT = sh.shift ? rotP(ROTS[ri], sh.shift) : null, ms = tplKey(maskSig(m), shiftT);
       if (!owner.has(ms)) owner.set(ms, si);
       const sig = owner.get(ms) === si ? ms : ms + '#' + sh.id;
       if (bySig.has(sig)) return;   // the card's own turns that look alike
@@ -576,7 +581,7 @@ function buildTemplates(shapes) {
       const face = [0, 1, 2, 3, 4, 5].map(w => { const ax = w >> 1, at = w & 1 ? SUB - 1 : 0, f = new Uint8Array(SUB * SUB);
         for (let u = 0; u < SUB; u++) for (let v = 0; v < SUB; v++) { const q = [0, 0, 0]; q[ax] = at; q[(ax + 1) % 3] = u; q[(ax + 2) % 3] = v;
           f[u * SUB + v] = getBit(m, (q[1] * SUB + q[2]) * SUB + q[0]); } return f; });
-      list.push({ shape: si, rot: ri, mask: m, n: maskCount(m), plate, sig, card: sh.id, minY, walls, face, ...(sh.reach ? { hand: true } : {}) });
+      list.push({ shape: si, rot: ri, mask: m, n: maskCount(m), plate, sig, card: sh.id, minY, walls, face, ...(sh.reach ? { hand: true } : {}), ...(shiftT ? { shiftT } : {}) });
     });
   });
   return { list, bySig };
@@ -584,15 +589,16 @@ function buildTemplates(shapes) {
 // the same shape turned 90 degrees about an axis (0 = X length, 1 = Y vertical, 2 = Z width)
 // a mask's template of the same card when it has one of its own (see buildTemplates), else whichever card has it
 const sameCard = (T, ti, ms) => T.bySig.get(ms + '#' + T.list[ti].card) ?? T.bySig.get(ms);
+const tplKey = (ms, shiftT) => shiftT ? ms + '@' + shiftT.join(',') : ms;
 function rotateTemplate(T, ti, axis) {
-  const r = sameCard(T, ti, maskSig(permute(T.list[ti].mask, TURN_MAP[axis])));
+  const t = T.list[ti], r = sameCard(T, ti, tplKey(maskSig(permute(t.mask, TURN_MAP[axis])), t.shiftT && turnVec(axis, t.shiftT)));
   return r === undefined ? ti : r;
 }
 // the block mirrored across the hull centreline (Z, the width): the template whose mask is this one flipped in Z, or -1
 // when the library has no such block (a left/right-handed shape without its twin in use). The cell editor's mirror.
 const MIRROR_Z = SAMPLE.map(p => sIndex([p[0] - .5, p[1] - .5, .5 - p[2]]));
 function mirrorTemplate(T, ti) {
-  const r = sameCard(T, ti, maskSig(permute(T.list[ti].mask, MIRROR_Z)));
+  const t = T.list[ti], r = sameCard(T, ti, tplKey(maskSig(permute(t.mask, MIRROR_Z)), t.shiftT && mirrorVec(t.shiftT)));
   return r === undefined ? -1 : r;
 }
 // rotation-independent signature of a shape's mask (finds duplicate shapes)
@@ -1487,6 +1493,9 @@ const ROT_MAP = ROTS.map(R => SAMPLE.map(p => sIndex([0, 1, 2].map(c => R[0][c] 
 // 90-degree turns about X, Y, Z as sample permutations (for the cell editor)
 const TURN_MAP = [0, 1, 2].map(axis => SAMPLE.map(p => { const q = [p[0] - .5, p[1] - .5, p[2] - .5];
   const r = axis === 1 ? [-q[2], q[1], q[0]] : axis === 0 ? [q[0], q[2], -q[1]] : [q[1], -q[0], q[2]]; return sIndex(r); }));
+// the same turns (and the centreline mirror) of a direction: where a shape's point at v goes
+const turnVec = (axis, v) => axis === 1 ? [v[2], v[1], -v[0]] : axis === 0 ? [v[0], -v[2], v[1]] : [-v[1], v[0], v[2]];
+const mirrorVec = v => [v[0], v[1], -v[2]];
 
 // ---------- bit masks over the NS samples
 const newMask = () => new Uint32Array(W);
@@ -1690,6 +1699,8 @@ function earClip(poly, pts) {
 // ---------- templates: every distinct (shape, rotation) of the shapes in use, as bit masks
 // shapes: library entries ({ solids, use, plate?, penalty?, reach? }); the mask is cached on the entry as _m. A reach
 // card (a block drawn outside its own cell, importer.js) gives hand-only templates: the cell editor offers them, the fit doesn't.
+// Its solids are where it shows, one cell over by its shift ([x, y, z] cells, card frame); the template's key adds the
+// shift as turned (shiftT), since a plate on one side of its block and on another look alike to the mask.
 // A template's sig is its mask; cards the mask can't tell apart (a 1x7 and a 1x8 slope piece, a mantlet plate and a
 // panel: the importer keeps them apart by volume) each keep their templates, the second and later ones with
 // "#<card id>" added (the first card in the library keeps the plain mask, as cell edits saved before this have it).
@@ -1701,7 +1712,7 @@ function buildTemplates(shapes) {
     const { mask, plate } = sh._m;
     if (!maskCount(mask)) return;
     ROT_MAP.forEach((map, ri) => {
-      const m = permute(mask, map), ms = maskSig(m);
+      const m = permute(mask, map), shiftT = sh.shift ? rotP(ROTS[ri], sh.shift) : null, ms = tplKey(maskSig(m), shiftT);
       if (!owner.has(ms)) owner.set(ms, si);
       const sig = owner.get(ms) === si ? ms : ms + '#' + sh.id;
       if (bySig.has(sig)) return;   // the card's own turns that look alike
@@ -1713,7 +1724,7 @@ function buildTemplates(shapes) {
       const face = [0, 1, 2, 3, 4, 5].map(w => { const ax = w >> 1, at = w & 1 ? SUB - 1 : 0, f = new Uint8Array(SUB * SUB);
         for (let u = 0; u < SUB; u++) for (let v = 0; v < SUB; v++) { const q = [0, 0, 0]; q[ax] = at; q[(ax + 1) % 3] = u; q[(ax + 2) % 3] = v;
           f[u * SUB + v] = getBit(m, (q[1] * SUB + q[2]) * SUB + q[0]); } return f; });
-      list.push({ shape: si, rot: ri, mask: m, n: maskCount(m), plate, sig, card: sh.id, minY, walls, face, ...(sh.reach ? { hand: true } : {}) });
+      list.push({ shape: si, rot: ri, mask: m, n: maskCount(m), plate, sig, card: sh.id, minY, walls, face, ...(sh.reach ? { hand: true } : {}), ...(shiftT ? { shiftT } : {}) });
     });
   });
   return { list, bySig };
@@ -1721,15 +1732,16 @@ function buildTemplates(shapes) {
 // the same shape turned 90 degrees about an axis (0 = X length, 1 = Y vertical, 2 = Z width)
 // a mask's template of the same card when it has one of its own (see buildTemplates), else whichever card has it
 const sameCard = (T, ti, ms) => T.bySig.get(ms + '#' + T.list[ti].card) ?? T.bySig.get(ms);
+const tplKey = (ms, shiftT) => shiftT ? ms + '@' + shiftT.join(',') : ms;
 function rotateTemplate(T, ti, axis) {
-  const r = sameCard(T, ti, maskSig(permute(T.list[ti].mask, TURN_MAP[axis])));
+  const t = T.list[ti], r = sameCard(T, ti, tplKey(maskSig(permute(t.mask, TURN_MAP[axis])), t.shiftT && turnVec(axis, t.shiftT)));
   return r === undefined ? ti : r;
 }
 // the block mirrored across the hull centreline (Z, the width): the template whose mask is this one flipped in Z, or -1
 // when the library has no such block (a left/right-handed shape without its twin in use). The cell editor's mirror.
 const MIRROR_Z = SAMPLE.map(p => sIndex([p[0] - .5, p[1] - .5, .5 - p[2]]));
 function mirrorTemplate(T, ti) {
-  const r = sameCard(T, ti, maskSig(permute(T.list[ti].mask, MIRROR_Z)));
+  const t = T.list[ti], r = sameCard(T, ti, tplKey(maskSig(permute(t.mask, MIRROR_Z)), t.shiftT && mirrorVec(t.shiftT)));
   return r === undefined ? -1 : r;
 }
 // rotation-independent signature of a shape's mask (finds duplicate shapes)
@@ -2834,7 +2846,7 @@ function modLabel(mod, subs) {
 
 // ---------- which game block a card becomes
 // size: 'Large' | 'Small'; armour: 'light' | 'heavy' | a grade (armourGrades). Returns { typeId, subtype, orient: [F, U],
-// sure, other, offset? } or null when the card has no block of that grid size. sure = false: an imported block whose turn on the
+// sure, other } or null when the card has no block of that grid size. sure = false: an imported block whose turn on the
 // card was never recorded. other = true: a grade was asked for but the card has no block of it, so it gets the light one.
 function pickBlock(shape, size, armour = 'light') {
   const heavy = armour === 'heavy', cardOrient = CARD_ORIENT[shape.id] || ['Forward', 'Up'], g = parseGrade(armour);
@@ -2853,8 +2865,7 @@ function pickBlock(shape, size, armour = 'light') {
 function modBlock(shape, b, cardOrient) {
   const defining = shape.id === 'mesh:' + b.mod + ':' + b.subtype;   // the block the card's shape was read from
   const orient = b.orient || cardOrient;
-  return { typeId: b.typeId || 'CubeBlock', subtype: b.subtype, orient, sure: !!(b.orient || !shape.id.startsWith('mesh:') || defining), other: false,
-    ...(b.offset ? { offset: b.offset } : {}) };
+  return { typeId: b.typeId || 'CubeBlock', subtype: b.subtype, orient, sure: !!(b.orient || !shape.id.startsWith('mesh:') || defining), other: false };
 }
 
 // a template's block orientation in the SE grid: rot = the tool's turn of the card (ROTS index), orient = pickBlock's
@@ -2883,13 +2894,10 @@ function colorMaskHSV(hex) {
 // ---------- blocks of a fitted grid
 // grid: { nx, ny, nz, centre }; cellAt(x, y, z) -> { shape: library entry, rot } | null (empty / no block)
 // o: { size, armour, color(shape) -> '#rrggbb' | null }
-// A block drawn outside its own cell (pickBlock offset) shows in the cell it was put in, so it goes back by its offset,
-// turned with it, to its own cell; when that cell already has a block it is left out and listed.
-// Returns { blocks, skipped: { reason: count }, unsure, other (blocks without the chosen grade), moved (blocks put in a
-// neighbouring cell), mirror }
+// Returns { blocks, skipped: { reason: count }, unsure, other (blocks without the chosen grade), mirror }
 function gridBlocks(grid, cellAt, o) {
-  const blocks = [], skipped = {}, skip = r => { skipped[r] = (skipped[r] || 0) + 1; }, later = [];
-  let unsure = 0, other = 0, moved = 0;
+  const blocks = [], skipped = {}, skip = r => { skipped[r] = (skipped[r] || 0) + 1; };
+  let unsure = 0, other = 0;
   for (let y = 0; y < grid.ny; y++) for (let z = 0; z < grid.nz; z++) for (let x = 0; x < grid.nx; x++) {
     const c = cellAt(x, y, z); if (!c) continue;
     const pb = pickBlock(c.shape, o.size, o.armour);
@@ -2897,21 +2905,10 @@ function gridBlocks(grid, cellAt, o) {
     if (!pb.sure) unsure++;
     if (pb.other) other++;
     const col = o.color ? o.color(c.shape) : null;
-    const b = { typeId: pb.typeId, subtype: pb.subtype, min: gridPos(x, y, z, grid.nz, grid.centre), ...gridOrientation(c.rot, pb.orient),
-      color: col ? colorMaskHSV(col) : null, card: c.shape.id };
-    if (pb.offset) {
-      const d = bpApply(bpMul(TOOL_TO_GRID, bpMul(ROTS[c.rot], orientMatrix(pb.orient[0], pb.orient[1]))), pb.offset);
-      b.min = b.min.map((v, i) => v - Math.round(d[i]));
-      later.push([b, c.shape.name]);
-    } else blocks.push(b);
+    blocks.push({ typeId: pb.typeId, subtype: pb.subtype, min: gridPos(x, y, z, grid.nz, grid.centre), ...gridOrientation(c.rot, pb.orient),
+      color: col ? colorMaskHSV(col) : null, card: c.shape.id });
   }
-  const taken = new Set(blocks.map(b => b.min.join(',')));
-  for (const [b, name] of later) {
-    const k = b.min.join(',');
-    if (taken.has(k)) { skip(`${name} (its own cell, next to where it shows, has a block)`); continue; }
-    taken.add(k); blocks.push(b); moved++;
-  }
-  return { blocks, skipped, unsure, other, moved, mirror: mirrorPlane(grid.centre) };
+  return { blocks, skipped, unsure, other, mirror: mirrorPlane(grid.centre) };
 }
 
 // ---------- bp.sbc
@@ -3085,7 +3082,7 @@ function makeZip(files) {
 const DEFAULT_FILTER = 'armou?r|panel|plate|slope|corner|hull|wing';
 const dec = new TextDecoder();
 // Some blocks are drawn outside their own cell (KONTAKT's mantlet plates sit half a cell or more off, through ModelOffset,
-// so a plate can show in a cell that holds another block). The cell a model shows in: per axis, its own cell when the
+// so the block goes in a spare cell and its plate shows over the next block). The cell a model shows in: per axis, its own cell when the
 // model stays within it (give or take REACH_TOL of a cell), else the cell holding the middle of its extent. Returns
 // { offset: [x, y, z] (cells, block frame), tris moved into that cell, spans }. A model across several cells (canopies,
 // curved plates bulging past their cell) stays in its own cell, cut to it as before (spans: true).
@@ -3137,12 +3134,15 @@ async function importWorldBlocks(library, o) {
   // can't tell a 1x8 slope's pieces from a 1x7's or from quarter blocks. A mod's grades are one model (same volume);
   // the same piece from different modders differs by up to 0.6% of its volume, the 1x7 and 1x8 tips by 1%. Plates
   // (panels) group by outline, whatever their thickness.
-  // Blocks drawn outside their cell get cards of their own ("reach" cards, keyed apart), never joining an in-cell card.
-  const bySig = new Map(), sigKey = (sig, reach) => (reach ? 'reach:' : '') + sig, vols = new WeakMap();
+  // Blocks drawn outside their cell get cards of their own ("reach" cards: the block's own cell, its model shift cells
+  // off), keyed apart and unturned: a reach block joins a reach card only as the same shape, the same way round, with the
+  // same shift.
+  const bySig = new Map(), vols = new WeakMap();
+  const sigKey = (mask, shift) => shift ? 'reach:' + Array.from(mask).join('.') + '@' + shift.join(',') : shapeKeySig(mask);
   const volOf = s => { if (!vols.has(s)) vols.set(s, exactVolume(s)); return vols.get(s); };
   const sameVolume = (a, b, plate) => { const d = Math.abs(a - b); return plate ? d < 0.05 : d < 0.006 && d < 0.03 * Math.max(a, b); };
   const addCard = (sig, s) => { if (!bySig.has(sig)) bySig.set(sig, []); bySig.get(sig).push(s); };
-  for (const s of library) { if (!s.solids || !s.solids.length) continue; if (!s._m) s._m = shapeMask(s); if (maskCount(s._m.mask)) addCard(sigKey(shapeKeySig(s._m.mask), s.reach), s); }
+  for (const s of library) { if (!s.solids || !s.solids.length) continue; if (!s._m) s._m = shapeMask(s); if (maskCount(s._m.mask) && !(s.reach && !s.shift)) addCard(sigKey(s._m.mask, s.shift), s); }   // (reach cards from before shifts: replaced)
   // where each block is now, so a block read again moves to its right card (an older import may have put it elsewhere)
   const blockKey = (subtype, size) => subtype + '|' + size, cardOf = new Map();
   for (const s of library) for (const b of s.blocks || []) cardOf.set(blockKey(b.subtype, b.size), s);
@@ -3150,9 +3150,7 @@ async function importWorldBlocks(library, o) {
   const sum = { mods: sources.length, defs: 0, matched: 0, topology: 0, models: 0, newShapes: 0, multiCell: 0, reach: 0, spansCells: 0, noShape: 0, unreadable: 0, filteredOut: 0, moved: 0 };
   // orient: for a block read from its model, how it sits on the card (its Forward and Up as card directions; the card
   // may hold it turned, since cards group shapes in any turn). Blueprint export needs it (blueprint.js).
-  // offset: for a block drawn outside its cell, where it shows from its own cell (cells, block frame); the export puts
-  // the block that far back (blueprint.js gridBlocks)
-  const addBlock = (s, d, src, orient, offset) => {
+  const addBlock = (s, d, src, orient) => {
     s.blocks ||= [];
     const k = blockKey(d.subtype, d.cubeSize), was = cardOf.get(k);
     if (was && was !== s) {
@@ -3163,9 +3161,8 @@ async function importWorldBlocks(library, o) {
     }
     cardOf.set(k, s);
     const cur = s.blocks.find(b => b.subtype === d.subtype && b.size === d.cubeSize);
-    const off = offset && offset.some(v => v) ? { offset } : {};
-    if (!cur) s.blocks.push({ subtype: d.subtype, size: d.cubeSize, mod: src.name, name: blockName(d, texts), typeId: d.typeId, ...(orient ? { orient } : {}), ...off });
-    else { if (orient && !cur.orient) cur.orient = orient; if (off.offset) cur.offset = off.offset; }
+    if (!cur) s.blocks.push({ subtype: d.subtype, size: d.cubeSize, mod: src.name, name: blockName(d, texts), typeId: d.typeId, ...(orient ? { orient } : {}) });
+    else if (orient && !cur.orient) cur.orient = orient;
   };
   for (const src of sources) {
     const files = await sbcFiles(src.fs, (src.root ? src.root + '/' : '') + 'Data');
@@ -3195,20 +3192,20 @@ async function importWorldBlocks(library, o) {
         const shape = { plate: /panel|plate/i.test(d.subtype + ' ' + blockName(d, texts)), solids: [{ type: 'tris', tris: shown.tris }] };
         shape._m = shapeMask(shape);
         if (!maskCount(shape._m.mask)) { sum.noShape++; continue; }
-        const sig = sigKey(shapeKeySig(shape._m.mask), reach);
+        const sig = sigKey(shape._m.mask, reach && shown.offset);
         const vol = volOf(shape);
         let s = (bySig.get(sig) || []).find(c => sameVolume(volOf(c), vol, shape._m.plate)), orient = ['Forward', 'Up'];
-        if (s) { if (!s._m) s._m = shapeMask(s); orient = blockOrientOnCard(s._m.mask, shape._m.mask); }
+        if (s && !reach) { if (!s._m) s._m = shapeMask(s); orient = blockOrientOnCard(s._m.mask, shape._m.mask); }
         if (!s) {
           const name = blockName(d, texts);
           let id = 'mesh:' + src.name + ':' + d.subtype;
           if (library.some(x => x.id === id)) id += '~' + library.length;   // its card from an older import is still there: tidied below
-          // reach cards are picked by hand (Edit a cell), never by the fit: the block itself sits in another cell
+          // reach cards are picked by hand (Edit a cell), never by the fit: the cell holds the block, its model shows next door
           s = Object.assign(shape, { id, key: makeKey(name, keys), name, source: src.name,
-            blocks: [], use: false, penalty: MOD_PENALTY, lines: [], rev: 1, ...(reach ? { reach: true } : {}) });   // mod blocks start off: switch on the ones you build with
+            blocks: [], use: false, penalty: MOD_PENALTY, lines: [], rev: 1, ...(reach ? { reach: true, shift: shown.offset } : {}) });   // mod blocks start off: switch on the ones you build with
           keys.add(s.key); library.push(s); addCard(sig, s); sum.newShapes++;
         }
-        addBlock(s, d, src, orient, shown.offset); sum.models++; if (reach) sum.reach++; n++;
+        addBlock(s, d, src, orient); sum.models++; if (reach) sum.reach++; n++;
         if (n % 25 === 0) await pause();
       }
     }
@@ -3284,7 +3281,6 @@ function initBlueprintUI(ctx) {
   const summary = (n, info) => {
     const sk = Object.entries(info.skipped || {}).map(([k, v]) => `${v} x ${esc(k)}`);
     return `${n} blocks, ${gridSize().toLowerCase()} grid, ${esc(armourLabel())} armour.` +
-      (info.moved ? `<br>${info.moved} blocks drawn outside their own cell (mantlet plates and the like) sit in the cell next to where they show.` : '') +
       (info.other ? `<br><span class="warn">${info.other} blocks have no ${esc(armourLabel())} block on their card: they are light armour (or the card's own block).</span>` : '') +
       (sk.length ? `<br><span class="warn">Left out: ${sk.join(', ')}.</span>` : '') +
       (info.unsure ? `<br><span class="warn">${info.unsure} imported blocks have no recorded turn on their card (imported before 2026-10-11): ` +
@@ -3451,12 +3447,17 @@ function solidGeometry(sol) {
   const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(Float32Array.from(sol.tris), 3));
   g.computeVertexNormals(); return g;
 }
+// a block drawn outside its own cell (importer.js reach card) is drawn where it shows: its shift cells over
 function shapeGeometry(s) {
   const parts = (s.solids || []).map(solidGeometry).map(g => { g.deleteAttribute('uv'); if (g.index) return g.toNonIndexed(); return g; });
   if (!parts.length) return null;
   parts.forEach(g => { if (!g.attributes.normal) g.computeVertexNormals(); });
-  return parts.length === 1 ? parts[0] : mergeGeometries(parts);
+  const g = parts.length === 1 ? parts[0] : mergeGeometries(parts);
+  if (s.shift) g.translate(s.shift[0], s.shift[1], s.shift[2]);
+  return g;
 }
+// how far a card's drawing reaches past its cell (cells): the turn pictures and thumbnails stand back by that much
+const shapeReach = s => s && s.shift ? Math.max(...s.shift.map(Math.abs)) : 0;
 
 // ---------------------------------------------------------------- shared scene bits
 function makeView(container, opts = {}) {
@@ -3499,6 +3500,9 @@ const thumb = (() => {
       holder = new THREE.Group(); scene.add(holder);
     }
     holder.clear();
+    // a block drawn outside its cell: framed to show its cell and where it shows
+    const far = shapeReach(s), mid = s.shift ? s.shift.map(v => .5 + v / 2) : [.5, .45, .5], k = 1 + far;
+    cam.position.set(mid[0] + 1.9 * k, mid[1] + 1.55 * k, mid[2] + 2.1 * k); cam.lookAt(mid[0], mid[1], mid[2]);
     const g = shapeGeometry(s);
     if (g) {
       holder.add(new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color: shapeColor(s), flatShading: true, side: THREE.DoubleSide })));
@@ -3543,7 +3547,7 @@ function renderLibrary() {
     const bl = blocks.length ? blocks.slice(0, 2).map(b => b.name || b.subtype).join(', ') + (blocks.length > 2 ? ` +${blocks.length - 2}` : '') : 'no game blocks linked';
     c.innerHTML = `${thumbCache.has(s.id) ? `<img src="${thumbCache.get(s.id)}">` : `<img data-id="${esc(s.id)}" alt="">`}
       <div class="t"><span class="k" style="background:${shapeColor(s).getStyle()}">${esc(s.key)}</span>${esc(s.name)}</div>
-      <div class="m" title="${esc(others.join(', '))}">${esc(s.source)}${others.length ? ` + ${esc(others.length === 1 ? others[0] : others.length + ' mods')}` : ''}${vol === null ? '<span class="tag">no shape yet</span>' : isPlate(s) ? '<span class="tag">plate</span>' : ` &middot; fills ${vol}%`}${s.reach ? '<span class="tag" title="Drawn outside its own cell: shown here in the cell where it shows. Pick it by hand in Edit a cell (the fit leaves it out); the blueprint puts the block in its own cell next to it.">offset</span>' : ''}</div>
+      <div class="m" title="${esc(others.join(', '))}">${esc(s.source)}${others.length ? ` + ${esc(others.length === 1 ? others[0] : others.length + ' mods')}` : ''}${vol === null ? '<span class="tag">no shape yet</span>' : isPlate(s) ? '<span class="tag">plate</span>' : ` &middot; fills ${vol}%`}${s.reach ? '<span class="tag" title="Drawn outside its own cell: the cube is where the block goes, its model shows next to it. Pick it by hand in Edit a cell for a spare cell beside the block it should cover (the fit leaves it out).">offset</span>' : ''}</div>
       <div class="m" title="${esc(blocks.map(b => `${b.name || b.subtype} (${b.size || '?'}${b.mod ? ', ' + b.mod : ''})`).join('\n'))}">${esc(bl)}</div>
       <label><input type="checkbox" ${s.use ? 'checked' : ''}> use in builder</label>`;
     const img = c.querySelector('img[data-id]'); if (img) thumbObserver.observe(img);
@@ -3993,7 +3997,7 @@ const Fit = (() => {
   const stop = () => { pool.forEach(x => x.w.terminate()); pool = []; };
   const plainOpts = o => { const { shapes, T, groupsOn, ...rest } = o; return { ...rest, groupsOn: [...groupsOn] }; };
   // shapes not in use go as stubs (the worker's templates must match the page's, so every index is kept)
-  const libMsg = (shapes, ver) => ({ ver, shapes: shapes.map(s => s.use ? { use: true, id: s.id, solids: s.solids, plate: s.plate, penalty: s.penalty, reach: s.reach } : { use: false }) });
+  const libMsg = (shapes, ver) => ({ ver, shapes: shapes.map(s => s.use ? { use: true, id: s.id, solids: s.solids, plate: s.plate, penalty: s.penalty, reach: s.reach, shift: s.shift } : { use: false }) });
   // one message to one worker; resolves with its 'done' reply (null if the job is cancelled)
   function ask(x, msg, job, onProgress) {
     return new Promise((resolve, reject) => {
@@ -4371,7 +4375,8 @@ function turnPictures(tis, [x, y, z]) {
   }
   const c = new THREE.Vector3(g.ox + (x + .5) * b, g.oy + (y + .5) * b, g.oz + (z + .5) * b);
   const dir = v.camera.position.clone().sub(v.controls.target); if (dir.lengthSq() < 1e-9) dir.set(-1, 1, 1);
-  TP.cam.position.copy(c).addScaledVector(dir.normalize(), b * 3.4); TP.cam.up.copy(v.camera.up); TP.cam.lookAt(c); TP.cam.updateMatrixWorld();
+  const far = Math.max(0, ...tis.map(ti => shapeReach(LIB[B.T.list[ti].shape])));   // blocks drawn outside their cell: stand back
+  TP.cam.position.copy(c).addScaledVector(dir.normalize(), b * 3.4 * (1 + far)); TP.cam.up.copy(v.camera.up); TP.cam.lookAt(c); TP.cam.updateMatrixWorld();
   // the model's surface inside the cell (a little margin), drawn over the block
   const e = b * 0.02, lo = [g.ox + x * b - e, g.oy + y * b - e, g.oz + z * b - e], hi = [lo[0] + b + 2 * e, lo[1] + b + 2 * e, lo[2] + b + 2 * e];
   const planes = [0, 1, 2].flatMap(a => { const n = [0, 0, 0]; n[a] = 1; const m = [0, 0, 0]; m[a] = -1;

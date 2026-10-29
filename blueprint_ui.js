@@ -54,7 +54,6 @@ export function initBlueprintUI(ctx) {
   const summary = (n, info) => {
     const sk = Object.entries(info.skipped || {}).map(([k, v]) => `${v} x ${esc(k)}`);
     return `${n} blocks, ${gridSize().toLowerCase()} grid, ${esc(armourLabel())} armour.` +
-      (info.moved ? `<br>${info.moved} blocks drawn outside their own cell (mantlet plates and the like) sit in the cell next to where they show.` : '') +
       (info.other ? `<br><span class="warn">${info.other} blocks have no ${esc(armourLabel())} block on their card: they are light armour (or the card's own block).</span>` : '') +
       (sk.length ? `<br><span class="warn">Left out: ${sk.join(', ')}.</span>` : '') +
       (info.unsure ? `<br><span class="warn">${info.unsure} imported blocks have no recorded turn on their card (imported before 2026-10-11): ` +

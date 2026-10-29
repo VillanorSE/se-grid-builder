@@ -378,12 +378,17 @@ function solidGeometry(sol) {
   const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(Float32Array.from(sol.tris), 3));
   g.computeVertexNormals(); return g;
 }
+// a block drawn outside its own cell (importer.js reach card) is drawn where it shows: its shift cells over
 function shapeGeometry(s) {
   const parts = (s.solids || []).map(solidGeometry).map(g => { g.deleteAttribute('uv'); if (g.index) return g.toNonIndexed(); return g; });
   if (!parts.length) return null;
   parts.forEach(g => { if (!g.attributes.normal) g.computeVertexNormals(); });
-  return parts.length === 1 ? parts[0] : mergeGeometries(parts);
+  const g = parts.length === 1 ? parts[0] : mergeGeometries(parts);
+  if (s.shift) g.translate(s.shift[0], s.shift[1], s.shift[2]);
+  return g;
 }
+// how far a card's drawing reaches past its cell (cells): the turn pictures and thumbnails stand back by that much
+const shapeReach = s => s && s.shift ? Math.max(...s.shift.map(Math.abs)) : 0;
 
 // ---------------------------------------------------------------- shared scene bits
 function makeView(container, opts = {}) {
@@ -426,6 +431,9 @@ const thumb = (() => {
       holder = new THREE.Group(); scene.add(holder);
     }
     holder.clear();
+    // a block drawn outside its cell: framed to show its cell and where it shows
+    const far = shapeReach(s), mid = s.shift ? s.shift.map(v => .5 + v / 2) : [.5, .45, .5], k = 1 + far;
+    cam.position.set(mid[0] + 1.9 * k, mid[1] + 1.55 * k, mid[2] + 2.1 * k); cam.lookAt(mid[0], mid[1], mid[2]);
     const g = shapeGeometry(s);
     if (g) {
       holder.add(new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color: shapeColor(s), flatShading: true, side: THREE.DoubleSide })));
@@ -470,7 +478,7 @@ function renderLibrary() {
     const bl = blocks.length ? blocks.slice(0, 2).map(b => b.name || b.subtype).join(', ') + (blocks.length > 2 ? ` +${blocks.length - 2}` : '') : 'no game blocks linked';
     c.innerHTML = `${thumbCache.has(s.id) ? `<img src="${thumbCache.get(s.id)}">` : `<img data-id="${esc(s.id)}" alt="">`}
       <div class="t"><span class="k" style="background:${shapeColor(s).getStyle()}">${esc(s.key)}</span>${esc(s.name)}</div>
-      <div class="m" title="${esc(others.join(', '))}">${esc(s.source)}${others.length ? ` + ${esc(others.length === 1 ? others[0] : others.length + ' mods')}` : ''}${vol === null ? '<span class="tag">no shape yet</span>' : isPlate(s) ? '<span class="tag">plate</span>' : ` &middot; fills ${vol}%`}${s.reach ? '<span class="tag" title="Drawn outside its own cell: shown here in the cell where it shows. Pick it by hand in Edit a cell (the fit leaves it out); the blueprint puts the block in its own cell next to it.">offset</span>' : ''}</div>
+      <div class="m" title="${esc(others.join(', '))}">${esc(s.source)}${others.length ? ` + ${esc(others.length === 1 ? others[0] : others.length + ' mods')}` : ''}${vol === null ? '<span class="tag">no shape yet</span>' : isPlate(s) ? '<span class="tag">plate</span>' : ` &middot; fills ${vol}%`}${s.reach ? '<span class="tag" title="Drawn outside its own cell: the cube is where the block goes, its model shows next to it. Pick it by hand in Edit a cell for a spare cell beside the block it should cover (the fit leaves it out).">offset</span>' : ''}</div>
       <div class="m" title="${esc(blocks.map(b => `${b.name || b.subtype} (${b.size || '?'}${b.mod ? ', ' + b.mod : ''})`).join('\n'))}">${esc(bl)}</div>
       <label><input type="checkbox" ${s.use ? 'checked' : ''}> use in builder</label>`;
     const img = c.querySelector('img[data-id]'); if (img) thumbObserver.observe(img);
@@ -920,7 +928,7 @@ const Fit = (() => {
   const stop = () => { pool.forEach(x => x.w.terminate()); pool = []; };
   const plainOpts = o => { const { shapes, T, groupsOn, ...rest } = o; return { ...rest, groupsOn: [...groupsOn] }; };
   // shapes not in use go as stubs (the worker's templates must match the page's, so every index is kept)
-  const libMsg = (shapes, ver) => ({ ver, shapes: shapes.map(s => s.use ? { use: true, id: s.id, solids: s.solids, plate: s.plate, penalty: s.penalty, reach: s.reach } : { use: false }) });
+  const libMsg = (shapes, ver) => ({ ver, shapes: shapes.map(s => s.use ? { use: true, id: s.id, solids: s.solids, plate: s.plate, penalty: s.penalty, reach: s.reach, shift: s.shift } : { use: false }) });
   // one message to one worker; resolves with its 'done' reply (null if the job is cancelled)
   function ask(x, msg, job, onProgress) {
     return new Promise((resolve, reject) => {
@@ -1298,7 +1306,8 @@ function turnPictures(tis, [x, y, z]) {
   }
   const c = new THREE.Vector3(g.ox + (x + .5) * b, g.oy + (y + .5) * b, g.oz + (z + .5) * b);
   const dir = v.camera.position.clone().sub(v.controls.target); if (dir.lengthSq() < 1e-9) dir.set(-1, 1, 1);
-  TP.cam.position.copy(c).addScaledVector(dir.normalize(), b * 3.4); TP.cam.up.copy(v.camera.up); TP.cam.lookAt(c); TP.cam.updateMatrixWorld();
+  const far = Math.max(0, ...tis.map(ti => shapeReach(LIB[B.T.list[ti].shape])));   // blocks drawn outside their cell: stand back
+  TP.cam.position.copy(c).addScaledVector(dir.normalize(), b * 3.4 * (1 + far)); TP.cam.up.copy(v.camera.up); TP.cam.lookAt(c); TP.cam.updateMatrixWorld();
   // the model's surface inside the cell (a little margin), drawn over the block
   const e = b * 0.02, lo = [g.ox + x * b - e, g.oy + y * b - e, g.oz + z * b - e], hi = [lo[0] + b + 2 * e, lo[1] + b + 2 * e, lo[2] + b + 2 * e];
   const planes = [0, 1, 2].flatMap(a => { const n = [0, 0, 0]; n[a] = 1; const m = [0, 0, 0]; m[a] = -1;

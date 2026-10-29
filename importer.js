@@ -9,7 +9,7 @@ import { blockOrientOnCard } from './blueprint.js';
 export const DEFAULT_FILTER = 'armou?r|panel|plate|slope|corner|hull|wing';
 const dec = new TextDecoder();
 // Some blocks are drawn outside their own cell (KONTAKT's mantlet plates sit half a cell or more off, through ModelOffset,
-// so a plate can show in a cell that holds another block). The cell a model shows in: per axis, its own cell when the
+// so the block goes in a spare cell and its plate shows over the next block). The cell a model shows in: per axis, its own cell when the
 // model stays within it (give or take REACH_TOL of a cell), else the cell holding the middle of its extent. Returns
 // { offset: [x, y, z] (cells, block frame), tris moved into that cell, spans }. A model across several cells (canopies,
 // curved plates bulging past their cell) stays in its own cell, cut to it as before (spans: true).
@@ -61,12 +61,15 @@ export async function importWorldBlocks(library, o) {
   // can't tell a 1x8 slope's pieces from a 1x7's or from quarter blocks. A mod's grades are one model (same volume);
   // the same piece from different modders differs by up to 0.6% of its volume, the 1x7 and 1x8 tips by 1%. Plates
   // (panels) group by outline, whatever their thickness.
-  // Blocks drawn outside their cell get cards of their own ("reach" cards, keyed apart), never joining an in-cell card.
-  const bySig = new Map(), sigKey = (sig, reach) => (reach ? 'reach:' : '') + sig, vols = new WeakMap();
+  // Blocks drawn outside their cell get cards of their own ("reach" cards: the block's own cell, its model shift cells
+  // off), keyed apart and unturned: a reach block joins a reach card only as the same shape, the same way round, with the
+  // same shift.
+  const bySig = new Map(), vols = new WeakMap();
+  const sigKey = (mask, shift) => shift ? 'reach:' + Array.from(mask).join('.') + '@' + shift.join(',') : shapeKeySig(mask);
   const volOf = s => { if (!vols.has(s)) vols.set(s, exactVolume(s)); return vols.get(s); };
   const sameVolume = (a, b, plate) => { const d = Math.abs(a - b); return plate ? d < 0.05 : d < 0.006 && d < 0.03 * Math.max(a, b); };
   const addCard = (sig, s) => { if (!bySig.has(sig)) bySig.set(sig, []); bySig.get(sig).push(s); };
-  for (const s of library) { if (!s.solids || !s.solids.length) continue; if (!s._m) s._m = shapeMask(s); if (maskCount(s._m.mask)) addCard(sigKey(shapeKeySig(s._m.mask), s.reach), s); }
+  for (const s of library) { if (!s.solids || !s.solids.length) continue; if (!s._m) s._m = shapeMask(s); if (maskCount(s._m.mask) && !(s.reach && !s.shift)) addCard(sigKey(s._m.mask, s.shift), s); }   // (reach cards from before shifts: replaced)
   // where each block is now, so a block read again moves to its right card (an older import may have put it elsewhere)
   const blockKey = (subtype, size) => subtype + '|' + size, cardOf = new Map();
   for (const s of library) for (const b of s.blocks || []) cardOf.set(blockKey(b.subtype, b.size), s);
@@ -74,9 +77,7 @@ export async function importWorldBlocks(library, o) {
   const sum = { mods: sources.length, defs: 0, matched: 0, topology: 0, models: 0, newShapes: 0, multiCell: 0, reach: 0, spansCells: 0, noShape: 0, unreadable: 0, filteredOut: 0, moved: 0 };
   // orient: for a block read from its model, how it sits on the card (its Forward and Up as card directions; the card
   // may hold it turned, since cards group shapes in any turn). Blueprint export needs it (blueprint.js).
-  // offset: for a block drawn outside its cell, where it shows from its own cell (cells, block frame); the export puts
-  // the block that far back (blueprint.js gridBlocks)
-  const addBlock = (s, d, src, orient, offset) => {
+  const addBlock = (s, d, src, orient) => {
     s.blocks ||= [];
     const k = blockKey(d.subtype, d.cubeSize), was = cardOf.get(k);
     if (was && was !== s) {
@@ -87,9 +88,8 @@ export async function importWorldBlocks(library, o) {
     }
     cardOf.set(k, s);
     const cur = s.blocks.find(b => b.subtype === d.subtype && b.size === d.cubeSize);
-    const off = offset && offset.some(v => v) ? { offset } : {};
-    if (!cur) s.blocks.push({ subtype: d.subtype, size: d.cubeSize, mod: src.name, name: blockName(d, texts), typeId: d.typeId, ...(orient ? { orient } : {}), ...off });
-    else { if (orient && !cur.orient) cur.orient = orient; if (off.offset) cur.offset = off.offset; }
+    if (!cur) s.blocks.push({ subtype: d.subtype, size: d.cubeSize, mod: src.name, name: blockName(d, texts), typeId: d.typeId, ...(orient ? { orient } : {}) });
+    else if (orient && !cur.orient) cur.orient = orient;
   };
   for (const src of sources) {
     const files = await sbcFiles(src.fs, (src.root ? src.root + '/' : '') + 'Data');
@@ -119,20 +119,20 @@ export async function importWorldBlocks(library, o) {
         const shape = { plate: /panel|plate/i.test(d.subtype + ' ' + blockName(d, texts)), solids: [{ type: 'tris', tris: shown.tris }] };
         shape._m = shapeMask(shape);
         if (!maskCount(shape._m.mask)) { sum.noShape++; continue; }
-        const sig = sigKey(shapeKeySig(shape._m.mask), reach);
+        const sig = sigKey(shape._m.mask, reach && shown.offset);
         const vol = volOf(shape);
         let s = (bySig.get(sig) || []).find(c => sameVolume(volOf(c), vol, shape._m.plate)), orient = ['Forward', 'Up'];
-        if (s) { if (!s._m) s._m = shapeMask(s); orient = blockOrientOnCard(s._m.mask, shape._m.mask); }
+        if (s && !reach) { if (!s._m) s._m = shapeMask(s); orient = blockOrientOnCard(s._m.mask, shape._m.mask); }
         if (!s) {
           const name = blockName(d, texts);
           let id = 'mesh:' + src.name + ':' + d.subtype;
           if (library.some(x => x.id === id)) id += '~' + library.length;   // its card from an older import is still there: tidied below
-          // reach cards are picked by hand (Edit a cell), never by the fit: the block itself sits in another cell
+          // reach cards are picked by hand (Edit a cell), never by the fit: the cell holds the block, its model shows next door
           s = Object.assign(shape, { id, key: makeKey(name, keys), name, source: src.name,
-            blocks: [], use: false, penalty: MOD_PENALTY, lines: [], rev: 1, ...(reach ? { reach: true } : {}) });   // mod blocks start off: switch on the ones you build with
+            blocks: [], use: false, penalty: MOD_PENALTY, lines: [], rev: 1, ...(reach ? { reach: true, shift: shown.offset } : {}) });   // mod blocks start off: switch on the ones you build with
           keys.add(s.key); library.push(s); addCard(sig, s); sum.newShapes++;
         }
-        addBlock(s, d, src, orient, shown.offset); sum.models++; if (reach) sum.reach++; n++;
+        addBlock(s, d, src, orient); sum.models++; if (reach) sum.reach++; n++;
         if (n % 25 === 0) await pause();
       }
     }
