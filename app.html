@@ -450,7 +450,9 @@ function shownShapes() {
 function renderLibrary() {
   const sources = [...new Set(LIB.flatMap(s => [s.source, ...(s.blocks || []).map(b => b.mod).filter(Boolean)]))];
   const cur = el('libSource').value;
-  el('libSource').innerHTML = '<option value="">All sources</option>' + sources.map(s => `<option ${s === cur ? 'selected' : ''}>${esc(s)}</option>`).join('');
+  // an explicit value: without one the option's value is its text with spaces collapsed, so a mod named with a double
+  // space ("P.O.M -  XL Blocks") matched no card and the list fell back to all sources
+  el('libSource').innerHTML = '<option value="">All sources</option>' + sources.map(s => `<option value="${esc(s)}" ${s === cur ? 'selected' : ''}>${esc(s)}</option>`).join('');
   const list = shownShapes(), grid = el('libGrid');
   el('libCount').textContent = `${list.length} of ${LIB.length} blocks, ${LIB.filter(s => s.use).length} used in builder`;
   grid.innerHTML = '';
@@ -1527,13 +1529,13 @@ function showTab(id) {
   if (SK.view) SK.view.active = id === 'skPage';
   if (B.view) B.view.active = id === 'bPage';
   if (id === 'skPage') { SK.view.resize(); }
-  if (id === 'bPage') { B.view.resize(); if (B.parts && B.Tver !== libVersion && B.fitLibVer !== libVersion) rebuild(); else drawMap(); }
+  if (id === 'bPage') { BPUI.refreshArmour(); B.view.resize(); if (B.parts && B.Tver !== libVersion && B.fitLibVer !== libVersion) rebuild(); else drawMap(); }
 }
 document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
 window.addEventListener('resize', () => { if (current === 'skPage') SK.view.resize(); if (current === 'bPage') { B.view.resize(); drawMap(); } });
 
 // blueprint export (blueprint.js, blueprint_ui.js)
-initBlueprintUI({ THREE, el, DB, B, lib: () => LIB, effFit, shapeGeometry, shapeColor });
+const BPUI = initBlueprintUI({ THREE, el, DB, B, lib: () => LIB, effFit, shapeGeometry, shapeColor });
 
 window.SGB = { B, SK };   // for debugging in the browser console
 (async function start() {
@@ -1554,7 +1556,7 @@ window.SGB = { B, SK };   // for debugging in the browser console
   el('bGroups').value = 'turret=turret;wheels=wheel;antennas=antenn';
   const bs = await DB.get('builder'); if (bs) SETTINGS.forEach(id => { if (bs[id] !== undefined) el(id).value = bs[id]; });
   initSketchView(); initBuilderView();
-  refreshSketchList(); renderLibrary(); restoreDirs();
+  refreshSketchList(); renderLibrary(); restoreDirs(); BPUI.refreshArmour();
   showTab('bPage');                     // the Grid Builder is the working tab; the other two are reference
   // a long last fit, or a grid more than 60 blocks long (a ship hull), waits for "Fit now" instead of fitting on open
   const lastFit = await DB.get('lastFitMs'), blocksLong = +el('bLength').value * (+el('scale').value / 100) / +el('block').value;

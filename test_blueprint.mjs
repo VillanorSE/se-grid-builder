@@ -92,6 +92,20 @@ check(BP.pickBlock(mod, 'Small').subtype === 'WingA' && BP.pickBlock(mod, 'Small
   'mod block: real subtype; turn known for the defining block, unknown for an old merged one');
 mod.blocks[1].orient = ['Up', 'Backward'];
 check(BP.pickBlock(mod, 'Large').sure && BP.pickBlock(mod, 'Large').orient.join() === 'Up,Backward', 'mod block: recorded turn is used');
+// armour grades read from the mods: a graded mod on three cards (one of them vanilla), a one-grade mod with a card in use
+const gr = ['4mm', '12mm', '100mm'], gMod = 'Tank Kit', gBlocks = n => gr.map(g => ({ subtype: `TK_Armour_${n}_${g}`, size: 'Small', mod: gMod }));
+const gLib = [{ ...byKey('C'), blocks: [...byKey('C').blocks, ...gBlocks('Cube')] },
+  { id: 'mesh:Tank Kit:TK_Armour_Wedge_4mm', source: gMod, use: false, blocks: gBlocks('Wedge') },
+  { id: 'mesh:Tank Kit:TK_Armour_Tip_4mm', source: gMod, use: false, blocks: gBlocks('Tip') },
+  { id: 'mesh:[PP] Plane Pack:PP_Nose_1', source: '[PP] Plane Pack', use: true, blocks: [{ subtype: 'PP_Nose_1', size: 'Small', mod: '[PP] Plane Pack' }] },
+  { id: 'mesh:Off Mod:OM_A', source: 'Off Mod', use: false, blocks: [{ subtype: 'OM_A', size: 'Small', mod: 'Off Mod' }] }];
+const grades = BP.armourGrades(gLib), tk = grades.find(m => m.mod === gMod), pp = grades.find(m => m.mod === '[PP] Plane Pack');
+check(tk && tk.grades.map(g => g.label).join() === '4mm,12mm,100mm' && pp && pp.label === 'PP' && pp.grades.length === 1 && grades.length === 2,
+  'armour grades: varying subtype part per card, sorted by number; a one-grade mod named by its tag; mods with no card in use left out');
+const g12 = tk.grades[1].value, cube12 = BP.pickBlock(gLib[0], 'Small', g12), cubeL = BP.pickBlock(gLib[0], 'Large', g12);
+check(cube12.subtype === 'TK_Armour_Cube_12mm' && !cube12.other && cubeL.subtype === 'LargeBlockArmorBlock' && cubeL.other &&
+  BP.pickBlock(gLib[3], 'Small', pp.grades[0].value).subtype === 'PP_Nose_1' && BP.pickBlock(gLib[0], 'Small', 'light').subtype === 'SmallBlockArmorBlock',
+  'armour grades: a grade picks its block, also on a vanilla card; a card without one falls back to light');
 
 // 6. bp.sbc well-formed, and its structure
 function parseXml(s) {               // small strict checker: balanced tags, quoted attributes, known entities only

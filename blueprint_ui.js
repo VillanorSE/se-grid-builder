@@ -2,9 +2,10 @@
 // is built by blueprint.js. Bundled into the page by build.py; it gets the page's pieces through initBlueprintUI(ctx),
 // so its own top-level names stay few (one shared module scope).
 import { ROTS } from './core.js';
-import { gridBlocks, blueprintXml, blueprintFolderName, makeZip } from './blueprint.js';
+import { gridBlocks, blueprintXml, blueprintFolderName, makeZip, armourGrades } from './blueprint.js';
 
 // ctx: { THREE, el, DB, B, lib() -> library, effFit(x, y, z), shapeGeometry(shape), shapeColor(shape) -> THREE.Color }
+// Returns { refreshArmour() }: the page calls it when the library may have changed.
 export function initBlueprintUI(ctx) {
   const { THREE, el, DB, B } = ctx;
   const status = (msg, warn) => { el('bpStatus').innerHTML = msg; el('bpStatus').className = warn ? 'warn' : 'hint'; };
@@ -18,10 +19,22 @@ export function initBlueprintUI(ctx) {
     if (mode === 'kind') return s => '#' + ctx.shapeColor(s).getHexString();
     return null;
   };
+  // Armour: vanilla light and heavy, then the grades of the library's mods (blueprint.js armourGrades)
+  let wantArmour = 'light';   // the saved choice, kept while its mod is out of the list (cards switched off)
+  function refreshArmour() {
+    const sel = el('bpArmour'), mods = armourGrades(ctx.lib()), opt = o => `<option value="${esc(o.value)}">${esc(o.label)}</option>`;
+    sel.innerHTML = '<optgroup label="Vanilla"><option value="light">light</option><option value="heavy">heavy</option></optgroup>' +
+      mods.filter(m => m.grades.length > 1).map(m => `<optgroup label="${esc(m.label)}">${m.grades.map(opt).join('')}</optgroup>`).join('') +
+      (mods.some(m => m.grades.length === 1) ? `<optgroup label="Mods">${mods.filter(m => m.grades.length === 1).map(m => opt(m.grades[0])).join('')}</optgroup>` : '');
+    sel.value = wantArmour; if (sel.value !== wantArmour) sel.value = 'light';
+  }
+  const armourLabel = () => { const o = el('bpArmour').selectedOptions[0]; if (!o) return 'light'; const g = o.parentElement.label;
+    return g && g !== 'Vanilla' && g !== 'Mods' ? `${g} ${o.textContent}` : o.textContent; };
+  el('bpArmour').addEventListener('change', () => { wantArmour = el('bpArmour').value; });
   // settings kept in this browser
   const SAVE = ['bpArmour', 'bpColour', 'bpColourPick'];
-  DB.get('blueprint').then(s => { if (s) SAVE.forEach(id => { if (s[id] !== undefined) el(id).value = s[id]; }); });
-  SAVE.forEach(id => el(id).addEventListener('change', () => { const s = {}; SAVE.forEach(k => s[k] = el(k).value); DB.set('blueprint', s).catch(() => {}); }));
+  DB.get('blueprint').then(s => { if (s) SAVE.forEach(id => { if (s[id] !== undefined) el(id).value = s[id]; }); if (s && s.bpArmour) wantArmour = s.bpArmour; refreshArmour(); });
+  SAVE.forEach(id => el(id).addEventListener('change', () => { const s = {}; SAVE.forEach(k => s[k] = el(k).value); s.bpArmour = wantArmour; DB.set('blueprint', s).catch(() => {}); }));
   // the name field shows the model's name until one is typed
   const showDefault = () => { el('bpName').placeholder = modelBase(); };
   new MutationObserver(showDefault).observe(el('bModelName'), { childList: true, characterData: true, subtree: true }); showDefault();
@@ -40,7 +53,8 @@ export function initBlueprintUI(ctx) {
   }
   const summary = (n, info) => {
     const sk = Object.entries(info.skipped || {}).map(([k, v]) => `${v} x ${esc(k)}`);
-    return `${n} blocks, ${gridSize().toLowerCase()} grid, ${el('bpArmour').value} armour.` +
+    return `${n} blocks, ${gridSize().toLowerCase()} grid, ${esc(armourLabel())} armour.` +
+      (info.other ? `<br><span class="warn">${info.other} blocks have no ${esc(armourLabel())} block on their card: they are light armour (or the card's own block).</span>` : '') +
       (sk.length ? `<br><span class="warn">Left out: ${sk.join(', ')}.</span>` : '') +
       (info.unsure ? `<br><span class="warn">${info.unsure} imported blocks have no recorded turn on their card (imported before 2026-10-11): ` +
         're-run Import from world to record it; until then they may sit turned.</span>' : '');
@@ -146,4 +160,5 @@ export function initBlueprintUI(ctx) {
   el('bpZip').addEventListener('click', () => exportFitted(true));
   el('bpFolder').addEventListener('click', async () => { const h = await blueprintsFolder(true); if (h) status(`Blueprints go to ${esc(h.name)}.`); });
   if (!window.showDirectoryPicker) { el('bpExport').disabled = true; el('bpFolder').disabled = true; el('bpExport').title = 'This browser can\'t write to folders: use Download zip.'; }
+  return { refreshArmour };
 }

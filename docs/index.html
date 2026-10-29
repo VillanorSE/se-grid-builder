@@ -2648,21 +2648,82 @@ function blockOrientOnCard(cardMask, blockMask) {
   return null;
 }
 
+// ---------- armour grades: the Armour choices besides vanilla light and heavy, read from the library's mod blocks so
+// nothing about any one mod is written here. A mod's grades are the part of the subtype (split on "_") that differs
+// between its blocks on one card: a mod block shaped like a card joins it, so a mod's thickness variants share cards
+// (KONTAKT: KGS_Armour_Cube_4mm ... _100mm, grades 4mm ... 100mm). A mod with no such part is one grade, named by its
+// [TAG] or the subtype prefix its blocks share ([CAP] Consty's Aircraft Pack: CAP).
+// Returns [{ mod, label, grades: [{ value, label }] }] for the mods with grades, and the one-grade mods with a card of
+// their own in use (not those whose blocks only joined other cards); a value goes to pickBlock as its armour.
+const gradeValue = (mod, grade) => 'grade:' + JSON.stringify([mod, grade]);
+function parseGrade(armour) {
+  if (!String(armour).startsWith('grade:')) return null;
+  try { const [mod, grade] = JSON.parse(armour.slice(6)); return { mod, grade }; } catch (e) { return null; }
+}
+const gradeParts = subtype => subtype.split('_');
+function armourGrades(shapes) {
+  const mods = new Map(), modOf = m => { if (!mods.has(m)) mods.set(m, { subs: new Set(), cards: new Map(), own: false }); return mods.get(m); };
+  for (const s of shapes) {
+    const groups = new Map();   // a mod's blocks on this card, by grid size and number of parts
+    for (const b of s.blocks || []) {
+      if (!b.mod || b.mod === 'Vanilla' || !b.subtype) continue;
+      const m = modOf(b.mod), parts = gradeParts(b.subtype), k = [b.mod, b.size, parts.length].join('\n');
+      m.subs.add(b.subtype); if (s.use && s.source === b.mod) m.own = true;
+      if (!groups.has(k)) groups.set(k, { m, list: [] });
+      groups.get(k).list.push(parts);
+    }
+    for (const { m, list } of groups.values()) {
+      if (list.length < 2) continue;
+      const diff = list[0].map((_, i) => i).filter(i => list.some(p => p[i] !== list[0][i]));
+      if (diff.length === 1) for (const t of new Set(list.map(p => p[diff[0]]))) m.cards.set(t, (m.cards.get(t) || 0) + 1);
+    }
+  }
+  const out = [];
+  for (const [mod, m] of mods) {
+    // a grade varies on several cards, and the grades together name most of the mod's blocks (a mod's numbered
+    // pieces, such as CAP_1x4Slope_1 ... _4, are different shapes and seldom share a card)
+    let grades = [...m.cards].filter(([, n]) => n >= 3).map(([t]) => t);
+    const named = [...m.subs].filter(sub => gradeParts(sub).some(p => grades.includes(p))).length;
+    if (grades.length < 2 || named < m.subs.size / 2) grades = [];
+    if (!grades.length && !m.own) continue;
+    const num = t => parseFloat(t), numeric = grades.every(t => !isNaN(num(t)));
+    grades.sort((a, b) => numeric ? num(a) - num(b) : a.localeCompare(b));
+    const label = modLabel(mod, m.subs);
+    out.push({ mod, label, grades: grades.length ? grades.map(t => ({ value: gradeValue(mod, t), label: t })) : [{ value: gradeValue(mod, ''), label }] });
+  }
+  return out.sort((a, b) => a.label.localeCompare(b.label));
+}
+// a short name for a mod: its [TAG], else the subtype prefix most of its blocks share, else the name without brackets
+function modLabel(mod, subs) {
+  const tag = /^\s*\[([^\]]{1,12})\]/.exec(mod); if (tag) return tag[1].trim();
+  const first = new Map(); for (const sub of subs) { const p = gradeParts(sub)[0]; if (p !== sub) first.set(p, (first.get(p) || 0) + 1); }
+  const [p, n] = [...first].sort((a, b) => b[1] - a[1])[0] || [];
+  if (p && p.length <= 8 && n >= subs.size * 0.8) return p;
+  return mod.replace(/\[[^\]]*\]|\([^)]*\)/g, '').replace(/\s+/g, ' ').trim().slice(0, 32) || mod;
+}
+
 // ---------- which game block a card becomes
-// size: 'Large' | 'Small'; armour: 'light' | 'heavy'. Returns { typeId, subtype, orient: [F, U], sure } or null when the
-// card has no block of that grid size. sure = false: an imported block whose turn on the card was never recorded.
+// size: 'Large' | 'Small'; armour: 'light' | 'heavy' | a grade (armourGrades). Returns { typeId, subtype, orient: [F, U],
+// sure, other } or null when the card has no block of that grid size. sure = false: an imported block whose turn on the
+// card was never recorded. other = true: a grade was asked for but the card has no block of it, so it gets the light one.
 function pickBlock(shape, size, armour = 'light') {
-  const heavy = armour === 'heavy', cardOrient = CARD_ORIENT[shape.id] || ['Forward', 'Up'];
-  const va = shape.topology && VANILLA_ARMOR[shape.topology];
-  if (va) return { typeId: 'CubeBlock', subtype: va[(size === 'Large' ? 2 : 0) + (heavy ? 1 : 0)], orient: cardOrient, sure: true };
+  const heavy = armour === 'heavy', cardOrient = CARD_ORIENT[shape.id] || ['Forward', 'Up'], g = parseGrade(armour);
   const list = (shape.blocks || []).filter(b => b.size === size && b.subtype);
+  if (g) {
+    const own = list.filter(b => b.mod === g.mod && (!g.grade || gradeParts(b.subtype).includes(g.grade)));
+    if (own.length) return modBlock(shape, own.find(b => shape.id === 'mesh:' + b.mod + ':' + b.subtype) || own[0], cardOrient);
+  }
+  const other = !!g, va = shape.topology && VANILLA_ARMOR[shape.topology];
+  if (va) return { typeId: 'CubeBlock', subtype: va[(size === 'Large' ? 2 : 0) + (heavy ? 1 : 0)], orient: cardOrient, sure: true, other };
   if (!list.length) return null;
   const isHeavy = b => /heavy/i.test(b.subtype + ' ' + (b.name || ''));
   const rank = b => (isHeavy(b) === heavy ? 0 : 2) + (b.mod === 'Vanilla' ? 0 : 1);
-  const b = [...list].sort((p, q) => rank(p) - rank(q))[0];
+  return { ...modBlock(shape, [...list].sort((p, q) => rank(p) - rank(q))[0], cardOrient), other };
+}
+function modBlock(shape, b, cardOrient) {
   const defining = shape.id === 'mesh:' + b.mod + ':' + b.subtype;   // the block the card's shape was read from
   const orient = b.orient || cardOrient;
-  return { typeId: b.typeId || 'CubeBlock', subtype: b.subtype, orient, sure: !!(b.orient || !shape.id.startsWith('mesh:') || defining) };
+  return { typeId: b.typeId || 'CubeBlock', subtype: b.subtype, orient, sure: !!(b.orient || !shape.id.startsWith('mesh:') || defining), other: false };
 }
 
 // a template's block orientation in the SE grid: rot = the tool's turn of the card (ROTS index), orient = pickBlock's
@@ -2691,20 +2752,21 @@ function colorMaskHSV(hex) {
 // ---------- blocks of a fitted grid
 // grid: { nx, ny, nz, centre }; cellAt(x, y, z) -> { shape: library entry, rot } | null (empty / no block)
 // o: { size, armour, color(shape) -> '#rrggbb' | null }
-// Returns { blocks, skipped: { reason: count }, unsure, mirror }
+// Returns { blocks, skipped: { reason: count }, unsure, other (blocks without the chosen grade), mirror }
 function gridBlocks(grid, cellAt, o) {
   const blocks = [], skipped = {}, skip = r => { skipped[r] = (skipped[r] || 0) + 1; };
-  let unsure = 0;
+  let unsure = 0, other = 0;
   for (let y = 0; y < grid.ny; y++) for (let z = 0; z < grid.nz; z++) for (let x = 0; x < grid.nx; x++) {
     const c = cellAt(x, y, z); if (!c) continue;
     const pb = pickBlock(c.shape, o.size, o.armour);
     if (!pb) { skip(`${c.shape.name} (no ${o.size.toLowerCase()} grid block)`); continue; }
     if (!pb.sure) unsure++;
+    if (pb.other) other++;
     const col = o.color ? o.color(c.shape) : null;
     blocks.push({ typeId: pb.typeId, subtype: pb.subtype, min: gridPos(x, y, z, grid.nz, grid.centre), ...gridOrientation(c.rot, pb.orient),
       color: col ? colorMaskHSV(col) : null, card: c.shape.id });
   }
-  return { blocks, skipped, unsure, mirror: mirrorPlane(grid.centre) };
+  return { blocks, skipped, unsure, other, mirror: mirrorPlane(grid.centre) };
 }
 
 // ---------- bp.sbc
@@ -2973,6 +3035,7 @@ async function importWorldBlocks(library, o) {
 // so its own top-level names stay few (one shared module scope).
 
 // ctx: { THREE, el, DB, B, lib() -> library, effFit(x, y, z), shapeGeometry(shape), shapeColor(shape) -> THREE.Color }
+// Returns { refreshArmour() }: the page calls it when the library may have changed.
 function initBlueprintUI(ctx) {
   const { THREE, el, DB, B } = ctx;
   const status = (msg, warn) => { el('bpStatus').innerHTML = msg; el('bpStatus').className = warn ? 'warn' : 'hint'; };
@@ -2986,10 +3049,22 @@ function initBlueprintUI(ctx) {
     if (mode === 'kind') return s => '#' + ctx.shapeColor(s).getHexString();
     return null;
   };
+  // Armour: vanilla light and heavy, then the grades of the library's mods (blueprint.js armourGrades)
+  let wantArmour = 'light';   // the saved choice, kept while its mod is out of the list (cards switched off)
+  function refreshArmour() {
+    const sel = el('bpArmour'), mods = armourGrades(ctx.lib()), opt = o => `<option value="${esc(o.value)}">${esc(o.label)}</option>`;
+    sel.innerHTML = '<optgroup label="Vanilla"><option value="light">light</option><option value="heavy">heavy</option></optgroup>' +
+      mods.filter(m => m.grades.length > 1).map(m => `<optgroup label="${esc(m.label)}">${m.grades.map(opt).join('')}</optgroup>`).join('') +
+      (mods.some(m => m.grades.length === 1) ? `<optgroup label="Mods">${mods.filter(m => m.grades.length === 1).map(m => opt(m.grades[0])).join('')}</optgroup>` : '');
+    sel.value = wantArmour; if (sel.value !== wantArmour) sel.value = 'light';
+  }
+  const armourLabel = () => { const o = el('bpArmour').selectedOptions[0]; if (!o) return 'light'; const g = o.parentElement.label;
+    return g && g !== 'Vanilla' && g !== 'Mods' ? `${g} ${o.textContent}` : o.textContent; };
+  el('bpArmour').addEventListener('change', () => { wantArmour = el('bpArmour').value; });
   // settings kept in this browser
   const SAVE = ['bpArmour', 'bpColour', 'bpColourPick'];
-  DB.get('blueprint').then(s => { if (s) SAVE.forEach(id => { if (s[id] !== undefined) el(id).value = s[id]; }); });
-  SAVE.forEach(id => el(id).addEventListener('change', () => { const s = {}; SAVE.forEach(k => s[k] = el(k).value); DB.set('blueprint', s).catch(() => {}); }));
+  DB.get('blueprint').then(s => { if (s) SAVE.forEach(id => { if (s[id] !== undefined) el(id).value = s[id]; }); if (s && s.bpArmour) wantArmour = s.bpArmour; refreshArmour(); });
+  SAVE.forEach(id => el(id).addEventListener('change', () => { const s = {}; SAVE.forEach(k => s[k] = el(k).value); s.bpArmour = wantArmour; DB.set('blueprint', s).catch(() => {}); }));
   // the name field shows the model's name until one is typed
   const showDefault = () => { el('bpName').placeholder = modelBase(); };
   new MutationObserver(showDefault).observe(el('bModelName'), { childList: true, characterData: true, subtree: true }); showDefault();
@@ -3008,7 +3083,8 @@ function initBlueprintUI(ctx) {
   }
   const summary = (n, info) => {
     const sk = Object.entries(info.skipped || {}).map(([k, v]) => `${v} x ${esc(k)}`);
-    return `${n} blocks, ${gridSize().toLowerCase()} grid, ${el('bpArmour').value} armour.` +
+    return `${n} blocks, ${gridSize().toLowerCase()} grid, ${esc(armourLabel())} armour.` +
+      (info.other ? `<br><span class="warn">${info.other} blocks have no ${esc(armourLabel())} block on their card: they are light armour (or the card's own block).</span>` : '') +
       (sk.length ? `<br><span class="warn">Left out: ${sk.join(', ')}.</span>` : '') +
       (info.unsure ? `<br><span class="warn">${info.unsure} imported blocks have no recorded turn on their card (imported before 2026-10-11): ` +
         're-run Import from world to record it; until then they may sit turned.</span>' : '');
@@ -3114,6 +3190,7 @@ function initBlueprintUI(ctx) {
   el('bpZip').addEventListener('click', () => exportFitted(true));
   el('bpFolder').addEventListener('click', async () => { const h = await blueprintsFolder(true); if (h) status(`Blueprints go to ${esc(h.name)}.`); });
   if (!window.showDirectoryPicker) { el('bpExport').disabled = true; el('bpFolder').disabled = true; el('bpExport').title = 'This browser can\'t write to folders: use Download zip.'; }
+  return { refreshArmour };
 }
 
 
@@ -3252,7 +3329,9 @@ function shownShapes() {
 function renderLibrary() {
   const sources = [...new Set(LIB.flatMap(s => [s.source, ...(s.blocks || []).map(b => b.mod).filter(Boolean)]))];
   const cur = el('libSource').value;
-  el('libSource').innerHTML = '<option value="">All sources</option>' + sources.map(s => `<option ${s === cur ? 'selected' : ''}>${esc(s)}</option>`).join('');
+  // an explicit value: without one the option's value is its text with spaces collapsed, so a mod named with a double
+  // space ("P.O.M -  XL Blocks") matched no card and the list fell back to all sources
+  el('libSource').innerHTML = '<option value="">All sources</option>' + sources.map(s => `<option value="${esc(s)}" ${s === cur ? 'selected' : ''}>${esc(s)}</option>`).join('');
   const list = shownShapes(), grid = el('libGrid');
   el('libCount').textContent = `${list.length} of ${LIB.length} blocks, ${LIB.filter(s => s.use).length} used in builder`;
   grid.innerHTML = '';
@@ -4329,13 +4408,13 @@ function showTab(id) {
   if (SK.view) SK.view.active = id === 'skPage';
   if (B.view) B.view.active = id === 'bPage';
   if (id === 'skPage') { SK.view.resize(); }
-  if (id === 'bPage') { B.view.resize(); if (B.parts && B.Tver !== libVersion && B.fitLibVer !== libVersion) rebuild(); else drawMap(); }
+  if (id === 'bPage') { BPUI.refreshArmour(); B.view.resize(); if (B.parts && B.Tver !== libVersion && B.fitLibVer !== libVersion) rebuild(); else drawMap(); }
 }
 document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
 window.addEventListener('resize', () => { if (current === 'skPage') SK.view.resize(); if (current === 'bPage') { B.view.resize(); drawMap(); } });
 
 // blueprint export (blueprint.js, blueprint_ui.js)
-initBlueprintUI({ THREE, el, DB, B, lib: () => LIB, effFit, shapeGeometry, shapeColor });
+const BPUI = initBlueprintUI({ THREE, el, DB, B, lib: () => LIB, effFit, shapeGeometry, shapeColor });
 
 window.SGB = { B, SK };   // for debugging in the browser console
 (async function start() {
@@ -4356,7 +4435,7 @@ window.SGB = { B, SK };   // for debugging in the browser console
   el('bGroups').value = 'turret=turret;wheels=wheel;antennas=antenn';
   const bs = await DB.get('builder'); if (bs) SETTINGS.forEach(id => { if (bs[id] !== undefined) el(id).value = bs[id]; });
   initSketchView(); initBuilderView();
-  refreshSketchList(); renderLibrary(); restoreDirs();
+  refreshSketchList(); renderLibrary(); restoreDirs(); BPUI.refreshArmour();
   showTab('bPage');                     // the Grid Builder is the working tab; the other two are reference
   // a long last fit, or a grid more than 60 blocks long (a ship hull), waits for "Fit now" instead of fitting on open
   const lastFit = await DB.get('lastFitMs'), blocksLong = +el('bLength').value * (+el('scale').value / 100) / +el('block').value;

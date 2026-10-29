@@ -88,6 +88,12 @@ has a block (fitted or edited; empty and "no block" cells left out):
 - **Blocks:** vanilla armour cards use the game's subtype for the grid size and the Armour choice (light by default,
   heavy); panels and imported blocks use their own TypeId/SubtypeId of that grid size (heavy variant when there is one).
   Cards without a block of that grid size (own sketches, mod blocks of the other size) are left out and listed.
+- **Armour from mods:** the Armour list also offers the armour grades of the library's mods, read from the imported
+  blocks. A mod's grades are the part of the block subtype (split on `_`) that differs between its blocks on one card,
+  since a mod's thickness variants share cards (for example `KGS_Armour_Cube_4mm` ... `_100mm` give 4mm ... 100mm).
+  A mod with no such part is one choice, named by its `[TAG]` or the subtype prefix its blocks share; it is listed
+  once one of its own cards is in use. A grade puts that mod's block on every card that has one (vanilla cards too);
+  the rest get light armour, counted in the export message.
 - **Placement:** the model's front becomes the grid's Forward (-Z), up stays up, the model's +z side becomes the grid's
   Right (+X). `Min` is the cell; `BlockOrientation` comes from the card's turn in the cell and the card's base
   orientation (below).

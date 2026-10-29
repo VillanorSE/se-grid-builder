@@ -90,21 +90,82 @@ export function blockOrientOnCard(cardMask, blockMask) {
   return null;
 }
 
+// ---------- armour grades: the Armour choices besides vanilla light and heavy, read from the library's mod blocks so
+// nothing about any one mod is written here. A mod's grades are the part of the subtype (split on "_") that differs
+// between its blocks on one card: a mod block shaped like a card joins it, so a mod's thickness variants share cards
+// (KONTAKT: KGS_Armour_Cube_4mm ... _100mm, grades 4mm ... 100mm). A mod with no such part is one grade, named by its
+// [TAG] or the subtype prefix its blocks share ([CAP] Consty's Aircraft Pack: CAP).
+// Returns [{ mod, label, grades: [{ value, label }] }] for the mods with grades, and the one-grade mods with a card of
+// their own in use (not those whose blocks only joined other cards); a value goes to pickBlock as its armour.
+export const gradeValue = (mod, grade) => 'grade:' + JSON.stringify([mod, grade]);
+export function parseGrade(armour) {
+  if (!String(armour).startsWith('grade:')) return null;
+  try { const [mod, grade] = JSON.parse(armour.slice(6)); return { mod, grade }; } catch (e) { return null; }
+}
+const gradeParts = subtype => subtype.split('_');
+export function armourGrades(shapes) {
+  const mods = new Map(), modOf = m => { if (!mods.has(m)) mods.set(m, { subs: new Set(), cards: new Map(), own: false }); return mods.get(m); };
+  for (const s of shapes) {
+    const groups = new Map();   // a mod's blocks on this card, by grid size and number of parts
+    for (const b of s.blocks || []) {
+      if (!b.mod || b.mod === 'Vanilla' || !b.subtype) continue;
+      const m = modOf(b.mod), parts = gradeParts(b.subtype), k = [b.mod, b.size, parts.length].join('\n');
+      m.subs.add(b.subtype); if (s.use && s.source === b.mod) m.own = true;
+      if (!groups.has(k)) groups.set(k, { m, list: [] });
+      groups.get(k).list.push(parts);
+    }
+    for (const { m, list } of groups.values()) {
+      if (list.length < 2) continue;
+      const diff = list[0].map((_, i) => i).filter(i => list.some(p => p[i] !== list[0][i]));
+      if (diff.length === 1) for (const t of new Set(list.map(p => p[diff[0]]))) m.cards.set(t, (m.cards.get(t) || 0) + 1);
+    }
+  }
+  const out = [];
+  for (const [mod, m] of mods) {
+    // a grade varies on several cards, and the grades together name most of the mod's blocks (a mod's numbered
+    // pieces, such as CAP_1x4Slope_1 ... _4, are different shapes and seldom share a card)
+    let grades = [...m.cards].filter(([, n]) => n >= 3).map(([t]) => t);
+    const named = [...m.subs].filter(sub => gradeParts(sub).some(p => grades.includes(p))).length;
+    if (grades.length < 2 || named < m.subs.size / 2) grades = [];
+    if (!grades.length && !m.own) continue;
+    const num = t => parseFloat(t), numeric = grades.every(t => !isNaN(num(t)));
+    grades.sort((a, b) => numeric ? num(a) - num(b) : a.localeCompare(b));
+    const label = modLabel(mod, m.subs);
+    out.push({ mod, label, grades: grades.length ? grades.map(t => ({ value: gradeValue(mod, t), label: t })) : [{ value: gradeValue(mod, ''), label }] });
+  }
+  return out.sort((a, b) => a.label.localeCompare(b.label));
+}
+// a short name for a mod: its [TAG], else the subtype prefix most of its blocks share, else the name without brackets
+function modLabel(mod, subs) {
+  const tag = /^\s*\[([^\]]{1,12})\]/.exec(mod); if (tag) return tag[1].trim();
+  const first = new Map(); for (const sub of subs) { const p = gradeParts(sub)[0]; if (p !== sub) first.set(p, (first.get(p) || 0) + 1); }
+  const [p, n] = [...first].sort((a, b) => b[1] - a[1])[0] || [];
+  if (p && p.length <= 8 && n >= subs.size * 0.8) return p;
+  return mod.replace(/\[[^\]]*\]|\([^)]*\)/g, '').replace(/\s+/g, ' ').trim().slice(0, 32) || mod;
+}
+
 // ---------- which game block a card becomes
-// size: 'Large' | 'Small'; armour: 'light' | 'heavy'. Returns { typeId, subtype, orient: [F, U], sure } or null when the
-// card has no block of that grid size. sure = false: an imported block whose turn on the card was never recorded.
+// size: 'Large' | 'Small'; armour: 'light' | 'heavy' | a grade (armourGrades). Returns { typeId, subtype, orient: [F, U],
+// sure, other } or null when the card has no block of that grid size. sure = false: an imported block whose turn on the
+// card was never recorded. other = true: a grade was asked for but the card has no block of it, so it gets the light one.
 export function pickBlock(shape, size, armour = 'light') {
-  const heavy = armour === 'heavy', cardOrient = CARD_ORIENT[shape.id] || ['Forward', 'Up'];
-  const va = shape.topology && VANILLA_ARMOR[shape.topology];
-  if (va) return { typeId: 'CubeBlock', subtype: va[(size === 'Large' ? 2 : 0) + (heavy ? 1 : 0)], orient: cardOrient, sure: true };
+  const heavy = armour === 'heavy', cardOrient = CARD_ORIENT[shape.id] || ['Forward', 'Up'], g = parseGrade(armour);
   const list = (shape.blocks || []).filter(b => b.size === size && b.subtype);
+  if (g) {
+    const own = list.filter(b => b.mod === g.mod && (!g.grade || gradeParts(b.subtype).includes(g.grade)));
+    if (own.length) return modBlock(shape, own.find(b => shape.id === 'mesh:' + b.mod + ':' + b.subtype) || own[0], cardOrient);
+  }
+  const other = !!g, va = shape.topology && VANILLA_ARMOR[shape.topology];
+  if (va) return { typeId: 'CubeBlock', subtype: va[(size === 'Large' ? 2 : 0) + (heavy ? 1 : 0)], orient: cardOrient, sure: true, other };
   if (!list.length) return null;
   const isHeavy = b => /heavy/i.test(b.subtype + ' ' + (b.name || ''));
   const rank = b => (isHeavy(b) === heavy ? 0 : 2) + (b.mod === 'Vanilla' ? 0 : 1);
-  const b = [...list].sort((p, q) => rank(p) - rank(q))[0];
+  return { ...modBlock(shape, [...list].sort((p, q) => rank(p) - rank(q))[0], cardOrient), other };
+}
+function modBlock(shape, b, cardOrient) {
   const defining = shape.id === 'mesh:' + b.mod + ':' + b.subtype;   // the block the card's shape was read from
   const orient = b.orient || cardOrient;
-  return { typeId: b.typeId || 'CubeBlock', subtype: b.subtype, orient, sure: !!(b.orient || !shape.id.startsWith('mesh:') || defining) };
+  return { typeId: b.typeId || 'CubeBlock', subtype: b.subtype, orient, sure: !!(b.orient || !shape.id.startsWith('mesh:') || defining), other: false };
 }
 
 // a template's block orientation in the SE grid: rot = the tool's turn of the card (ROTS index), orient = pickBlock's
@@ -133,20 +194,21 @@ export function colorMaskHSV(hex) {
 // ---------- blocks of a fitted grid
 // grid: { nx, ny, nz, centre }; cellAt(x, y, z) -> { shape: library entry, rot } | null (empty / no block)
 // o: { size, armour, color(shape) -> '#rrggbb' | null }
-// Returns { blocks, skipped: { reason: count }, unsure, mirror }
+// Returns { blocks, skipped: { reason: count }, unsure, other (blocks without the chosen grade), mirror }
 export function gridBlocks(grid, cellAt, o) {
   const blocks = [], skipped = {}, skip = r => { skipped[r] = (skipped[r] || 0) + 1; };
-  let unsure = 0;
+  let unsure = 0, other = 0;
   for (let y = 0; y < grid.ny; y++) for (let z = 0; z < grid.nz; z++) for (let x = 0; x < grid.nx; x++) {
     const c = cellAt(x, y, z); if (!c) continue;
     const pb = pickBlock(c.shape, o.size, o.armour);
     if (!pb) { skip(`${c.shape.name} (no ${o.size.toLowerCase()} grid block)`); continue; }
     if (!pb.sure) unsure++;
+    if (pb.other) other++;
     const col = o.color ? o.color(c.shape) : null;
     blocks.push({ typeId: pb.typeId, subtype: pb.subtype, min: gridPos(x, y, z, grid.nz, grid.centre), ...gridOrientation(c.rot, pb.orient),
       color: col ? colorMaskHSV(col) : null, card: c.shape.id });
   }
-  return { blocks, skipped, unsure, mirror: mirrorPlane(grid.centre) };
+  return { blocks, skipped, unsure, other, mirror: mirrorPlane(grid.centre) };
 }
 
 // ---------- bp.sbc
