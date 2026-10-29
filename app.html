@@ -83,6 +83,7 @@
   #palette { height:200px; overflow-y:auto; border:1px solid var(--line); border-radius:4px; padding:4px; background:#14181c; }
   #palette .grp { color:var(--muted); font-size:11px; margin:4px 2px 2px; }
   #palette .row { display:flex; flex-wrap:wrap; gap:3px; }
+  #palette [hidden] { display:none; }
   .pal { position:relative; width:42px; height:42px; padding:0; border-radius:4px; overflow:hidden; background:#101316; }
   .pal img { width:100%; height:100%; display:block; }
   .pal .k { position:absolute; left:1px; bottom:1px; font-size:9px; font-weight:700; color:#101316; padding:0 3px; border-radius:3px; }
@@ -203,11 +204,7 @@
 <!-- ============================== Grid Builder ============================== -->
 <section id="bPage" class="page on">
   <div class="side">
-    <h2>Session</h2>
-    <div class="btnrow"><button id="sessSave">Save session</button><button id="sessOpen">Open session</button></div>
-    <input type="file" id="sessFile" accept=".sgb,.json,application/json" hidden>
-    <div class="hint">One file with the model, settings, cell edits and block library, to keep or to send to someone with
-    this page.</div>
+    <!-- set up -->
     <h2>Model</h2>
     <div class="drop" id="bDrop">Drop an .obj or .stl here, or <button id="bPick">choose a file</button></div>
     <input type="file" id="bFile" accept=".obj,.stl" hidden>
@@ -239,23 +236,13 @@
     surface on it. Simpler blocks take near-ties. Thin bits of a neighbour poking through a grid line get no block.</div>
     <div id="info"></div>
 
-    <h2>Blueprint</h2>
-    <label>Name <input type="text" id="bpName" style="flex:1"></label>
-    <label>Armour <select id="bpArmour"><option value="light">light</option><option value="heavy">heavy</option></select></label>
-    <label>Colour <select id="bpColour"><option value="none">game default</option><option value="kind">per block kind</option><option value="one">one colour</option></select>
-      <input type="color" id="bpColourPick" value="#8a9099" style="width:28px;padding:0"></label>
-    <div class="btnrow"><button id="bpExport" class="primary">Export blueprint</button><button id="bpZip">Download zip</button><button id="bpFolder" title="Choose the Blueprints\local folder again">folder&hellip;</button></div>
-    <div id="bpStatus" class="hint"></div>
-    <div class="hint">One grid of the block size above, every fitted cell with your edits. Export writes straight into
-    %APPDATA%\SpaceEngineers\Blueprints\local\&lt;name&gt; (pick that folder once); in game F10, then paste. The in-game
-    symmetry plane is set on the hull centreline.</div>
-
-    <h2>Show</h2>
-    <label><input type="checkbox" id="showModel" checked> Model, opacity <input type="range" id="opacity" min="0.05" max="1" step="0.05" value="0.3"></label>
-    <label>On top <select id="onTop"><option value="blocks">blocks (model shows through see-through blocks)</option><option value="model">model (blocks show through a see-through model)</option></select></label>
-    <label><input type="checkbox" id="showCells" checked> Blocks as <select id="cellMode"><option value="shapes">fitted shapes</option><option value="cubes">cubes</option></select></label>
-    <label>Block opacity <input type="range" id="cellOpacity" min="0.05" max="1" step="0.05" value="0.75"></label>
-    <label><input type="checkbox" id="showGrid" checked> Grid lines on the layer</label>
+    <!-- while building -->
+    <h2>Layer</h2>
+    <label>Mode <select id="layerMode"><option value="only">only the layer</option><option value="upto" selected>up to the layer</option><option value="all">all layers</option></select></label>
+    <label><input type="range" id="layer" min="1" max="1" value="1"> <span id="layerLabel"></span></label>
+    <div class="hint">The map is the selected layer seen from above: front on the right, columns numbered from the rear, rows from
+    the -Z side (row 1 at the top). Letters are block keys (click a cell for the full name); a dot is a cell the model touches
+    where no block passes the fill rule.</div>
 
     <h2>Edit a cell</h2>
     <div class="hint">Click a cell on the layer map, or a block in the 3D view, to select it. Edits are kept in this browser for
@@ -269,6 +256,7 @@
     <div id="selInfo" class="hint">No cell selected.</div>
     <div id="altList"></div>
     <div class="hint">All blocks in use: click one for this cell, then pick its turn below. <span id="keyBuf"></span></div>
+    <input type="search" id="palSearch" placeholder="Search name, key, block or mod" style="width:100%;margin-bottom:4px">
     <div id="palette"></div>
     <div id="turns"></div>
     <details class="keys"><summary>Keyboard</summary>
@@ -277,18 +265,38 @@
       no block; <b>Backspace</b>: auto. Arrows move along the layer, <b>Page Up</b> / <b>Page Down</b> change layer,
       <b>Tab</b> / <b>Shift+Tab</b> the next / previous cell with material. <b>Ctrl+C</b> picks up, <b>Ctrl+V</b> puts the
       picked-up block in the selected cell, <b>Ctrl+Z</b> undoes, <b>Esc</b> stops painting.</div></details>
+
+    <h2>Show</h2>
+    <label><input type="checkbox" id="showModel" checked> Model, opacity <input type="range" id="opacity" min="0.05" max="1" step="0.05" value="0.3"></label>
+    <label>On top <select id="onTop"><option value="blocks">blocks (model shows through see-through blocks)</option><option value="model">model (blocks show through a see-through model)</option></select></label>
+    <label><input type="checkbox" id="showCells" checked> Blocks as <select id="cellMode"><option value="shapes">fitted shapes</option><option value="cubes">cubes</option></select></label>
+    <label>Block opacity <input type="range" id="cellOpacity" min="0.05" max="1" step="0.05" value="0.75"></label>
+    <label><input type="checkbox" id="showGrid" checked> Grid lines on the layer</label>
+
+    <!-- finishing, and rarely used -->
+    <h2>Blueprint</h2>
+    <label>Name <input type="text" id="bpName" style="flex:1"></label>
+    <label>Armour <select id="bpArmour"><option value="light">light</option><option value="heavy">heavy</option></select></label>
+    <label>Colour <select id="bpColour"><option value="none">game default</option><option value="kind">per block kind</option><option value="one">one colour</option></select>
+      <input type="color" id="bpColourPick" value="#8a9099" style="width:28px;padding:0"></label>
+    <div class="btnrow"><button id="bpExport" class="primary">Export blueprint</button><button id="bpZip">Download zip</button><button id="bpFolder" title="Choose the Blueprints\local folder again">folder&hellip;</button></div>
+    <div id="bpStatus" class="hint"></div>
+    <div class="hint">One grid of the block size above, every fitted cell with your edits. Export writes straight into
+    %APPDATA%\SpaceEngineers\Blueprints\local\&lt;name&gt; (pick that folder once); in game F10, then paste. The in-game
+    symmetry plane is set on the hull centreline.</div>
+
+    <h2>Session</h2>
+    <div class="btnrow"><button id="sessSave">Save session</button><button id="sessOpen">Open session</button></div>
+    <input type="file" id="sessFile" accept=".sgb,.json,application/json" hidden>
+    <div class="hint">One file with the model, settings, cell edits and block library, to keep or to send to someone with
+    this page.</div>
+
+    <h2>Help tune the fit</h2>
     <div class="btnrow"><button id="cellReport">Copy cell report for Claude</button></div>
+    <div class="hint">Select a cell the tool got wrong, click this, and paste it into the chat with the block you would use.</div>
     <div class="btnrow"><button id="editsExport">Export my edits for Claude</button></div>
     <div class="hint">Saves every cell you've edited (for this model and grid settings) with what the tool had picked, so
     the fitting can be tuned towards your choices. Send Claude the file's location.</div>
-    <div class="hint">Select a cell the tool got wrong, click this, and paste it into the chat with the block you would use.</div>
-
-    <h2>Layer</h2>
-    <label>Mode <select id="layerMode"><option value="only">only the layer</option><option value="upto" selected>up to the layer</option><option value="all">all layers</option></select></label>
-    <label><input type="range" id="layer" min="1" max="1" value="1"> <span id="layerLabel"></span></label>
-    <div class="hint">The map is the selected layer seen from above: front on the right, columns numbered from the rear, rows from
-    the -Z side (row 1 at the top). Letters are block keys (click a cell for the full name); a dot is a cell the model touches
-    where no block passes the fill rule.</div>
   </div>
   <div class="main">
     <div class="view" id="bView"><div class="empty" id="bEmpty">Load an .obj or .stl model to start.</div></div>
@@ -1234,10 +1242,11 @@ function showPalette() {
     const used = [...new Set(B.T.list.map(t => t.shape))];
     PAL_GROUPS.forEach(([kind, label]) => {
       const list = used.filter(si => shapeKind(LIB[si]) === kind); if (!list.length) return;
-      box.insertAdjacentHTML('beforeend', `<div class="grp">${label}</div>`);
+      const grp = document.createElement('div'); grp.className = 'grp'; grp.textContent = label; box.appendChild(grp);
       const row = document.createElement('div'); row.className = 'row';
       list.forEach(si => {
         const s = LIB[si], b = document.createElement('button'); b.className = 'pal'; b.dataset.si = si; b.title = `${s.key}: ${s.name}`;
+        b.dataset.q = [s.key, s.name, s.source, ...(s.blocks || []).flatMap(b => [b.subtype, b.name || '', b.mod || ''])].join(' ').toLowerCase();
         b.innerHTML = `${thumbCache.has(s.id) ? `<img src="${thumbCache.get(s.id)}">` : `<img data-id="${esc(s.id)}" alt="">`}<span class="k" style="background:${shapeColor(s).getStyle()}">${esc(s.key)}</span>`;
         const img = b.querySelector('img[data-id]'); if (img) palObserver.observe(img);
         b.addEventListener('click', () => useShape(si));
@@ -1248,7 +1257,18 @@ function showPalette() {
   }
   const f = B.selected && B.grid ? effFit(...B.selected) : -1, cur = B.turnShape ?? (f >= 0 ? B.T.list[f].shape : -1);
   box.querySelectorAll('.pal').forEach(b => b.classList.toggle('on', +b.dataset.si === cur));
+  filterPalette();
 }
+// the palette search: blocks whose key, name, game blocks or mod contain the words typed (all of them, any order)
+function filterPalette() {
+  const words = el('palSearch').value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  el('palette').querySelectorAll('.row').forEach(row => {
+    let any = false;
+    row.querySelectorAll('.pal').forEach(b => { const on = words.every(w => b.dataset.q.includes(w)); b.hidden = !on; any ||= on; });
+    row.hidden = !any; row.previousElementSibling.hidden = !any;
+  });
+}
+el('palSearch').addEventListener('input', filterPalette);
 // a shape for the selected cell: the turn the fit liked best for this cell if it has one, else the current turn if it
 // is already this shape, else its first turn
 function useShape(si) {

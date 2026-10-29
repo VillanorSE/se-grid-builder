@@ -20,7 +20,8 @@ Made for the *WW2: War in the Mediterranean* scenario mods, usable for any build
   - a layer map shows the result layer by layer, and clicking a cell lists its best matches to pick from.
 - **Cell editor** (Grid Builder): select a cell on the layer map, or click a block in the 3D view (a click on empty
   space picks the shown layer's cell under the pointer).
-  - **All blocks in use** is a palette grouped like the library: click one for the cell, then pick its turn from
+  - **All blocks in use** is a palette grouped like the library, with a search box (name, key, game block or mod; every
+    word typed must match): click one for the cell, then pick its turn from
     pictures of every turn, drawn from the 3D view's direction with the model's surface in that cell (red) over the
     block.
   - **Pick up** copies the cell's block as turned; **paint** then puts it wherever you click or drag on the map or
