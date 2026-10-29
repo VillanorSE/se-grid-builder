@@ -70,8 +70,12 @@ Click **Import from world...** in the Cube Library and pick:
 3. optionally, the game's `Content` folder (vanilla blocks and real block names) and `%APPDATA%\SpaceEngineers\Mods`
    (local mods).
 
-Chrome and Edge open folders directly and remember them. **Firefox** can't open folders, so run the same import from
-a command line instead, then use **Import JSON** in the Cube Library:
+Chrome and Edge open folders directly and remember them; after a reload they ask to read them again, all at once on
+Import (their prompt's "Allow on every visit" ends that). **Firefox** can't open or keep folders, nor tell the page their
+paths, so each folder button has a path box under it (filled with the usual place, kept in the browser once edited):
+the button copies that path, to paste into the folder window (Ctrl+V, Enter). It lists every file first, which is slow
+for the Workshop folder. Or run the same import from a command line instead, then use **Import JSON** in the Cube
+Library:
 
     node import_world.mjs "%APPDATA%\SpaceEngineers\Saves\<id>\<world>"
 

@@ -62,6 +62,8 @@
   .dirrow { display:flex; align-items:center; gap:8px; margin:5px 0; }
   .dirrow button { flex:none; width:190px; text-align:left; }
   .dirrow span { color:var(--muted); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .dirpath { display:none; width:100%; margin:0 0 4px; font-size:12px; }
+  .nofs .dirpath { display:block; }
   .dirrow span.set { color:var(--ok); }
   #importLog { max-height:150px; overflow-y:auto; font:11px ui-monospace, monospace; color:var(--muted); white-space:pre-wrap; margin-top:8px; }
 
@@ -142,19 +144,25 @@
     <div id="fsNote" class="warn" style="display:none;margin-bottom:8px">This browser can't open folders directly, so it shows an
     "Upload" window instead. Nothing is uploaded: the files are only read on this computer. But it lists every file in a
     folder first, which is slow for the Workshop folder (tens of thousands of files). Chrome or Edge open folders directly
-    and remember them. In Firefox, run the import as a command instead (in the se-mod-production folder):
+    and remember them. This browser can't keep a folder, so each folder's path is kept in the box under its button instead:
+    the button copies it, so in the window that opens, paste it into the folder box (Ctrl+V) and press Enter. Or run the
+    import as a command instead (in the se-mod-production folder):
     <code>node tools\se-grid-builder\import_world.mjs "&lt;world save folder&gt;"</code>, then Import JSON the file it
     writes and choose Cancel to merge.</div>
     <div class="cols">
       <div>
         <h2>Folders</h2>
         <div class="dirrow"><button data-dir="world">1. World save folder&hellip;</button><span data-dirlabel="world">not set</span></div>
+        <input type="text" class="dirpath" data-dirpath="world" title="This folder's path, copied when you click its button" spellcheck="false">
         <div class="hint" style="margin-left:4px">%APPDATA%\SpaceEngineers\Saves\&lt;id&gt;\&lt;world&gt; (holds Sandbox.sbc)</div>
         <div class="dirrow"><button data-dir="workshop">2. Workshop mods folder&hellip;</button><span data-dirlabel="workshop">not set</span></div>
+        <input type="text" class="dirpath" data-dirpath="workshop" title="This folder's path, copied when you click its button" spellcheck="false">
         <div class="hint" style="margin-left:4px">Steam\steamapps\workshop\content\244850</div>
         <div class="dirrow"><button data-dir="content">3. Game Content folder&hellip;</button><span data-dirlabel="content">optional</span></div>
+        <input type="text" class="dirpath" data-dirpath="content" title="This folder's path, copied when you click its button" spellcheck="false">
         <div class="hint" style="margin-left:4px">Steam\steamapps\common\SpaceEngineers\Content: vanilla blocks and block names</div>
         <div class="dirrow"><button data-dir="localMods">4. Local mods folder&hellip;</button><span data-dirlabel="localMods">optional</span></div>
+        <input type="text" class="dirpath" data-dirpath="localMods" title="This folder's path, copied when you click its button" spellcheck="false">
         <div class="hint" style="margin-left:4px">%APPDATA%\SpaceEngineers\Mods: mods in the world that aren't from the Workshop</div>
       </div>
       <div>
@@ -625,8 +633,21 @@ document.querySelectorAll('[data-dir]').forEach(btn => btn.addEventListener('cli
     const fs = await settle(key, handleFS(h));
     if (!fs) { alert(key === 'world' ? 'No Sandbox.sbc in that folder. Pick the world\'s own folder.' : key === 'workshop' ? 'No Workshop mods found there. Pick ...\\steamapps\\workshop\\content\\244850.' : 'No Data folder found there. Pick ...\\SpaceEngineers\\Content.'); return; }
     DIRS[key] = fs; DB.set('dir:' + key, h).catch(() => {}); showDir(key);
-  } else { fallbackKey = key; el('dirFallback').click(); }
+  } else {
+    // no folder access to keep (Firefox): copy the folder's remembered path for pasting into the window that opens
+    const path = document.querySelector(`[data-dirpath="${key}"]`).value.trim();
+    if (path && navigator.clipboard) navigator.clipboard.writeText(path).catch(() => {});
+    fallbackKey = key; el('dirFallback').click();
+  }
 }));
+// the folder paths typed in browsers that can't keep folders (kept in this browser; a page is never told a folder's path)
+const DIR_PATHS = { world: String.raw`%APPDATA%\SpaceEngineers\Saves`, workshop: String.raw`C:\Program Files (x86)\Steam\steamapps\workshop\content\244850`,
+  content: String.raw`C:\Program Files (x86)\Steam\steamapps\common\SpaceEngineers\Content`, localMods: String.raw`%APPDATA%\SpaceEngineers\Mods` };
+let dirPaths = {}; try { dirPaths = JSON.parse(localStorage.getItem('sgb-dirpaths') || '{}'); } catch (e) {}
+document.querySelectorAll('[data-dirpath]').forEach(inp => {
+  const key = inp.dataset.dirpath; inp.value = dirPaths[key] ?? DIR_PATHS[key];
+  inp.addEventListener('change', () => { dirPaths[key] = inp.value.trim(); try { localStorage.setItem('sgb-dirpaths', JSON.stringify(dirPaths)); } catch (e) {} });
+});
 el('dirFallback').addEventListener('change', async e => {
   const files = [...e.target.files]; e.target.value = ''; if (!files.length || !fallbackKey) return;
   const fs = await settle(fallbackKey, filesFS(files));
@@ -639,16 +660,16 @@ async function restoreDirs() {     // folders remembered from last time (permiss
     DIRS[key] = { pending: h, name: h.name + ' (remembered)' }; showDir(key);
   }
 }
+// The browser asks again after a reload. Every folder is asked for at once, straight from the click: a request has to
+// start while the click is fresh (Chrome: about 5 s), so asking one after another failed for the later folders when
+// the first prompt took longer. Chrome's prompt offers "Allow on every visit", which ends the asking for good.
 async function grantDirs() {
-  for (const key of Object.keys(DIRS)) {
-    const d = DIRS[key]; if (!d.pending) continue;
-    let ok = false;
-    try { ok = (await d.pending.queryPermission({ mode: 'read' })) === 'granted' || (await d.pending.requestPermission({ mode: 'read' })) === 'granted'; } catch (e) {}
-    if (ok) { DIRS[key] = await settle(key, handleFS(d.pending)); showDir(key); }
-  }
+  const keys = Object.keys(DIRS).filter(k => DIRS[k] && DIRS[k].pending);
+  const ok = await Promise.all(keys.map(k => DIRS[k].pending.requestPermission({ mode: 'read' }).then(r => r === 'granted', () => false)));
+  for (const [i, key] of keys.entries()) if (ok[i]) { DIRS[key] = await settle(key, handleFS(DIRS[key].pending)); showDir(key); }
 }
 el('libImportToggle').addEventListener('click', () => el('importBox').classList.toggle('on'));
-if (!window.showDirectoryPicker) el('fsNote').style.display = 'block';
+if (!window.showDirectoryPicker) { el('fsNote').style.display = 'block'; el('importBox').classList.add('nofs'); }
 el('impClose').addEventListener('click', () => el('importBox').classList.remove('on'));
 el('impFilter').value = DEFAULT_FILTER;
 el('impRun').addEventListener('click', async () => {
