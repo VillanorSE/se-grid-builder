@@ -559,7 +559,7 @@ el('libJsonFile').addEventListener('change', async e => {
     else incoming.forEach(s => { const cur = LIB.find(x => x.id === s.id);
       if (!cur) { LIB.push(s); return; }
       cur.blocks ||= []; (s.blocks || []).forEach(b => { if (!cur.blocks.some(c => c.subtype === b.subtype && c.size === b.size)) cur.blocks.push(b); }); });
-    thumbCache.clear(); libChanged(); renderLibrary(); refreshSketchList();
+    nameCardsByFamily(LIB); thumbCache.clear(); libChanged(); renderLibrary(); refreshSketchList();
   } catch (err) { alert('Could not import: ' + err.message); }
 });
 el('libReset').addEventListener('click', () => {
@@ -653,7 +653,7 @@ el('impRun').addEventListener('click', async () => {
     log(`\nDone in ${((performance.now() - t0) / 1000).toFixed(1)} s. ${sum.matched} matching blocks: ${sum.topology} armour joined the vanilla shapes, ` +
       `${sum.models} read from models (${sum.newShapes} new cards, switched off: turn on the ones you build with). Skipped: ${sum.multiCell} larger than one cell, ${sum.unreadable} with unreadable models, ` +
       `${sum.noShape} without a usable shape.`);
-    LIB.forEach(s => thumbCache.delete(s.id));
+    nameCardsByFamily(LIB); LIB.forEach(s => thumbCache.delete(s.id));
     libChanged(); renderLibrary(); refreshSketchList();
   } catch (e) { log('Import failed: ' + e.message); }
   el('impRun').disabled = false;
@@ -1550,7 +1550,9 @@ window.SGB = { B, SK };   // for debugging in the browser console
     seed.forEach(s => { if (!LIB.some(x => x.id === s.id)) LIB.push(s); });
     // penalties follow the current ranking (seed.js, 2026-10-01): built-in cards take the seed's, mod blocks MOD_PENALTY
     LIB.forEach(s => { const sd = seed.find(x => x.id === s.id); if (sd) s.penalty = sd.penalty; else if (s.id.startsWith('mesh:')) s.penalty = MOD_PENALTY; });
-    if (LIB.length !== before || seed.some(s => !saved.some(x => x.id === s.id))) libChanged();
+    // imported cards named after one grade ("100mm Armour Quarter Cuboid") take their shape family's name (2026-10-28)
+    const renamed = nameCardsByFamily(LIB);
+    if (renamed || LIB.length !== before || seed.some(s => !saved.some(x => x.id === s.id))) libChanged();
   }
   else { LIB = seedLibrary(); adoptOldSketches(); libChanged(); }
   el('bGroups').value = 'turret=turret;wheels=wheel;antennas=antenn';

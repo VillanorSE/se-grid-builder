@@ -106,6 +106,21 @@ const g12 = tk.grades[1].value, cube12 = BP.pickBlock(gLib[0], 'Small', g12), cu
 check(cube12.subtype === 'TK_Armour_Cube_12mm' && !cube12.other && cubeL.subtype === 'LargeBlockArmorBlock' && cubeL.other &&
   BP.pickBlock(gLib[3], 'Small', pp.grades[0].value).subtype === 'PP_Nose_1' && BP.pickBlock(gLib[0], 'Small', 'light').subtype === 'SmallBlockArmorBlock',
   'armour grades: a grade picks its block, also on a vanilla card; a card without one falls back to light');
+const named = (n, gs) => ({ id: `mesh:${gMod}:TK_Armour_${n}_${gs[0]}`, source: gMod, name: `${gs[0]} Armour ${n}`,
+  blocks: gs.map(g => ({ subtype: `TK_Armour_${n}_${g}`, size: 'Small', mod: gMod, name: `${g} Armour ${n}` })) });
+const fLib = [...gLib.slice(0, 3), named('Quarter Cuboid', ['100mm', '4mm', '12mm']), named('Fillet', ['100mm', '4mm']),
+  named('Lone', ['100mm']), { ...named('Edited', ['100mm', '4mm']), name: 'My wedge' }];
+const renamed = BP.nameCardsByFamily(fLib), fn = k => fLib[k].name;
+check(renamed === 2 && fn(3) === 'Armour Quarter Cuboid (all grades)' && fn(4) === 'Armour Fillet (2 grades)' && fn(5) === '100mm Armour Lone' &&
+  fn(6) === 'My wedge' && BP.nameCardsByFamily(fLib) === 0,
+  'cards holding several grades are named by shape family; one-grade and hand-named cards kept; renaming twice changes nothing');
+// a block and its mirror with one display name (as KONTAKT names them) get told apart by the subtype part only one has
+const tip = named('Half Tip', ['100mm', '4mm']), mir = named('Half Tip', ['100mm', '4mm']);
+mir.id += '_m'; mir.blocks.forEach(b => b.subtype = b.subtype.replace('Half Tip', 'HalfTip_Mirror'));
+tip.blocks.forEach(b => b.subtype = b.subtype.replace('Half Tip', 'HalfTip')); tip.id = 'mesh:' + gMod + ':' + tip.blocks[0].subtype; mir.id = 'mesh:' + gMod + ':' + mir.blocks[0].subtype;
+const mLib = [...gLib.slice(0, 3), tip, mir]; BP.nameCardsByFamily(mLib);
+check(tip.name === 'Armour Half Tip (2 grades)' && mir.name === 'Armour Half Tip Mirror (2 grades)' && BP.nameCardsByFamily(mLib) === 0,
+  'a block and its mirror sharing a display name get different card names');
 
 // 6. bp.sbc well-formed, and its structure
 function parseXml(s) {               // small strict checker: balanced tags, quoted attributes, known entities only

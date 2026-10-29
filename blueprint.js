@@ -103,7 +103,8 @@ export function parseGrade(armour) {
   try { const [mod, grade] = JSON.parse(armour.slice(6)); return { mod, grade }; } catch (e) { return null; }
 }
 const gradeParts = subtype => subtype.split('_');
-export function armourGrades(shapes) {
+// each mod's grades (sorted; [] for a one-grade mod), its block subtypes, and whether a card of its own is in use
+function modGrades(shapes) {
   const mods = new Map(), modOf = m => { if (!mods.has(m)) mods.set(m, { subs: new Set(), cards: new Map(), own: false }); return mods.get(m); };
   for (const s of shapes) {
     const groups = new Map();   // a mod's blocks on this card, by grid size and number of parts
@@ -120,20 +121,67 @@ export function armourGrades(shapes) {
       if (diff.length === 1) for (const t of new Set(list.map(p => p[diff[0]]))) m.cards.set(t, (m.cards.get(t) || 0) + 1);
     }
   }
-  const out = [];
-  for (const [mod, m] of mods) {
+  for (const m of mods.values()) {
     // a grade varies on several cards, and the grades together name most of the mod's blocks (a mod's numbered
     // pieces, such as CAP_1x4Slope_1 ... _4, are different shapes and seldom share a card)
     let grades = [...m.cards].filter(([, n]) => n >= 3).map(([t]) => t);
     const named = [...m.subs].filter(sub => gradeParts(sub).some(p => grades.includes(p))).length;
     if (grades.length < 2 || named < m.subs.size / 2) grades = [];
-    if (!grades.length && !m.own) continue;
     const num = t => parseFloat(t), numeric = grades.every(t => !isNaN(num(t)));
-    grades.sort((a, b) => numeric ? num(a) - num(b) : a.localeCompare(b));
+    m.grades = grades.sort((a, b) => numeric ? num(a) - num(b) : a.localeCompare(b));
+  }
+  return mods;
+}
+export function armourGrades(shapes) {
+  const out = [];
+  for (const [mod, m] of modGrades(shapes)) {
+    if (!m.grades.length && !m.own) continue;
     const label = modLabel(mod, m.subs);
-    out.push({ mod, label, grades: grades.length ? grades.map(t => ({ value: gradeValue(mod, t), label: t })) : [{ value: gradeValue(mod, ''), label }] });
+    out.push({ mod, label, grades: m.grades.length ? m.grades.map(t => ({ value: gradeValue(mod, t), label: t })) : [{ value: gradeValue(mod, ''), label }] });
   }
   return out.sort((a, b) => a.label.localeCompare(b.label));
+}
+// Names imported cards so the name fits what the card holds. A card is named after the block its shape was read from,
+// but holds every grade of that shape ("100mm Armour Quarter Cuboid" holds 4mm ... 100mm), so it takes the shape
+// family's name without the grade words: "Armour Quarter Cuboid (all grades)", or "(3 grades)" when it holds only some.
+// Cards left with the same name (a mod may give a block and its mirror one display name: KONTAKT's
+// KGS_Armour_1x2SlopeHalfTip_100mm and ..._Mirror_100mm) each add the subtype parts the others lack ("... Mirror").
+// Only names the tool gave are changed (the block's own name, or s.autoName, the last name given here); a name typed
+// by hand is kept. Returns how many cards were renamed.
+export function nameCardsByFamily(shapes) {
+  const mods = modGrades(shapes), cards = [];
+  for (const s of shapes) {
+    if (!s.id || !s.id.startsWith('mesh:')) continue;
+    const def = (s.blocks || []).find(b => s.id === 'mesh:' + b.mod + ':' + b.subtype);
+    if (!def || !def.name || (s.name !== def.name && s.name !== s.autoName)) continue;
+    const m = mods.get(def.mod), grades = m ? m.grades : [];
+    const held = new Set(s.blocks.filter(b => b.mod === def.mod).flatMap(b => gradeParts(b.subtype).filter(p => grades.includes(p))));
+    const grade = new Set(grades.map(t => t.toLowerCase()));
+    const base = held.size < 2 ? def.name : def.name.split(/\s+/).filter(w => !grade.has(w.toLowerCase())).join(' ').trim() || def.name;
+    const parts = gradeParts(def.subtype).filter(p => !grades.includes(p));
+    cards.push({ s, base, parts, suffix: base === def.name ? '' : ` (${held.size === grades.length ? 'all' : held.size} grades)` });
+  }
+  const byBase = new Map(); for (const c of cards) { if (!byBase.has(c.base)) byBase.set(c.base, []); byBase.get(c.base).push(c); }
+  let n = 0;
+  const words = t => t.replace(/([a-z0-9])([A-Z])/g, '$1 $2').split(/[\s-]+/).filter(Boolean);
+  const alike = (list, i) => list.some((e, j) => j !== i && e === list[i]);
+  for (const group of byBase.values()) {
+    // the parts only this card has, as words the name doesn't already say ("Mirror", "Quarter Corner"); for cards
+    // still alike, all those words; for cards alike even then, the whole subtype
+    const has = new Set(words(group[0].base).map(w => w.toLowerCase()));
+    const own = c => words(c.parts.filter(p => !group.every(o => o === c || o.parts.includes(p))).join(' '));
+    let extras = group.map(c => group.length < 2 ? '' : own(c).filter(w => !has.has(w.toLowerCase())).join(' '));
+    extras = extras.map((e, i) => alike(extras, i) ? own(group[i]).join(' ') : e);
+    extras = extras.map((e, i) => alike(extras, i) ? group[i].s.id.slice(group[i].s.id.lastIndexOf(':') + 1) : e);
+    group.forEach((c, i) => c.extra = extras[i]);
+  }
+  for (const c of cards) {
+    const extra = c.extra;
+    const name = c.base + (extra ? ' ' + extra : '') + c.suffix;
+    if (name !== c.s.name) { c.s.name = name; n++; }
+    if (name !== c.s.blocks.find(b => c.s.id.endsWith(':' + b.subtype)).name) c.s.autoName = name; else delete c.s.autoName;
+  }
+  return n;
 }
 // a short name for a mod: its [TAG], else the subtype prefix most of its blocks share, else the name without brackets
 function modLabel(mod, subs) {

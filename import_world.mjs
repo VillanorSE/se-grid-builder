@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const { importWorldBlocks, DEFAULT_FILTER } = await import(pathToFileURL(path.join(here, 'importer.js')));
 const { seedLibrary } = await import(pathToFileURL(path.join(here, 'seed.js')));
+const { nameCardsByFamily } = await import(pathToFileURL(path.join(here, 'blueprint.js')));
 
 const args = process.argv.slice(2), opt = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args.splice(i, 2)[1] : d; };
 const steam = 'C:/Program Files (x86)/Steam/steamapps';
@@ -26,6 +27,7 @@ const nodeFS = root => root && fs.existsSync(root) ? {
 const lib = seedLibrary(), t0 = Date.now();
 const sum = await importWorldBlocks(lib, { world: nodeFS(world), workshop: nodeFS(workshop), content: nodeFS(content), localMods: nodeFS(mods),
   filter, includeVanilla: vanilla, log: m => console.log(m) });
+nameCardsByFamily(lib);
 const shapes = lib.map(({ _m, _s, ...s }) => ({ ...s, solids: (s.solids || []).map(sol => sol.type === 'tris'
   ? { type: 'tris', tris: Array.from(sol.tris, v => Math.round(v * 1e4) / 1e4) } : sol) }));
 fs.writeFileSync(out, JSON.stringify({ format: 'se-grid-builder-library', version: 1, shapes }));

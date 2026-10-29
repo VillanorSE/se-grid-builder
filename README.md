@@ -79,6 +79,10 @@ shown"). A mod block shaped like an existing card joins that card (a mod's thick
 mod blocks land on vanilla armour and panel cards). Filtering by a source shows both the mod's own cards and the cards
 holding its blocks, and a card names the other mods it holds ("Vanilla armour + 6 mods"). Blocks larger than one cell (most wings) are
 counted but not imported yet (see `design/multicell-blocks.md`).
+A card holding several grades of a shape is named by the shape family, not the one block it was read from
+("100mm Armour Quarter Cuboid" becomes "Armour Quarter Cuboid (all grades)"; saved libraries are renamed when the page
+opens). Cards a mod gives one display name (a block and its mirror, say) add the subtype words only one has
+("... Mirror"). Names typed by hand are kept.
 
 ## Blueprint export
 
