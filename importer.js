@@ -74,7 +74,7 @@ export async function importWorldBlocks(library, o) {
   const addCard = (sig, s) => { if (!bySig.has(sig)) bySig.set(sig, []); bySig.get(sig).push(s); };
   for (const s of library) { if (!s.solids || !s.solids.length) continue; if (!s._m) s._m = shapeMask(s); if (maskCount(s._m.mask) && !(s.reach && !s.shift)) addCard(sigKey(s._m.mask, s.shift), s); }   // (reach cards from before shifts: replaced)
   // where each block is now, so a block read again moves to its right card (an older import may have put it elsewhere)
-  const blockKey = (subtype, size) => subtype + '|' + size, cardOf = new Map();
+  const blockKey = (subtype, size) => subtype + '|' + size, cardOf = new Map(), fresh = new Set();   // fresh: cards made by this import
   for (const s of library) for (const b of s.blocks || []) cardOf.set(blockKey(b.subtype, b.size), s);
   const keys = new Set(library.map(s => s.key));
   const sum = { mods: sources.length, defs: 0, matched: 0, topology: 0, models: 0, newShapes: 0, multiCell: 0, reach: 0, spansCells: 0, noShape: 0, unreadable: 0, filteredOut: 0, moved: 0 };
@@ -88,6 +88,7 @@ export async function importWorldBlocks(library, o) {
       // the card was named after this block (not by hand): it takes a remaining block's name below
       if (was.id === 'mesh:' + b.mod + ':' + b.subtype && (was.name === b.name || was.name === was.autoName)) was._lostName = true;
       was.blocks = was.blocks.filter(x => x !== b); sum.moved++;
+      if (was.use && fresh.has(s) && !s.reach) s.use = true;   // a block that was in use (on its old card) stays in use on the card made for it (offset cards: by hand only)
     }
     cardOf.set(k, s);
     const cur = s.blocks.find(b => b.subtype === d.subtype && b.size === d.cubeSize);
@@ -133,7 +134,7 @@ export async function importWorldBlocks(library, o) {
           // reach cards are picked by hand (Edit a cell), never by the fit: the cell holds the block, its model shows next door
           s = Object.assign(shape, { id, key: makeKey(name, keys), name, source: src.name,
             blocks: [], use: false, penalty: MOD_PENALTY, lines: [], rev: 1, ...(reach ? { reach: true, shift: shown.offset } : {}) });   // mod blocks start off: switch on the ones you build with
-          keys.add(s.key); library.push(s); addCard(sig, s); sum.newShapes++;
+          keys.add(s.key); library.push(s); addCard(sig, s); fresh.add(s); sum.newShapes++;
         }
         addBlock(s, d, src, orient); sum.models++; if (reach) sum.reach++; n++;
         if (n % 25 === 0) await pause();

@@ -119,18 +119,26 @@ export function exactVolume(shape) {
       for (let i = 0; i < t.length; i += 9)
         w += t[i] * (t[i + 4] * t[i + 8] - t[i + 5] * t[i + 7]) - t[i + 1] * (t[i + 3] * t[i + 8] - t[i + 5] * t[i + 6]) + t[i + 2] * (t[i + 3] * t[i + 7] - t[i + 4] * t[i + 6]);
       v += Math.abs(w) / 6;
-    } else if (s.type === 'planes' && s.verts && s.verts.length >= 4) {
-      const V = []; s.verts.forEach(p => { const q = p.map(x => Math.round(x * 1e6) / 1e6 + 0); if (!V.some(r => near(r, q))) V.push(q); });
-      const c = [0, 1, 2].map(k => V.reduce((a, p) => a + p[k], 0) / V.length);
-      for (const q of hullPlanes(V)) {   // each hull face: a fan of tetrahedra from the centre
-        const F = V.filter(p => Math.abs(q[0] * p[0] + q[1] * p[1] + q[2] * p[2] - q[3]) < 1e-6); if (F.length < 3) continue;
-        const f = [0, 1, 2].map(k => F.reduce((a, p) => a + p[k], 0) / F.length), e1 = sub(F[0], f), e2 = cross(q, e1);
-        F.sort((a, b) => Math.atan2(dot(sub(a, f), e2), dot(sub(a, f), e1)) - Math.atan2(dot(sub(b, f), e2), dot(sub(b, f), e1)));
-        for (let i = 0; i < F.length; i++) v += Math.abs(dot(sub(F[i], c), cross(sub(F[(i + 1) % F.length], c), sub(f, c)))) / 6;
-      }
+    } else if (s.type === 'planes') {
+      const H = hullFaces(s); if (!H) continue;
+      for (const { F, f } of H.faces) for (let i = 0; i < F.length; i++)   // each hull face: a fan of tetrahedra from the centre
+        v += Math.abs(dot(sub(F[i], H.c), cross(sub(F[(i + 1) % F.length], H.c), sub(f, H.c)))) / 6;
     }
   }
   return v;
+}
+// a convex plane solid's hull faces from its corners: { c: corner average, faces: [{ F: corners in order, f: face centre }] }
+function hullFaces(s) {
+  if (!s.verts || s.verts.length < 4) return null;
+  const V = []; s.verts.forEach(p => { const q = p.map(x => Math.round(x * 1e6) / 1e6 + 0); if (!V.some(r => near(r, q))) V.push(q); });
+  const c = [0, 1, 2].map(k => V.reduce((a, p) => a + p[k], 0) / V.length), faces = [];
+  for (const q of hullPlanes(V)) {
+    const F = V.filter(p => Math.abs(q[0] * p[0] + q[1] * p[1] + q[2] * p[2] - q[3]) < 1e-6); if (F.length < 3) continue;
+    const f = [0, 1, 2].map(k => F.reduce((a, p) => a + p[k], 0) / F.length), e1 = sub(F[0], f), e2 = cross(q, e1);
+    F.sort((a, b) => Math.atan2(dot(sub(a, f), e2), dot(sub(a, f), e1)) - Math.atan2(dot(sub(b, f), e2), dot(sub(b, f), e1)));
+    faces.push({ F, f });
+  }
+  return { c, faces };
 }
 
 // convex hull of a point set as half-spaces (brute force; fine for a handful of points)
@@ -245,18 +253,27 @@ function earClip(poly, pts) {
 // A template's sig is its mask; cards the mask can't tell apart (a 1x7 and a 1x8 slope piece, a mantlet plate and a
 // panel: the importer keeps them apart by volume) each keep their templates, the second and later ones with
 // "#<card id>" added (the first card in the library keeps the plain mask, as cell edits saved before this have it).
+// A card's turns are told apart by its mask and its centre (shapeCentre): a 1x8 slope's piece rises 1/8 of a cell, which the
+// 6-sample mask can't see, so its mask looks alike turned about the vertical while the block doesn't. A turn whose mask
+// another turn of the card already has adds "%<centre>". T.turns[shape][ri] = the template of that card's turn ri.
 export function buildTemplates(shapes) {
-  const list = [], bySig = new Map(), owner = new Map();   // mask sig -> the card whose templates have it plain
+  const list = [], bySig = new Map(), owner = new Map(), turns = new Map(), byMask = new Map();   // owner: mask sig -> the card whose templates have it plain
   shapes.forEach((sh, si) => {
     if (!sh.use || !sh.solids || !sh.solids.length) return;
     if (!sh._m) sh._m = shapeMask(sh);
     const { mask, plate } = sh._m;
     if (!maskCount(mask)) return;
+    const own = new Map(), tr = new Array(ROTS.length).fill(-1), c0 = shapeCentre(sh);   // own: this card's turns by mask
+    turns.set(si, tr);
     ROT_MAP.forEach((map, ri) => {
-      const m = permute(mask, map), shiftT = sh.shift ? rotP(ROTS[ri], sh.shift) : null, ms = tplKey(maskSig(m), shiftT);
+      const m = permute(mask, map), shiftT = sh.shift ? rotP(ROTS[ri], sh.shift) : null, ms = tplKey(maskSig(m), shiftT), cen = rotP(ROTS[ri], c0);
+      const same = (own.get(ms) || []).find(j => sameCentre(list[j].cen, cen));
+      if (same !== undefined) { tr[ri] = same; return; }   // the card's own turns that look alike
       if (!owner.has(ms)) owner.set(ms, si);
-      const sig = owner.get(ms) === si ? ms : ms + '#' + sh.id;
-      if (bySig.has(sig)) return;   // the card's own turns that look alike
+      let sig = owner.get(ms) === si ? ms : ms + '#' + sh.id;
+      if (own.has(ms)) sig += '%' + cen.map(v => Math.round(v * 1e3)).join(',');   // a turn the mask can't tell from another of this card's
+      if (!own.has(ms)) own.set(ms, []); own.get(ms).push(list.length); tr[ri] = list.length;
+      if (!byMask.has(ms)) byMask.set(ms, []); byMask.get(ms).push(list.length);
       bySig.set(sig, list.length);
       let minY = SUB; for (let k = 0; k < NS && minY === SUB; k++) if (getBit(m, k)) minY = Math.floor(k / (SUB * SUB));   // lowest sample layer
       const walls = [0, 1, 2, 3, 4, 5].map(w => { const ax = w >> 1, at = w & 1 ? SUB - 1 : 0;
@@ -265,24 +282,56 @@ export function buildTemplates(shapes) {
       const face = [0, 1, 2, 3, 4, 5].map(w => { const ax = w >> 1, at = w & 1 ? SUB - 1 : 0, f = new Uint8Array(SUB * SUB);
         for (let u = 0; u < SUB; u++) for (let v = 0; v < SUB; v++) { const q = [0, 0, 0]; q[ax] = at; q[(ax + 1) % 3] = u; q[(ax + 2) % 3] = v;
           f[u * SUB + v] = getBit(m, (q[1] * SUB + q[2]) * SUB + q[0]); } return f; });
-      list.push({ shape: si, rot: ri, mask: m, n: maskCount(m), plate, sig, card: sh.id, minY, walls, face, ...(sh.reach ? { hand: true } : {}), ...(shiftT ? { shiftT } : {}) });
+      list.push({ shape: si, rot: ri, mask: m, n: maskCount(m), plate, sig, card: sh.id, cen, minY, walls, face, ...(sh.reach ? { hand: true } : {}), ...(shiftT ? { shiftT } : {}) });
     });
   });
-  return { list, bySig };
+  return { list, bySig, turns, byMask };
 }
-// the same shape turned 90 degrees about an axis (0 = X length, 1 = Y vertical, 2 = Z width)
+// Where a shape's surface is centred (area-weighted over its triangles, or its plane solids' hull faces), relative to the
+// cell centre, a reach card's shift included: told apart from the mask, it shows which way a turn faces where the mask
+// can't (a 1x8 slope piece's 1/8 rise moves it 0.016 to 0.03 of a cell; panel bevels and plate details under 0.001).
+const centreCache = new WeakMap();
+function shapeCentre(sh) {
+  if (centreCache.has(sh)) return centreCache.get(sh);
+  let A = 0; const c = [0, 0, 0];
+  const tri = (p, q, r) => { const a = len(cross(sub(q, p), sub(r, p))) / 2; A += a; for (let k = 0; k < 3; k++) c[k] += a * (p[k] + q[k] + r[k]) / 3; };
+  for (const so of sh.solids || []) {
+    if (so.type === 'tris') { const t = so.tris;
+      for (let i = 0; i < t.length; i += 9) tri([t[i], t[i + 1], t[i + 2]], [t[i + 3], t[i + 4], t[i + 5]], [t[i + 6], t[i + 7], t[i + 8]]); }
+    else { const H = hullFaces(so); if (H) for (const { F, f } of H.faces) for (let i = 0; i < F.length; i++) tri(F[i], F[(i + 1) % F.length], f); }
+  }
+  const sft = sh.shift || [0, 0, 0];
+  const out = A ? c.map((x, k) => x / A - .5 + sft[k]) : [0, 0, 0];
+  centreCache.set(sh, out); return out;
+}
+const CENTRE_TOL = 0.004;
+const sameCentre = (a, b) => a.every((v, k) => Math.abs(v - b[k]) < CENTRE_TOL);
+// the editor's 90-degree turns as matrices (the turns of turnVec): about X (length), Y (vertical), Z (width)
+const TURN_M = [[[1, 0, 0], [0, 0, -1], [0, 1, 0]], [[0, 0, 1], [0, 1, 0], [-1, 0, 0]], [[0, -1, 0], [1, 0, 0], [0, 0, 1]]];
+const mulM = (A, B) => [0, 1, 2].map(r => [0, 1, 2].map(c => A[r][0] * B[0][c] + A[r][1] * B[1][c] + A[r][2] * B[2][c]));
+const rotIndex = M => ROTS.findIndex(R => R.every((row, i) => row.every((v, j) => v === M[i][j])));
 // a mask's template of the same card when it has one of its own (see buildTemplates), else whichever card has it
 const sameCard = (T, ti, ms) => T.bySig.get(ms + '#' + T.list[ti].card) ?? T.bySig.get(ms);
 const tplKey = (ms, shiftT) => shiftT ? ms + '@' + shiftT.join(',') : ms;
+// the same block turned 90 degrees about an axis (0 = X length, 1 = Y vertical, 2 = Z width): the card's own turn
 export function rotateTemplate(T, ti, axis) {
-  const t = T.list[ti], r = sameCard(T, ti, tplKey(maskSig(permute(t.mask, TURN_MAP[axis])), t.shiftT && turnVec(axis, t.shiftT)));
+  const t = T.list[ti], tr = T.turns && T.turns.get(t.shape);
+  if (tr) { const r = tr[rotIndex(mulM(TURN_M[axis], ROTS[t.rot]))]; return r >= 0 ? r : ti; }
+  const r = sameCard(T, ti, tplKey(maskSig(permute(t.mask, TURN_MAP[axis])), t.shiftT && turnVec(axis, t.shiftT)));
   return r === undefined ? ti : r;
 }
 // the block mirrored across the hull centreline (Z, the width): the template whose mask is this one flipped in Z, or -1
 // when the library has no such block (a left/right-handed shape without its twin in use). The cell editor's mirror.
 const MIRROR_Z = SAMPLE.map(p => sIndex([p[0] - .5, p[1] - .5, .5 - p[2]]));
+// Of the blocks whose mask is this one's mirrored, the one centred where its mirror image is (this card's first).
 export function mirrorTemplate(T, ti) {
-  const t = T.list[ti], r = sameCard(T, ti, tplKey(maskSig(permute(t.mask, MIRROR_Z)), t.shiftT && mirrorVec(t.shiftT)));
+  const t = T.list[ti], ms = tplKey(maskSig(permute(t.mask, MIRROR_Z)), t.shiftT && mirrorVec(t.shiftT));
+  const cands = T.byMask ? T.byMask.get(ms) || [] : [], mc = mirrorVec(t.cen);
+  if (cands.length) {
+    const near = cands.filter(j => sameCentre(T.list[j].cen, mc));
+    return (near.find(j => T.list[j].card === t.card) ?? near[0]) ?? (cands.find(j => T.list[j].card === t.card) ?? cands[0]);
+  }
+  const r = sameCard(T, ti, ms);
   return r === undefined ? -1 : r;
 }
 // rotation-independent signature of a shape's mask (finds duplicate shapes)

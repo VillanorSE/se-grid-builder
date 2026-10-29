@@ -84,12 +84,15 @@ counted but not imported yet (see `design/multicell-blocks.md`).
 A block joins a card only when its exact volume matches too (within 0.006 of a cell and 3%; plates by outline, any
 thickness): the 6-sample shape mask can't tell a 1x8 slope's pieces from a 1x7's or from quarter blocks. A mod's grades
 are one model, so they still share a card. Cards the mask can't tell apart each keep their own turns in the builder.
+A card's turns are told apart by where its surface is centred as well as by its mask, so a piece the mask sees as
+symmetric (a 1x8 slope's 1/8 rise, canopies, slope corners) still turns every way it can face.
 
 Blocks drawn outside their own cell (some mods' mantlet plates sit up to two cells off through `ModelOffset`, so the block goes in
 a spare cell and its plate shows over the next block) go on **offset** cards: the cube is the block's own cell, and its
 model is drawn where it shows, in the library, the cell editor's turn pictures and the 3D view. Pick one by hand in Edit
 a cell for the spare cell (the fit leaves them out); the plate turns with the block, and the blueprint puts the block in
-that cell. A model drawn across several cells is cut to its own cell, as before. Importing a world again moves blocks off the cards an older import put them on.
+that cell. A model drawn across several cells is cut to its own cell, as before. Importing a world again moves blocks off the cards an older import put them on. A block moved off a card you use
+lands on a card that is in use too (offset cards excepted).
 
 A card holding several grades of a shape is named by the shape family, not the one block it was read from
 ("100mm Armour Quarter Cuboid" becomes "Armour Quarter Cuboid (all grades)"; saved libraries are renamed when the page

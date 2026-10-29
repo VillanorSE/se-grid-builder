@@ -160,6 +160,15 @@ const dT = C.buildTemplates([{ ...slope, use: true }, { ...twin, use: true }]), 
 const turned = C.rotateTemplate(dT, dT.list.indexOf(d1[0]), 1);
 check(d0.length === 12 && d1.length === 12 && d0.every(t => !t.sig.includes('#')) && d1.every(t => t.sig.endsWith('#mesh:M:SlopeTwin')) && dT.list[turned].shape === 1,
   'two cards with the same mask both keep their templates (the second keyed by its id), and turning stays on the card');
+// a block rising 1/8 of a cell (KONTAKT 1x8 slope piece 7, 0.75 to 0.875 high) looks alike to the mask turned about the
+// vertical; its turns are told apart by where it is centred, so it has 24 and turns
+const rv = [[0, 0, 0], [1, 0, 0], [0, 0, 1], [1, 0, 1], [0, .75, 0], [0, .75, 1], [1, .875, 0], [1, .875, 1]];
+const rise = { id: 'mesh:M:Rise', solids: [{ type: 'planes', planes: C.hullPlanes(rv), verts: rv }] };
+const rsT = C.buildTemplates([{ ...rise, use: true }]), up = C.rotateTemplate(rsT, 0, 1);
+const fourUp = [1, 2, 3, 4].reduce(a => C.rotateTemplate(rsT, a, 1), 0);
+const rm = C.mirrorTemplate(rsT, 0);
+check(rsT.list.length === 24 && up !== 0 && fourUp === 0 && rm >= 0 && Math.abs(rsT.list[rm].cen[2] + rsT.list[0].cen[2]) < 1e-9 && Math.abs(rsT.list[rm].cen[0] - rsT.list[0].cen[0]) < 1e-9,
+  `a block rising 1/8 of a cell keeps its 24 turns, turns vertically (four turns back to the start) and mirrors (${rsT.list.length} turns)`);
 
 // 6. bp.sbc well-formed, and its structure
 function parseXml(s) {               // small strict checker: balanced tags, quoted attributes, known entities only
