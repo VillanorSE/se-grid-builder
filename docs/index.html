@@ -312,6 +312,7 @@
       <button data-bshift="1,1" title="Move the reference one cell up">U+</button><button data-bshift="1,-1">U-</button>
       <button data-bshift="2,1" title="Move the reference one cell to the side">S+</button><button data-bshift="2,-1">S-</button></div>
     <label><input type="checkbox" id="benchMap" checked> Mark the layer map by category</label>
+    <label><input type="checkbox" id="benchGhost"> Show the reference in 3D, <select id="benchGhostMode"><option value="plain">see-through blue</option><option value="cat">by category</option></select></label>
     <div id="benchStatus" class="hint"></div>
     <div class="btnrow"><button id="benchExport">Export benchmark for Claude</button></div>
     <div class="hint">Compares the fit with a blueprint you built of this model (a <code>bp.sbc</code> from
@@ -3437,11 +3438,12 @@ function alignReference(blocks, g, o = {}) {
 // block (pickBlock with o.armour) differs from the reference's only counts in gradeDiff.
 // fitAt(ci) -> template index, or < 0 for no block (default g.fit; the page passes its edits).
 const SCORED = ['match', 'turn', 'rank-miss', 'candidate-miss', 'not-in-library', 'shifted', 'missing', 'extra'];
-function compareReference(blocks, al, g, T, lib, o = {}) {
-  const fitAt = o.fitAt || (ci => g.fit[ci]), size = o.size || (g.b > 1 ? 'Large' : 'Small');
+// The reference's cells in the fit's tool frame: 'x,y,z' -> { b (the block), rot (its card's turn in ROTS, armour only,
+// else -1), p (the cell) }, plus the cells outside the grid. The page draws the reference from this too.
+function referenceCells(blocks, al, g) {
   const inGrid = p => p[0] >= 0 && p[1] >= 0 && p[2] >= 0 && p[0] < g.nx && p[1] < g.ny && p[2] < g.nz;
   const A = bmMul(ROTS[al.rot], GRID_TO_TOOL);
-  const ref = new Map(), outside = [];   // tool cell key -> reference entry
+  const ref = new Map(), outside = [];
   for (const b of blocks) {
     let rot = -1;
     if (b.kind === 'armour') rot = bmRotIndex(bmMul(bmMul(A, b.M), bmTr(orientMatrix(b.orient[0], b.orient[1]))));
@@ -3452,6 +3454,11 @@ function compareReference(blocks, al, g, T, lib, o = {}) {
       if (!inGrid(p)) outside.push(e); else ref.set(k, e);
     }
   }
+  return { ref, outside };
+}
+function compareReference(blocks, al, g, T, lib, o = {}) {
+  const fitAt = o.fitAt || (ci => g.fit[ci]), size = o.size || (g.b > 1 ? 'Large' : 'Small');
+  const { ref, outside } = referenceCells(blocks, al, g);   // tool cell key -> reference entry
   const masks = new Map(), refMask = (si, rot) => { const k = si + ':' + rot;
     if (!masks.has(k)) { const sh = lib[si]; if (!sh._m) sh._m = shapeMask(sh); masks.set(k, turnMask(sh._m.mask, rot)); } return masks.get(k); };
   const iou = (a, b) => { let i = 0, u = 0; for (let k = 0; k < NS; k++) { const x = getBit(a, k), y = getBit(b, k); i += x & y; u += x | y; } return u ? i / u : 1; };
@@ -4625,6 +4632,7 @@ function drawCells() {
       const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.Float32BufferAttribute(arr, 3));
       const ls = new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: c, transparent: true, opacity: o })); ls.renderOrder = 3; v.cellGroup.add(ls); });
   }
+  drawReference(shown);
   if (B.selected) {
     // selected cell: a see-through orange box plus a bright outline, drawn over everything (lines are 1 px in WebGL, so
     // the outline is repeated slightly larger to read as a thick line)
@@ -5057,6 +5065,45 @@ function benchCompare() {
     (Object.keys(r.unmapped).length ? `<br>Not in the library: ${top(r.unmapped)}` : '') +
     (r.gradeDiff ? `<br>${r.gradeDiff} matched cells export another grade than the reference (not counted)` : '');
 }
+// the reference as see-through blocks in the 3D view, on the layers shown: armour as its card in its turn, functional and
+// unmapped blocks as a box per cell. Untick "Blocks as" to see it against the model alone.
+const REF_COLOR = '#58a6ff', REF_OTHER_COLOR = '#d29922';
+function drawReference(shown) {
+  const bn = B.bench, g = B.grid;
+  if (!bn || !bn.result || !g || !el('benchGhost').checked) return;
+  const { b, ox, oy, oz } = g, byCat = el('benchGhostMode').value === 'cat', byGeo = new Map();
+  for (const e of referenceCells(bn.blocks, bn.align, g).ref.values()) {
+    if (!shown(e.p[1])) continue;
+    const key = e.b.kind === 'armour' && LIB[e.b.si] ? e.b.si + ':' + e.rot : 'box', r = bn.at.get(cellKey(...e.p));
+    if (!byGeo.has(key)) byGeo.set(key, []);
+    byGeo.get(key).push({ c: [ox + (e.p[0] + .5) * b, oy + (e.p[1] + .5) * b, oz + (e.p[2] + .5) * b],
+      col: byCat && r ? BENCH_COLOR[r.cat] : e.b.kind === 'armour' ? REF_COLOR : REF_OTHER_COLOR });
+  }
+  const v = B.view, m = new THREE.Matrix4(), col = new THREE.Color(), pts = [];
+  byGeo.forEach((list, key) => {
+    let geo = boxGeo, sz = b * 0.94;
+    if (key !== 'box') {
+      const [si, rot] = key.split(':').map(Number), sg = shapeGeometry(LIB[si]), R = ROTS[rot];
+      if (sg) { sg.translate(-.5, -.5, -.5); sz = b * 0.98;
+        sg.applyMatrix4(new THREE.Matrix4().set(R[0][0], R[0][1], R[0][2], 0, R[1][0], R[1][1], R[1][2], 0, R[2][0], R[2][1], R[2][2], 0, 0, 0, 0, 1)); geo = sg; }
+    }
+    const inst = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.3, flatShading: true,
+      side: THREE.DoubleSide, depthWrite: false }), list.length);
+    inst.renderOrder = 4;
+    const eg = geo === boxGeo ? boxEdges : new THREE.EdgesGeometry(geo, 20), pa = eg.attributes.position;
+    list.forEach((it, n) => {
+      m.makeScale(sz, sz, sz); m.setPosition(...it.c); inst.setMatrixAt(n, m); inst.setColorAt(n, col.set(it.col));
+      for (let k = 0; k < pa.count; k++) pts.push(it.c[0] + pa.getX(k) * sz, it.c[1] + pa.getY(k) * sz, it.c[2] + pa.getZ(k) * sz, ...col.toArray());
+    });
+    if (eg !== boxEdges) eg.dispose();
+    v.cellGroup.add(inst);
+  });
+  if (!pts.length) return;
+  const lg = new THREE.BufferGeometry(), f = new Float32Array(pts);
+  lg.setAttribute('position', new THREE.InterleavedBufferAttribute(new THREE.InterleavedBuffer(f, 6), 3, 0));
+  lg.setAttribute('color', new THREE.InterleavedBufferAttribute(new THREE.InterleavedBuffer(f, 6), 3, 3));
+  const ls = new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ vertexColors: true })); ls.renderOrder = 5; v.cellGroup.add(ls);
+}
 function benchShow() {
   const sel = el('benchGrid'); sel.innerHTML = '';
   if (B.bench) B.bench.bp.grids.forEach((g, i) => { const o = document.createElement('option'); o.value = i; o.textContent = `${g.name || 'grid ' + (i + 1)} (${g.blocks.length} blocks)`; sel.appendChild(o); });
@@ -5085,6 +5132,7 @@ document.querySelectorAll('[data-bshift]').forEach(b => b.addEventListener('clic
   bn.align = { ...bn.align, t: bn.align.t.map((v, i) => i === ax ? v + d : v), score: 'moved by hand' }; benchShow();
 }));
 el('benchMap').addEventListener('change', drawMap);
+['benchGhost', 'benchGhostMode'].forEach(id => el(id).addEventListener('change', () => { if (B.grid) drawCells(); }));
 el('benchExport').addEventListener('click', () => {
   const bn = B.bench; if (!bn || !bn.result) { alert('Load a reference blueprint and fit the model first.'); return; }
   const grid = bn.bp.grids[bn.gi];

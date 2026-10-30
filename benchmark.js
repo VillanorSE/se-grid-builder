@@ -118,11 +118,12 @@ export function alignReference(blocks, g, o = {}) {
 // block (pickBlock with o.armour) differs from the reference's only counts in gradeDiff.
 // fitAt(ci) -> template index, or < 0 for no block (default g.fit; the page passes its edits).
 export const SCORED = ['match', 'turn', 'rank-miss', 'candidate-miss', 'not-in-library', 'shifted', 'missing', 'extra'];
-export function compareReference(blocks, al, g, T, lib, o = {}) {
-  const fitAt = o.fitAt || (ci => g.fit[ci]), size = o.size || (g.b > 1 ? 'Large' : 'Small');
+// The reference's cells in the fit's tool frame: 'x,y,z' -> { b (the block), rot (its card's turn in ROTS, armour only,
+// else -1), p (the cell) }, plus the cells outside the grid. The page draws the reference from this too.
+export function referenceCells(blocks, al, g) {
   const inGrid = p => p[0] >= 0 && p[1] >= 0 && p[2] >= 0 && p[0] < g.nx && p[1] < g.ny && p[2] < g.nz;
   const A = bmMul(ROTS[al.rot], GRID_TO_TOOL);
-  const ref = new Map(), outside = [];   // tool cell key -> reference entry
+  const ref = new Map(), outside = [];
   for (const b of blocks) {
     let rot = -1;
     if (b.kind === 'armour') rot = bmRotIndex(bmMul(bmMul(A, b.M), bmTr(orientMatrix(b.orient[0], b.orient[1]))));
@@ -133,6 +134,11 @@ export function compareReference(blocks, al, g, T, lib, o = {}) {
       if (!inGrid(p)) outside.push(e); else ref.set(k, e);
     }
   }
+  return { ref, outside };
+}
+export function compareReference(blocks, al, g, T, lib, o = {}) {
+  const fitAt = o.fitAt || (ci => g.fit[ci]), size = o.size || (g.b > 1 ? 'Large' : 'Small');
+  const { ref, outside } = referenceCells(blocks, al, g);   // tool cell key -> reference entry
   const masks = new Map(), refMask = (si, rot) => { const k = si + ':' + rot;
     if (!masks.has(k)) { const sh = lib[si]; if (!sh._m) sh._m = shapeMask(sh); masks.set(k, turnMask(sh._m.mask, rot)); } return masks.get(k); };
   const iou = (a, b) => { let i = 0, u = 0; for (let k = 0; k < NS; k++) { const x = getBit(a, k), y = getBit(b, k); i += x & y; u += x | y; } return u ? i / u : 1; };

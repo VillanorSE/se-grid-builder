@@ -182,6 +182,9 @@ only compared, and your edited cells count as the fit's picks.
   fit left the cell empty: *dropped* where the model has material, *beyond* where it has none, *outside* the grid);
   extra (the fit has a block the reference doesn't: *open*, or *functional* where a reference functional block sits);
   unmapped.
+- **Show the reference in 3D** draws the reference's blocks see-through over the model (blue armour, amber functional
+  and unmapped blocks, or coloured by category), on the layers shown. Untick Blocks as to see it against the model
+  alone: the quickest way to check the line-up and the build scale.
 - **Scores**: right block and turn, right block (the same measures as the edits files), and shape overlap (the two
   blocks' shared volume, so near misses count partly), over every category but unmapped. Armour grade (light, heavy,
   a mod's thickness) is not the fit's choice: a match that would export another grade is only counted apart.
