@@ -30,9 +30,9 @@ self.onmessage = e => {
     const g = computeGrid(PARTS, o);
     const s = takeSurfScores(cache);
     if (share || !g) { self.postMessage({ type: 'done', job: m.job, grid: null, scores: s, tplCount: T.list.length }, buffers(s)); return; }
-    const grid = { nx: g.nx, ny: g.ny, nz: g.nz, b: g.b, ox: g.ox, oy: g.oy, oz: g.oz, cell: g.cell, fit: g.fit, fill: g.fill, mat: g.mat,
+    const grid = { nx: g.nx, ny: g.ny, nz: g.nz, b: g.b, ox: g.ox, oy: g.oy, oz: g.oz, cell: g.cell, fit: g.fit, fill: g.fill, mat: g.mat, matMask: g.matMask,
       alt: g.alt, altScore: g.altScore, ALT: g.ALT, hiddenShare: g.hiddenShare };
-    // mat is copied, not moved: it belongs to the kept surface scores (refits of the same grid reuse it)
+    // mat and matMask are copied, not moved: it belongs to the kept surface scores (refits of the same grid reuse it)
     self.postMessage({ type: 'done', job: m.job, grid, scores: s, tplCount: T.list.length },
       [g.cell.buffer, g.fit.buffer, g.fill.buffer, g.alt.buffer, g.altScore.buffer, ...buffers(s)]);
   } catch (err) {

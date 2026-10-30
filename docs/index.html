@@ -307,7 +307,7 @@
     <div class="btnrow"><button id="benchLoad">Load reference blueprint</button><button id="benchClear">Clear</button></div>
     <input type="file" id="benchFile" accept=".sbc,.xml" hidden>
     <label>Grid <select id="benchGrid" style="flex:1"></select></label>
-    <div class="btnrow"><button id="benchAlign" title="Search the line-up again">Line up</button><button id="benchTurn" title="Turn the reference 90 degrees about the vertical">Turn</button>
+    <div class="btnrow"><button id="benchAlign" title="Search the line-up again">Line up</button><button data-bturn="0,0,1;0,1,0;-1,0,0" title="Turn the reference 90 degrees about the vertical">Turn</button><button data-bturn="1,0,0;0,-1,0;0,0,-1" title="Turn the reference upside down (about its front-back axis)">Flip</button>
       <button data-bshift="0,1" title="Move the reference one cell forward">F+</button><button data-bshift="0,-1">F-</button>
       <button data-bshift="1,1" title="Move the reference one cell up">U+</button><button data-bshift="1,-1">U-</button>
       <button data-bshift="2,1" title="Move the reference one cell to the side">S+</button><button data-bshift="2,-1">S-</button></div>
@@ -1103,8 +1103,8 @@ function computeGrid(parts, o) {
   if (!P) {
     const n3 = fn[0] * fn[1] * fn[2];
     P = { fine: { g: new Uint16Array(n3), s: new Uint16Array(n3) }, hid: { g: new Uint16Array(n3), s: new Uint16Array(n3) }, anyHidden: false,
-      bins: new Map(), hidden: 0, seen: 0, niOf: new Uint16Array(N), matOf: new Uint16Array(N) };
-    const { fine, hid, bins, niOf, matOf } = P;
+      bins: new Map(), hidden: 0, seen: 0, niOf: new Uint16Array(N), matOf: new Uint16Array(N), matMask: new Uint32Array(N * W) };
+    const { fine, hid, bins, niOf, matOf, matMask } = P;
     const prio = {}; o.groupNames.forEach((g, i) => { const p = (o.groupPriority || []).indexOf(g); prio[i + 1] = p < 0 ? 50 + i : p; });
     scaled.forEach(p => partSolid(p.tris, [ox, oy, oz], fb, fn, fine, o.groupNames.indexOf(p.group) + 1, prio));
     // each hidden part is filled solid between its outer surfaces along all three axes (its "visual hull"), so an open
@@ -1146,11 +1146,12 @@ function computeGrid(parts, o) {
     }));
     for (let y = 0; y < ny; y++) for (let z = 0; z < nz; z++) for (let x = 0; x < nx; x++) { let n = 0, m = 0;
       for (let sy = 0; sy < SUB; sy++) for (let sz = 0; sz < SUB; sz++) for (let sx = 0; sx < SUB; sx++) {
-        const f = fidx(x * SUB + sx, y * SUB + sy, z * SUB + sz); if (fine.g[f]) n++; if (fine.g[f] || fine.s[f]) m++; }
+        const f = fidx(x * SUB + sx, y * SUB + sy, z * SUB + sz); if (fine.g[f]) n++;
+        if (fine.g[f] || fine.s[f]) { m++; const k = (sy * SUB + sz) * SUB + sx; matMask[idx(x, y, z) * W + (k >> 5)] |= 1 << (k & 31); } }
       niOf[idx(x, y, z)] = n; matOf[idx(x, y, z)] = m; }
     if (scache) { scache.prep = P; scache.prepKey = prepKey; }
   }
-  const { fine, hid, anyHidden, bins, niOf, matOf, hidden, seen } = P;   // niOf, matOf: inside samples; inside or surface samples
+  const { fine, hid, anyHidden, bins, niOf, matOf, matMask, hidden, seen } = P;   // niOf, matOf: inside samples; inside or surface samples (matMask: which, W words per cell)
   const mh = newMask();
   const cell = new Int16Array(N), fit = new Int32Array(N).fill(-1), fill = new Float32Array(N);
   const T = o.T.list, pen = T.map(tp => o.shapes[tp.shape].penalty ?? 0.11);
@@ -1429,7 +1430,7 @@ function computeGrid(parts, o) {
     }
   }
   // mat: the model's material per cell (inside or surface samples, of NS), for benchmark.js
-  return { nx, ny, nz, b, ox, oy, oz, cell, fit, fill, mat: matOf, idx, alt, altScore, ALT, hiddenShare: seen ? hidden / seen : 0 };
+  return { nx, ny, nz, b, ox, oy, oz, cell, fit, fill, mat: matOf, matMask, idx, alt, altScore, ALT, hiddenShare: seen ? hidden / seen : 0 };
 
 }
 
@@ -1565,9 +1566,9 @@ self.onmessage = e => {
     const g = computeGrid(PARTS, o);
     const s = takeSurfScores(cache);
     if (share || !g) { self.postMessage({ type: 'done', job: m.job, grid: null, scores: s, tplCount: T.list.length }, buffers(s)); return; }
-    const grid = { nx: g.nx, ny: g.ny, nz: g.nz, b: g.b, ox: g.ox, oy: g.oy, oz: g.oz, cell: g.cell, fit: g.fit, fill: g.fill, mat: g.mat,
+    const grid = { nx: g.nx, ny: g.ny, nz: g.nz, b: g.b, ox: g.ox, oy: g.oy, oz: g.oz, cell: g.cell, fit: g.fit, fill: g.fill, mat: g.mat, matMask: g.matMask,
       alt: g.alt, altScore: g.altScore, ALT: g.ALT, hiddenShare: g.hiddenShare };
-    // mat is copied, not moved: it belongs to the kept surface scores (refits of the same grid reuse it)
+    // mat and matMask are copied, not moved: it belongs to the kept surface scores (refits of the same grid reuse it)
     self.postMessage({ type: 'done', job: m.job, grid, scores: s, tplCount: T.list.length },
       [g.cell.buffer, g.fit.buffer, g.fill.buffer, g.alt.buffer, g.altScore.buffer, ...buffers(s)]);
   } catch (err) {
@@ -2357,8 +2358,8 @@ function computeGrid(parts, o) {
   if (!P) {
     const n3 = fn[0] * fn[1] * fn[2];
     P = { fine: { g: new Uint16Array(n3), s: new Uint16Array(n3) }, hid: { g: new Uint16Array(n3), s: new Uint16Array(n3) }, anyHidden: false,
-      bins: new Map(), hidden: 0, seen: 0, niOf: new Uint16Array(N), matOf: new Uint16Array(N) };
-    const { fine, hid, bins, niOf, matOf } = P;
+      bins: new Map(), hidden: 0, seen: 0, niOf: new Uint16Array(N), matOf: new Uint16Array(N), matMask: new Uint32Array(N * W) };
+    const { fine, hid, bins, niOf, matOf, matMask } = P;
     const prio = {}; o.groupNames.forEach((g, i) => { const p = (o.groupPriority || []).indexOf(g); prio[i + 1] = p < 0 ? 50 + i : p; });
     scaled.forEach(p => partSolid(p.tris, [ox, oy, oz], fb, fn, fine, o.groupNames.indexOf(p.group) + 1, prio));
     // each hidden part is filled solid between its outer surfaces along all three axes (its "visual hull"), so an open
@@ -2400,11 +2401,12 @@ function computeGrid(parts, o) {
     }));
     for (let y = 0; y < ny; y++) for (let z = 0; z < nz; z++) for (let x = 0; x < nx; x++) { let n = 0, m = 0;
       for (let sy = 0; sy < SUB; sy++) for (let sz = 0; sz < SUB; sz++) for (let sx = 0; sx < SUB; sx++) {
-        const f = fidx(x * SUB + sx, y * SUB + sy, z * SUB + sz); if (fine.g[f]) n++; if (fine.g[f] || fine.s[f]) m++; }
+        const f = fidx(x * SUB + sx, y * SUB + sy, z * SUB + sz); if (fine.g[f]) n++;
+        if (fine.g[f] || fine.s[f]) { m++; const k = (sy * SUB + sz) * SUB + sx; matMask[idx(x, y, z) * W + (k >> 5)] |= 1 << (k & 31); } }
       niOf[idx(x, y, z)] = n; matOf[idx(x, y, z)] = m; }
     if (scache) { scache.prep = P; scache.prepKey = prepKey; }
   }
-  const { fine, hid, anyHidden, bins, niOf, matOf, hidden, seen } = P;   // niOf, matOf: inside samples; inside or surface samples
+  const { fine, hid, anyHidden, bins, niOf, matOf, matMask, hidden, seen } = P;   // niOf, matOf: inside samples; inside or surface samples (matMask: which, W words per cell)
   const mh = newMask();
   const cell = new Int16Array(N), fit = new Int32Array(N).fill(-1), fill = new Float32Array(N);
   const T = o.T.list, pen = T.map(tp => o.shapes[tp.shape].penalty ?? 0.11);
@@ -2683,7 +2685,7 @@ function computeGrid(parts, o) {
     }
   }
   // mat: the model's material per cell (inside or surface samples, of NS), for benchmark.js
-  return { nx, ny, nz, b, ox, oy, oz, cell, fit, fill, mat: matOf, idx, alt, altScore, ALT, hiddenShare: seen ? hidden / seen : 0 };
+  return { nx, ny, nz, b, ox, oy, oz, cell, fit, fill, mat: matOf, matMask, idx, alt, altScore, ALT, hiddenShare: seen ? hidden / seen : 0 };
 
 }
 
@@ -3396,12 +3398,35 @@ function referenceBlocks(grid, lib, o = {}) {
 // A hand-built grid's origin and facing are its own. Tried: the 24 turns of the grid (no mirror) and whole-cell shifts
 // around the model; scored by how the reference's cells cover the model's material (g.mat, not the fit, so the line-up
 // can't favour the fit): overlap / (reference cells + material cells - overlap).
-// Returns { rot, t: [x, y, z], score, next } (next: the best score with another turn, to show a near-tie).
+// Whole cells can't tell a hull from the same hull upside down (or end for end) when its outline is alike, so with
+// o.lib and the model's per-cell material samples (g.matMask) each turn's best few shifts are scored again by samples:
+// the reference blocks' own shapes in their turns (slopes, corners; a full cell for functional and unmapped blocks)
+// against the model's material, shared samples / all samples of either.
+// Returns { rot, t: [x, y, z], score, next, by: 'samples' | 'cells' } (next: the best score with another turn, to show
+// a near-tie).
 const MAT_MIN = Math.round(NS * 0.08);   // as the fit's empty rule: under 8% material is no material
+const ALIGN_KEEP = 4;                    // shifts per turn scored again by samples
 function toolCell(al, gc) { const p = bmApp(bmMul(ROTS[al.rot], GRID_TO_TOOL), gc); return [p[0] + al.t[0], p[1] + al.t[1], p[2] + al.t[2]]; }
+const bmPop = v => { v -= (v >>> 1) & 0x55555555; v = (v & 0x33333333) + ((v >>> 2) & 0x33333333); return (((v + (v >>> 4)) & 0x0f0f0f0f) * 0x01010101) >>> 24; };
+// the reference's cells (grid frame) with each cell's block, first block wins where two claim a cell
+function refCellList(blocks) {
+  const keys = new Set(), out = [];
+  for (const b of blocks) for (const c of b.cells) { const k = c.join(','); if (!keys.has(k)) { keys.add(k); out.push({ c, b }); } }
+  return out;
+}
 function alignReference(blocks, g, o = {}) {
-  const span = o.span ?? 3, keys = new Set(), cells = [];
-  for (const b of blocks) for (const c of b.cells) { const k = c.join(','); if (!keys.has(k)) { keys.add(k); cells.push(c); } }
+  const span = o.span ?? 3, list = refCellList(blocks), cells = list.map(e => e.c);
+  const fine = o.lib && g.matMask, W = fine ? g.matMask.length / (g.nx * g.ny * g.nz) : 0;
+  let matBits = 0; if (fine) for (let i = 0; i < g.matMask.length; i++) matBits += bmPop(g.matMask[i]);
+  const full = new Uint32Array(W); for (let k = 0; k < NS; k++) full[k >> 5] |= 1 << (k & 31);
+  const sampleScore = (Q, t) => {   // Q: [{ p (tool cell before the shift), m (mask), n (its samples) }]
+    let inter = 0, refBits = 0;
+    for (const q of Q) { refBits += q.n;
+      const x = q.p[0] + t[0], y = q.p[1] + t[1], z = q.p[2] + t[2];
+      if (x < 0 || y < 0 || z < 0 || x >= g.nx || y >= g.ny || z >= g.nz) continue;
+      const base = g.idx(x, y, z) * W; for (let w = 0; w < W; w++) inter += bmPop(q.m[w] & g.matMask[base + w]); }
+    return inter / (refBits + matBits - inter);
+  };
   const mlo = [1e9, 1e9, 1e9], mhi = [-1e9, -1e9, -1e9]; let nMat = 0;
   for (let y = 0; y < g.ny; y++) for (let z = 0; z < g.nz; z++) for (let x = 0; x < g.nx; x++) if (g.mat[g.idx(x, y, z)] >= MAT_MIN) {
     nMat++; [x, y, z].forEach((v, i) => { mlo[i] = Math.min(mlo[i], v); mhi[i] = Math.max(mhi[i], v); }); }
@@ -3413,17 +3438,26 @@ function alignReference(blocks, g, o = {}) {
     const lo = [0, 1, 2].map(i => Math.min(...P.map(p => p[i]))), hi = [0, 1, 2].map(i => Math.max(...P.map(p => p[i])));
     // shifts that put the reference's box within `span` cells of the material's box on every side
     const range = [0, 1, 2].map(i => { const a = mlo[i] - lo[i], b = mhi[i] - hi[i]; return [Math.min(a, b) - span, Math.max(a, b) + span]; });
-    let rb = null;
+    const top = [];   // the best ALIGN_KEEP shifts by cells, best first
     for (let tx = range[0][0]; tx <= range[0][1]; tx++) for (let ty = range[1][0]; ty <= range[1][1]; ty++) for (let tz = range[2][0]; tz <= range[2][1]; tz++) {
       let ov = 0; for (const p of P) if (isMat(p[0] + tx, p[1] + ty, p[2] + tz)) ov++;
       const s = ov / (P.length + nMat - ov);
-      if (!rb || s > rb.score) rb = { rot: r, t: [tx, ty, tz], score: s };
+      if (top.length < ALIGN_KEEP || s > top[top.length - 1].score) {
+        top.push({ rot: r, t: [tx, ty, tz], score: s }); top.sort((a, b) => b.score - a.score); if (top.length > ALIGN_KEEP) top.pop(); }
+    }
+    let rb = top[0];
+    if (fine) {
+      const Q = list.map((e, i) => { let m = full;
+        if (e.b.kind === 'armour') { const sh = o.lib[e.b.si]; if (!sh._m) sh._m = shapeMask(sh);
+          m = turnMask(sh._m.mask, bmRotIndex(bmMul(bmMul(A, e.b.M), bmTr(orientMatrix(e.b.orient[0], e.b.orient[1]))))); }
+        let n = 0; for (let w = 0; w < W; w++) n += bmPop(m[w]); return { p: P[i], m, n }; });
+      rb = top.map(c => ({ ...c, score: sampleScore(Q, c.t) })).reduce((a, b) => (b.score > a.score ? b : a));
     }
     bestPerRot.push(rb);
     if (!best || rb.score > best.score) best = rb;
   }
-  const next = Math.max(0, ...bestPerRot.filter(b => b.rot !== best.rot).map(b => b.score));
-  return { ...best, score: +best.score.toFixed(4), next: +next.toFixed(4) };
+  const next = bestPerRot.length > 1 ? +Math.max(0, ...bestPerRot.filter(b => b.rot !== best.rot).map(b => b.score)).toFixed(4) : null;
+  return { ...best, score: +best.score.toFixed(4), next, by: fine ? 'samples' : 'cells' };
 }
 
 // ---------- the comparison
@@ -5052,14 +5086,14 @@ function benchCompare() {
   const g = B.grid, grid = bn.bp.grids[bn.gi];
   if (!g || !g.mat) { st.textContent = 'Load and fit the model to compare.'; return; }
   if ((g.b > 1 ? 'Large' : 'Small') !== grid.size) { bn.result = bn.at = null; st.textContent = `The reference is a ${grid.size.toLowerCase()} grid; set Block size to match.`; return; }
-  if (!bn.align) bn.align = alignReference(bn.blocks, g);
+  if (!bn.align) bn.align = alignReference(bn.blocks, g, { lib: LIB });
   if (!bn.align) { bn.result = bn.at = null; st.textContent = 'Nothing to line up: the reference has no blocks or the model no material.'; return; }
   const fitAt = ci => effFit(ci % g.nx, Math.floor(ci / (g.nx * g.nz)), Math.floor(ci / g.nx) % g.nz);
   const r = bn.result = compareReference(bn.blocks, bn.align, g, B.T, LIB, { armour: el('bpArmour').value, fitAt });
   bn.at = new Map(r.cells.map(c => [cellKey(c.column - 1, c.layer - 1, c.row - 1), c]));
   const top = (o, n = 6) => Object.entries(o).sort((a, b) => b[1] - a[1]).slice(0, n).map(([k, v]) => `${esc(k)} ${v}`).join(', ');
   const legend = Object.keys(BENCH_COLOR).filter(c => r.counts[c]).map(c => `<span style="display:inline-block;width:9px;height:9px;border:2px solid ${BENCH_COLOR[c]};margin:0 3px 0 6px"></span>${c} ${r.counts[c]}`).join('');
-  st.innerHTML = `<b>${esc(bn.bp.name || bn.source)}</b> / ${esc(grid.name)}: ${grid.blocks.length} blocks, line-up ${bn.align.score} (best other turn ${bn.align.next})<br>` +
+  st.innerHTML = `<b>${esc(bn.bp.name || bn.source)}</b> / ${esc(grid.name)}: ${grid.blocks.length} blocks, line-up ${bn.align.score}${bn.align.next != null ? ` (best other turn ${bn.align.next})` : ''}<br>` +
     `Right block and turn <b>${pct(r.exact, r.n)}</b> (${r.exact}/${r.n}), right block <b>${pct(r.shape, r.n)}</b>, shape overlap ${(100 * r.overlap).toFixed(1)}%<br>${legend}` +
     (Object.keys(r.notInLibrary).length ? `<br>Reference blocks switched off here: ${top(r.notInLibrary)}` : '') +
     (Object.keys(r.unmapped).length ? `<br>Not in the library: ${top(r.unmapped)}` : '') +
@@ -5121,12 +5155,13 @@ el('benchFile').addEventListener('change', async e => {
 el('benchClear').addEventListener('click', () => { B.bench = null; benchShow(); });
 el('benchGrid').addEventListener('change', () => { if (!B.bench) return; B.bench.gi = +el('benchGrid').value; benchBlocks(); benchShow(); });
 el('benchAlign').addEventListener('click', () => { if (!B.bench) return; B.bench.align = null; benchShow(); });
-el('benchTurn').addEventListener('click', () => {   // a quarter turn about the vertical, then the best shift for it
+// Turn: a quarter turn about the vertical; Flip: a half turn about the front-back axis; then the best shift for it
+document.querySelectorAll('[data-bturn]').forEach(btn => btn.addEventListener('click', () => {
   const bn = B.bench; if (!bn || !bn.align || !B.grid) return;
-  const Ry = [[0, 0, 1], [0, 1, 0], [-1, 0, 0]], R = ROTS[bn.align.rot];
-  const rot = ROTS.findIndex(Q => Q.every((row, i) => row.every((v, j) => v === Ry[i][0] * R[0][j] + Ry[i][1] * R[1][j] + Ry[i][2] * R[2][j])));
-  bn.align = alignReference(bn.blocks, B.grid, { rots: [rot] }); benchShow();
-});
+  const Q = btn.dataset.bturn.split(';').map(r => r.split(',').map(Number)), R = ROTS[bn.align.rot];
+  const rot = ROTS.findIndex(S => S.every((row, i) => row.every((v, j) => v === Q[i][0] * R[0][j] + Q[i][1] * R[1][j] + Q[i][2] * R[2][j])));
+  bn.align = alignReference(bn.blocks, B.grid, { rots: [rot], lib: LIB }); benchShow();
+}));
 document.querySelectorAll('[data-bshift]').forEach(b => b.addEventListener('click', () => {
   const bn = B.bench; if (!bn || !bn.align) return; const [ax, d] = b.dataset.bshift.split(',').map(Number);
   bn.align = { ...bn.align, t: bn.align.t.map((v, i) => i === ax ? v + d : v), score: 'moved by hand' }; benchShow();

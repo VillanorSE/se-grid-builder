@@ -765,8 +765,8 @@ export function computeGrid(parts, o) {
   if (!P) {
     const n3 = fn[0] * fn[1] * fn[2];
     P = { fine: { g: new Uint16Array(n3), s: new Uint16Array(n3) }, hid: { g: new Uint16Array(n3), s: new Uint16Array(n3) }, anyHidden: false,
-      bins: new Map(), hidden: 0, seen: 0, niOf: new Uint16Array(N), matOf: new Uint16Array(N) };
-    const { fine, hid, bins, niOf, matOf } = P;
+      bins: new Map(), hidden: 0, seen: 0, niOf: new Uint16Array(N), matOf: new Uint16Array(N), matMask: new Uint32Array(N * W) };
+    const { fine, hid, bins, niOf, matOf, matMask } = P;
     const prio = {}; o.groupNames.forEach((g, i) => { const p = (o.groupPriority || []).indexOf(g); prio[i + 1] = p < 0 ? 50 + i : p; });
     scaled.forEach(p => partSolid(p.tris, [ox, oy, oz], fb, fn, fine, o.groupNames.indexOf(p.group) + 1, prio));
     // each hidden part is filled solid between its outer surfaces along all three axes (its "visual hull"), so an open
@@ -808,11 +808,12 @@ export function computeGrid(parts, o) {
     }));
     for (let y = 0; y < ny; y++) for (let z = 0; z < nz; z++) for (let x = 0; x < nx; x++) { let n = 0, m = 0;
       for (let sy = 0; sy < SUB; sy++) for (let sz = 0; sz < SUB; sz++) for (let sx = 0; sx < SUB; sx++) {
-        const f = fidx(x * SUB + sx, y * SUB + sy, z * SUB + sz); if (fine.g[f]) n++; if (fine.g[f] || fine.s[f]) m++; }
+        const f = fidx(x * SUB + sx, y * SUB + sy, z * SUB + sz); if (fine.g[f]) n++;
+        if (fine.g[f] || fine.s[f]) { m++; const k = (sy * SUB + sz) * SUB + sx; matMask[idx(x, y, z) * W + (k >> 5)] |= 1 << (k & 31); } }
       niOf[idx(x, y, z)] = n; matOf[idx(x, y, z)] = m; }
     if (scache) { scache.prep = P; scache.prepKey = prepKey; }
   }
-  const { fine, hid, anyHidden, bins, niOf, matOf, hidden, seen } = P;   // niOf, matOf: inside samples; inside or surface samples
+  const { fine, hid, anyHidden, bins, niOf, matOf, matMask, hidden, seen } = P;   // niOf, matOf: inside samples; inside or surface samples (matMask: which, W words per cell)
   const mh = newMask();
   const cell = new Int16Array(N), fit = new Int32Array(N).fill(-1), fill = new Float32Array(N);
   const T = o.T.list, pen = T.map(tp => o.shapes[tp.shape].penalty ?? 0.11);
@@ -1091,7 +1092,7 @@ export function computeGrid(parts, o) {
     }
   }
   // mat: the model's material per cell (inside or surface samples, of NS), for benchmark.js
-  return { nx, ny, nz, b, ox, oy, oz, cell, fit, fill, mat: matOf, idx, alt, altScore, ALT, hiddenShare: seen ? hidden / seen : 0 };
+  return { nx, ny, nz, b, ox, oy, oz, cell, fit, fill, mat: matOf, matMask, idx, alt, altScore, ALT, hiddenShare: seen ? hidden / seen : 0 };
 
 }
 

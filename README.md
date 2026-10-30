@@ -168,8 +168,10 @@ only compared, and your edited cells count as the fit's picks.
 
 - **Line-up.** A hand-built grid has its own origin and facing, so the reference is turned (24 ways, never mirrored) and
   moved a whole cell at a time until its cells cover the model's material best (the fit's result plays no part). The
-  score and the best score with another turn are shown; a close second means the line-up is unsure. **Turn** turns it
-  a quarter about the vertical and finds the best shift for that; F/U/S +/- move it one cell (forward, up, side);
+  best few shifts of each turn are then scored by the blocks' own shapes (slopes, corners) against the model's material
+  within each cell, since whole cells can't tell a hull from the same hull upside down. The score and the best score
+  with another turn are shown; a close second means the line-up is unsure. **Turn** turns it a quarter about the
+  vertical, **Flip** turns it upside down, each with the best shift for it; F/U/S +/- move it one cell (forward, up, side);
   **Line up** searches again. The reference must be the grid size of Block size; Build scale and the grid offsets are
   yours to match (a reference built wider or taller than the model's proportions can't line up well).
 - **Reading the blocks.** Blueprint export run backwards: a block's subtype finds its card (vanilla armour by topology,

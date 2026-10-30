@@ -307,7 +307,7 @@
     <div class="btnrow"><button id="benchLoad">Load reference blueprint</button><button id="benchClear">Clear</button></div>
     <input type="file" id="benchFile" accept=".sbc,.xml" hidden>
     <label>Grid <select id="benchGrid" style="flex:1"></select></label>
-    <div class="btnrow"><button id="benchAlign" title="Search the line-up again">Line up</button><button id="benchTurn" title="Turn the reference 90 degrees about the vertical">Turn</button>
+    <div class="btnrow"><button id="benchAlign" title="Search the line-up again">Line up</button><button data-bturn="0,0,1;0,1,0;-1,0,0" title="Turn the reference 90 degrees about the vertical">Turn</button><button data-bturn="1,0,0;0,-1,0;0,0,-1" title="Turn the reference upside down (about its front-back axis)">Flip</button>
       <button data-bshift="0,1" title="Move the reference one cell forward">F+</button><button data-bshift="0,-1">F-</button>
       <button data-bshift="1,1" title="Move the reference one cell up">U+</button><button data-bshift="1,-1">U-</button>
       <button data-bshift="2,1" title="Move the reference one cell to the side">S+</button><button data-bshift="2,-1">S-</button></div>
@@ -1538,14 +1538,14 @@ function benchCompare() {
   const g = B.grid, grid = bn.bp.grids[bn.gi];
   if (!g || !g.mat) { st.textContent = 'Load and fit the model to compare.'; return; }
   if ((g.b > 1 ? 'Large' : 'Small') !== grid.size) { bn.result = bn.at = null; st.textContent = `The reference is a ${grid.size.toLowerCase()} grid; set Block size to match.`; return; }
-  if (!bn.align) bn.align = alignReference(bn.blocks, g);
+  if (!bn.align) bn.align = alignReference(bn.blocks, g, { lib: LIB });
   if (!bn.align) { bn.result = bn.at = null; st.textContent = 'Nothing to line up: the reference has no blocks or the model no material.'; return; }
   const fitAt = ci => effFit(ci % g.nx, Math.floor(ci / (g.nx * g.nz)), Math.floor(ci / g.nx) % g.nz);
   const r = bn.result = compareReference(bn.blocks, bn.align, g, B.T, LIB, { armour: el('bpArmour').value, fitAt });
   bn.at = new Map(r.cells.map(c => [cellKey(c.column - 1, c.layer - 1, c.row - 1), c]));
   const top = (o, n = 6) => Object.entries(o).sort((a, b) => b[1] - a[1]).slice(0, n).map(([k, v]) => `${esc(k)} ${v}`).join(', ');
   const legend = Object.keys(BENCH_COLOR).filter(c => r.counts[c]).map(c => `<span style="display:inline-block;width:9px;height:9px;border:2px solid ${BENCH_COLOR[c]};margin:0 3px 0 6px"></span>${c} ${r.counts[c]}`).join('');
-  st.innerHTML = `<b>${esc(bn.bp.name || bn.source)}</b> / ${esc(grid.name)}: ${grid.blocks.length} blocks, line-up ${bn.align.score} (best other turn ${bn.align.next})<br>` +
+  st.innerHTML = `<b>${esc(bn.bp.name || bn.source)}</b> / ${esc(grid.name)}: ${grid.blocks.length} blocks, line-up ${bn.align.score}${bn.align.next != null ? ` (best other turn ${bn.align.next})` : ''}<br>` +
     `Right block and turn <b>${pct(r.exact, r.n)}</b> (${r.exact}/${r.n}), right block <b>${pct(r.shape, r.n)}</b>, shape overlap ${(100 * r.overlap).toFixed(1)}%<br>${legend}` +
     (Object.keys(r.notInLibrary).length ? `<br>Reference blocks switched off here: ${top(r.notInLibrary)}` : '') +
     (Object.keys(r.unmapped).length ? `<br>Not in the library: ${top(r.unmapped)}` : '') +
@@ -1607,12 +1607,13 @@ el('benchFile').addEventListener('change', async e => {
 el('benchClear').addEventListener('click', () => { B.bench = null; benchShow(); });
 el('benchGrid').addEventListener('change', () => { if (!B.bench) return; B.bench.gi = +el('benchGrid').value; benchBlocks(); benchShow(); });
 el('benchAlign').addEventListener('click', () => { if (!B.bench) return; B.bench.align = null; benchShow(); });
-el('benchTurn').addEventListener('click', () => {   // a quarter turn about the vertical, then the best shift for it
+// Turn: a quarter turn about the vertical; Flip: a half turn about the front-back axis; then the best shift for it
+document.querySelectorAll('[data-bturn]').forEach(btn => btn.addEventListener('click', () => {
   const bn = B.bench; if (!bn || !bn.align || !B.grid) return;
-  const Ry = [[0, 0, 1], [0, 1, 0], [-1, 0, 0]], R = ROTS[bn.align.rot];
-  const rot = ROTS.findIndex(Q => Q.every((row, i) => row.every((v, j) => v === Ry[i][0] * R[0][j] + Ry[i][1] * R[1][j] + Ry[i][2] * R[2][j])));
-  bn.align = alignReference(bn.blocks, B.grid, { rots: [rot] }); benchShow();
-});
+  const Q = btn.dataset.bturn.split(';').map(r => r.split(',').map(Number)), R = ROTS[bn.align.rot];
+  const rot = ROTS.findIndex(S => S.every((row, i) => row.every((v, j) => v === Q[i][0] * R[0][j] + Q[i][1] * R[1][j] + Q[i][2] * R[2][j])));
+  bn.align = alignReference(bn.blocks, B.grid, { rots: [rot], lib: LIB }); benchShow();
+}));
 document.querySelectorAll('[data-bshift]').forEach(b => b.addEventListener('click', () => {
   const bn = B.bench; if (!bn || !bn.align) return; const [ax, d] = b.dataset.bshift.split(',').map(Number);
   bn.align = { ...bn.align, t: bn.align.t.map((v, i) => i === ax ? v + d : v), score: 'moved by hand' }; benchShow();

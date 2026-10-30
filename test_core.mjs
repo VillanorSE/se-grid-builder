@@ -106,7 +106,7 @@ if (fs.existsSync(obj)) {
   const shapes = new Set(out.blocks.map(b => b.card));
   const run = (gx, label) => {
     const bp = BM.parseBlueprint(gx), grid = BM.mainGrid(bp);
-    const blocks = BM.referenceBlocks(grid, lib), al = BM.alignReference(blocks, g);
+    const blocks = BM.referenceBlocks(grid, lib), al = BM.alignReference(blocks, g, { lib });
     const r = BM.compareReference(blocks, al, g, T, lib, { fitAt: exported });
     check(grid.blocks.length === out.blocks.length && r.n === out.blocks.length && r.exact === r.n && r.overlap === 1,
       `benchmark round trip${label}: ${r.n} blocks (${shapes.size} cards), ${BM.summaryLine(r)}; line-up ${al.score} (next turn ${al.next})`);
@@ -115,12 +115,13 @@ if (fs.existsSync(obj)) {
   const al = run(xml, '');
   check(al.rot === C.ROTS.findIndex(R => R.every((row, i) => row.every((v, j) => v === (i === j ? 1 : 0)))), 'benchmark: the exported grid lines up unturned');
   // the same grid turned (grid Forward to Left, Up stays) and moved: Min and BlockOrientation turn with it
-  const Q = BP.orientMatrix('Left', 'Up'), app = (M, v) => [0, 1, 2].map(i => M[i][0] * v[0] + M[i][1] * v[1] + M[i][2] * v[2]);
-  const turned = BP.blueprintXml({ name: 'Bench', gridSize: 'Small', blocks: out.blocks.map(b => {
+  const app = (M, v) => [0, 1, 2].map(i => M[i][0] * v[0] + M[i][1] * v[1] + M[i][2] * v[2]);
+  const turnedXml = Q => BP.blueprintXml({ name: 'Bench', gridSize: 'Small', blocks: out.blocks.map(b => {
     const M = BP.orientMatrix(b.forward, b.up), QM = [0, 1, 2].map(i => [0, 1, 2].map(j => Q[i][0] * M[0][j] + Q[i][1] * M[1][j] + Q[i][2] * M[2][j]));
     const [forward, up] = BP.orientOf(QM), m = app(Q, b.min);
     return { ...b, min: [m[0] + 7, m[1] - 3, m[2] + 11], forward, up }; }) });
-  run(turned, ', grid turned and moved');
+  run(turnedXml(BP.orientMatrix('Left', 'Up')), ', grid turned and moved');
+  run(turnedXml(BP.orientMatrix('Forward', 'Down')), ', grid built upside down');   // the grid's own Up is the model's down
 }
 
 // 4. STL round trip (binary)

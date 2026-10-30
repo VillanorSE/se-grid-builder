@@ -76,12 +76,35 @@ export function referenceBlocks(grid, lib, o = {}) {
 // A hand-built grid's origin and facing are its own. Tried: the 24 turns of the grid (no mirror) and whole-cell shifts
 // around the model; scored by how the reference's cells cover the model's material (g.mat, not the fit, so the line-up
 // can't favour the fit): overlap / (reference cells + material cells - overlap).
-// Returns { rot, t: [x, y, z], score, next } (next: the best score with another turn, to show a near-tie).
+// Whole cells can't tell a hull from the same hull upside down (or end for end) when its outline is alike, so with
+// o.lib and the model's per-cell material samples (g.matMask) each turn's best few shifts are scored again by samples:
+// the reference blocks' own shapes in their turns (slopes, corners; a full cell for functional and unmapped blocks)
+// against the model's material, shared samples / all samples of either.
+// Returns { rot, t: [x, y, z], score, next, by: 'samples' | 'cells' } (next: the best score with another turn, to show
+// a near-tie).
 const MAT_MIN = Math.round(NS * 0.08);   // as the fit's empty rule: under 8% material is no material
+const ALIGN_KEEP = 4;                    // shifts per turn scored again by samples
 export function toolCell(al, gc) { const p = bmApp(bmMul(ROTS[al.rot], GRID_TO_TOOL), gc); return [p[0] + al.t[0], p[1] + al.t[1], p[2] + al.t[2]]; }
+const bmPop = v => { v -= (v >>> 1) & 0x55555555; v = (v & 0x33333333) + ((v >>> 2) & 0x33333333); return (((v + (v >>> 4)) & 0x0f0f0f0f) * 0x01010101) >>> 24; };
+// the reference's cells (grid frame) with each cell's block, first block wins where two claim a cell
+function refCellList(blocks) {
+  const keys = new Set(), out = [];
+  for (const b of blocks) for (const c of b.cells) { const k = c.join(','); if (!keys.has(k)) { keys.add(k); out.push({ c, b }); } }
+  return out;
+}
 export function alignReference(blocks, g, o = {}) {
-  const span = o.span ?? 3, keys = new Set(), cells = [];
-  for (const b of blocks) for (const c of b.cells) { const k = c.join(','); if (!keys.has(k)) { keys.add(k); cells.push(c); } }
+  const span = o.span ?? 3, list = refCellList(blocks), cells = list.map(e => e.c);
+  const fine = o.lib && g.matMask, W = fine ? g.matMask.length / (g.nx * g.ny * g.nz) : 0;
+  let matBits = 0; if (fine) for (let i = 0; i < g.matMask.length; i++) matBits += bmPop(g.matMask[i]);
+  const full = new Uint32Array(W); for (let k = 0; k < NS; k++) full[k >> 5] |= 1 << (k & 31);
+  const sampleScore = (Q, t) => {   // Q: [{ p (tool cell before the shift), m (mask), n (its samples) }]
+    let inter = 0, refBits = 0;
+    for (const q of Q) { refBits += q.n;
+      const x = q.p[0] + t[0], y = q.p[1] + t[1], z = q.p[2] + t[2];
+      if (x < 0 || y < 0 || z < 0 || x >= g.nx || y >= g.ny || z >= g.nz) continue;
+      const base = g.idx(x, y, z) * W; for (let w = 0; w < W; w++) inter += bmPop(q.m[w] & g.matMask[base + w]); }
+    return inter / (refBits + matBits - inter);
+  };
   const mlo = [1e9, 1e9, 1e9], mhi = [-1e9, -1e9, -1e9]; let nMat = 0;
   for (let y = 0; y < g.ny; y++) for (let z = 0; z < g.nz; z++) for (let x = 0; x < g.nx; x++) if (g.mat[g.idx(x, y, z)] >= MAT_MIN) {
     nMat++; [x, y, z].forEach((v, i) => { mlo[i] = Math.min(mlo[i], v); mhi[i] = Math.max(mhi[i], v); }); }
@@ -93,17 +116,26 @@ export function alignReference(blocks, g, o = {}) {
     const lo = [0, 1, 2].map(i => Math.min(...P.map(p => p[i]))), hi = [0, 1, 2].map(i => Math.max(...P.map(p => p[i])));
     // shifts that put the reference's box within `span` cells of the material's box on every side
     const range = [0, 1, 2].map(i => { const a = mlo[i] - lo[i], b = mhi[i] - hi[i]; return [Math.min(a, b) - span, Math.max(a, b) + span]; });
-    let rb = null;
+    const top = [];   // the best ALIGN_KEEP shifts by cells, best first
     for (let tx = range[0][0]; tx <= range[0][1]; tx++) for (let ty = range[1][0]; ty <= range[1][1]; ty++) for (let tz = range[2][0]; tz <= range[2][1]; tz++) {
       let ov = 0; for (const p of P) if (isMat(p[0] + tx, p[1] + ty, p[2] + tz)) ov++;
       const s = ov / (P.length + nMat - ov);
-      if (!rb || s > rb.score) rb = { rot: r, t: [tx, ty, tz], score: s };
+      if (top.length < ALIGN_KEEP || s > top[top.length - 1].score) {
+        top.push({ rot: r, t: [tx, ty, tz], score: s }); top.sort((a, b) => b.score - a.score); if (top.length > ALIGN_KEEP) top.pop(); }
+    }
+    let rb = top[0];
+    if (fine) {
+      const Q = list.map((e, i) => { let m = full;
+        if (e.b.kind === 'armour') { const sh = o.lib[e.b.si]; if (!sh._m) sh._m = shapeMask(sh);
+          m = turnMask(sh._m.mask, bmRotIndex(bmMul(bmMul(A, e.b.M), bmTr(orientMatrix(e.b.orient[0], e.b.orient[1]))))); }
+        let n = 0; for (let w = 0; w < W; w++) n += bmPop(m[w]); return { p: P[i], m, n }; });
+      rb = top.map(c => ({ ...c, score: sampleScore(Q, c.t) })).reduce((a, b) => (b.score > a.score ? b : a));
     }
     bestPerRot.push(rb);
     if (!best || rb.score > best.score) best = rb;
   }
-  const next = Math.max(0, ...bestPerRot.filter(b => b.rot !== best.rot).map(b => b.score));
-  return { ...best, score: +best.score.toFixed(4), next: +next.toFixed(4) };
+  const next = bestPerRot.length > 1 ? +Math.max(0, ...bestPerRot.filter(b => b.rot !== best.rot).map(b => b.score)).toFixed(4) : null;
+  return { ...best, score: +best.score.toFixed(4), next, by: fine ? 'samples' : 'cells' };
 }
 
 // ---------- the comparison
