@@ -302,6 +302,21 @@
     <div class="btnrow"><button id="editsExport">Export my edits for Claude</button></div>
     <div class="hint">Saves every cell you've edited (for this model and grid settings) with what the tool had picked, so
     the fitting can be tuned towards your choices. Send Claude the file's location.</div>
+
+    <h2>Benchmark</h2>
+    <div class="btnrow"><button id="benchLoad">Load reference blueprint</button><button id="benchClear">Clear</button></div>
+    <input type="file" id="benchFile" accept=".sbc,.xml" hidden>
+    <label>Grid <select id="benchGrid" style="flex:1"></select></label>
+    <div class="btnrow"><button id="benchAlign" title="Search the line-up again">Line up</button><button id="benchTurn" title="Turn the reference 90 degrees about the vertical">Turn</button>
+      <button data-bshift="0,1" title="Move the reference one cell forward">F+</button><button data-bshift="0,-1">F-</button>
+      <button data-bshift="1,1" title="Move the reference one cell up">U+</button><button data-bshift="1,-1">U-</button>
+      <button data-bshift="2,1" title="Move the reference one cell to the side">S+</button><button data-bshift="2,-1">S-</button></div>
+    <label><input type="checkbox" id="benchMap" checked> Mark the layer map by category</label>
+    <div id="benchStatus" class="hint"></div>
+    <div class="btnrow"><button id="benchExport">Export benchmark for Claude</button></div>
+    <div class="hint">Compares the fit with a blueprint you built of this model (a <code>bp.sbc</code> from
+    Blueprints\local, or a prefab <code>.sbc</code>): the reference is lined up with the model's grid and every cell is
+    put in a category. The fit and your edits stay as they are; the comparison counts your edits as the fit's picks.</div>
   </div>
   <div class="main">
     <div class="view" id="bView"><div class="empty" id="bEmpty">Load an .obj or .stl model to start.</div></div>
@@ -1412,7 +1427,8 @@ function computeGrid(parts, o) {
       if (best >= 0) fit[c] = best; else if (cleared.has(c)) fit[c] = base[c];
     }
   }
-  return { nx, ny, nz, b, ox, oy, oz, cell, fit, fill, idx, alt, altScore, ALT, hiddenShare: seen ? hidden / seen : 0 };
+  // mat: the model's material per cell (inside or surface samples, of NS), for benchmark.js
+  return { nx, ny, nz, b, ox, oy, oz, cell, fit, fill, mat: matOf, idx, alt, altScore, ALT, hiddenShare: seen ? hidden / seen : 0 };
 
 }
 
@@ -1548,8 +1564,9 @@ self.onmessage = e => {
     const g = computeGrid(PARTS, o);
     const s = takeSurfScores(cache);
     if (share || !g) { self.postMessage({ type: 'done', job: m.job, grid: null, scores: s, tplCount: T.list.length }, buffers(s)); return; }
-    const grid = { nx: g.nx, ny: g.ny, nz: g.nz, b: g.b, ox: g.ox, oy: g.oy, oz: g.oz, cell: g.cell, fit: g.fit, fill: g.fill,
+    const grid = { nx: g.nx, ny: g.ny, nz: g.nz, b: g.b, ox: g.ox, oy: g.oy, oz: g.oz, cell: g.cell, fit: g.fit, fill: g.fill, mat: g.mat,
       alt: g.alt, altScore: g.altScore, ALT: g.ALT, hiddenShare: g.hiddenShare };
+    // mat is copied, not moved: it belongs to the kept surface scores (refits of the same grid reuse it)
     self.postMessage({ type: 'done', job: m.job, grid, scores: s, tplCount: T.list.length },
       [g.cell.buffer, g.fit.buffer, g.fill.buffer, g.alt.buffer, g.altScore.buffer, ...buffers(s)]);
   } catch (err) {
@@ -2664,7 +2681,8 @@ function computeGrid(parts, o) {
       if (best >= 0) fit[c] = best; else if (cleared.has(c)) fit[c] = base[c];
     }
   }
-  return { nx, ny, nz, b, ox, oy, oz, cell, fit, fill, idx, alt, altScore, ALT, hiddenShare: seen ? hidden / seen : 0 };
+  // mat: the model's material per cell (inside or surface samples, of NS), for benchmark.js
+  return { nx, ny, nz, b, ox, oy, oz, cell, fit, fill, mat: matOf, idx, alt, altScore, ALT, hiddenShare: seen ? hidden / seen : 0 };
 
 }
 
@@ -3299,6 +3317,211 @@ function makeZip(files) {
    CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
    THE SOFTWARE.
    Copyright (c) 2024 imivi (se-blueprinter); Copyright (c) 2020 Austin Van Ess (StlToBlueprint). */
+
+// ---- benchmark.js
+// SE Grid Builder: blueprint benchmarking (README, "Benchmark"). A hand-built blueprint or prefab of a model is read as a
+// reference, lined up with the model's grid and compared cell by cell with the fit. No DOM, no three.js, so it runs in
+// the page and in Node (owner_cases.mjs, test_core.mjs).
+//
+// The reading is blueprint.js run backwards: a block's subtype gives its card (pickBlock's lists and VANILLA_ARMOR),
+// its BlockOrientation gives the card's turn (gridOrientation), its Min the cell (gridPos, TOOL_TO_GRID).
+
+const bmMul = (A, B) => [0, 1, 2].map(r => [0, 1, 2].map(c => A[r][0] * B[0][c] + A[r][1] * B[1][c] + A[r][2] * B[2][c]));
+const bmTr = A => [0, 1, 2].map(i => [0, 1, 2].map(j => A[j][i]));
+const bmApp = (M, v) => [0, 1, 2].map(r => M[r][0] * v[0] + M[r][1] * v[1] + M[r][2] * v[2]);
+const bmRotIndex = M => ROTS.findIndex(R => R.every((row, i) => row.every((v, j) => v === M[i][j])));
+const GRID_TO_TOOL = bmTr(TOOL_TO_GRID);
+const bmUnxml = s => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+const bmAttr = (s, k) => { const m = s.match(new RegExp('\\b' + k + '\\s*=\\s*"([^"]*)"')); return m ? m[1] : null; };
+
+// ---------- reading: a bp.sbc blueprint or a prefab .sbc (both hold <CubeGrid>s of <MyObjectBuilder_CubeBlock>s)
+// -> { name, grids: [{ name, size: 'Small'|'Large', blocks: [[typeId, subtype, [x, y, z], forward, up]] }] }
+// (the compact block rows are what a benchmark file keeps). The game leaves out Min (0,0,0) and BlockOrientation
+// (Forward/Up) when they are the defaults.
+function parseBlueprint(xml) {
+  const name = bmUnxml((xml.match(/<Id\b[^>]*\bSubtype="([^"]*)"/) || [])[1] || '');
+  const grids = [];
+  for (const gm of xml.matchAll(/<CubeGrid>([\s\S]*?)<\/CubeGrid>/g)) {
+    const g = gm[1], blocks = [];
+    for (const bm of g.matchAll(/<MyObjectBuilder_CubeBlock\b([^>]*)>([\s\S]*?)<\/MyObjectBuilder_CubeBlock>/g)) {
+      const b = bm[2], typeId = (bmAttr(bm[1], 'xsi:type') || 'MyObjectBuilder_CubeBlock').replace('MyObjectBuilder_', '');
+      const st = b.match(/<SubtypeName>([^<]*)<\/SubtypeName>|<SubtypeName\s*\/>/);   // the first one is the block's own
+      const mn = b.match(/<Min\b([^>]*)\/>/), bo = b.match(/<BlockOrientation\b([^>]*)\/>/);
+      blocks.push([typeId, st && st[1] ? bmUnxml(st[1]) : '', mn ? ['x', 'y', 'z'].map(k => +(bmAttr(mn[1], k) || 0)) : [0, 0, 0],
+        (bo && bmAttr(bo[1], 'Forward')) || 'Forward', (bo && bmAttr(bo[1], 'Up')) || 'Up']);
+    }
+    const rest = g.replace(/<CubeBlocks>[\s\S]*?<\/CubeBlocks>/, '');
+    grids.push({ name: bmUnxml((rest.match(/<DisplayName>([^<]*)<\/DisplayName>/) || [])[1] || ''),
+      size: (rest.match(/<GridSizeEnum>([^<]*)<\/GridSizeEnum>/) || [])[1] || 'Large', blocks });
+  }
+  return { name, grids };
+}
+// the main grid: the one with most blocks
+const mainGrid = bp => bp.grids.reduce((a, g) => (!a || g.blocks.length > a.blocks.length ? g : a), null);
+
+// ---------- which card a game block is: subtype -> { si, orient (the block's Forward/Up in the card's frame) }
+// Every card counts, used or not (a reference block whose card is switched off is a finding, not an unknown).
+// A subtype on several cards: the card read from that block first, then a card in use, then the first.
+function blockIndex(lib, size) {
+  const idx = new Map(), rank = new Map();
+  const put = (sub, si, orient, r) => { if (!sub) return; if (!idx.has(sub) || r < rank.get(sub)) { idx.set(sub, { si, orient }); rank.set(sub, r); } };
+  lib.forEach((sh, si) => {
+    const cardOrient = CARD_ORIENT[sh.id] || ['Forward', 'Up'], used = sh.use ? 0 : 1;
+    const va = sh.topology && VANILLA_ARMOR[sh.topology];
+    if (va) va.slice(size === 'Large' ? 2 : 0, size === 'Large' ? 4 : 2).forEach(sub => put(sub, si, cardOrient, 2 + used));
+    for (const b of sh.blocks || []) if (b.size === size && b.subtype)
+      put(b.subtype, si, b.orient || cardOrient, sh.id === 'mesh:' + b.mod + ':' + b.subtype ? 0 : 2 + used);
+  });
+  return idx;
+}
+
+// ---------- the reference's blocks in the grid's frame, each with its cells
+// grid: a parseBlueprint grid; o: { sizes: Map funcId-like 'typeId:subtype' -> [x, y, z] cells (block frame) }
+// kind: 'armour' (a library card), 'functional' (any non-CubeBlock type: reserves its cells), 'unmapped' (a CubeBlock
+// subtype no card holds).
+function referenceBlocks(grid, lib, o = {}) {
+  const idx = blockIndex(lib, grid.size), sizes = o.sizes || new Map();
+  return grid.blocks.map(([typeId, subtype, min, forward, up]) => {
+    const M = orientMatrix(forward, up), hit = idx.get(subtype);
+    const kind = hit ? 'armour' : typeId === 'CubeBlock' ? 'unmapped' : 'functional';
+    const size = kind === 'armour' ? [1, 1, 1] : sizes.get(typeId + ':' + subtype) || [1, 1, 1];
+    const ext = [0, 1, 2].map(r => M[r].reduce((n, v, j) => n + Math.abs(v) * size[j], 0)), cells = [];
+    for (let i = 0; i < ext[0]; i++) for (let j = 0; j < ext[1]; j++) for (let k = 0; k < ext[2]; k++) cells.push([min[0] + i, min[1] + j, min[2] + k]);
+    return { typeId, subtype, kind, M, cells, ...(hit ? { si: hit.si, orient: hit.orient } : {}), ...(sizes.has(typeId + ':' + subtype) ? {} : kind === 'functional' ? { sizeUnknown: true } : {}) };
+  });
+}
+
+// ---------- lining the reference up with the model's grid
+// A hand-built grid's origin and facing are its own. Tried: the 24 turns of the grid (no mirror) and whole-cell shifts
+// around the model; scored by how the reference's cells cover the model's material (g.mat, not the fit, so the line-up
+// can't favour the fit): overlap / (reference cells + material cells - overlap).
+// Returns { rot, t: [x, y, z], score, next } (next: the best score with another turn, to show a near-tie).
+const MAT_MIN = Math.round(NS * 0.08);   // as the fit's empty rule: under 8% material is no material
+function toolCell(al, gc) { const p = bmApp(bmMul(ROTS[al.rot], GRID_TO_TOOL), gc); return [p[0] + al.t[0], p[1] + al.t[1], p[2] + al.t[2]]; }
+function alignReference(blocks, g, o = {}) {
+  const span = o.span ?? 3, keys = new Set(), cells = [];
+  for (const b of blocks) for (const c of b.cells) { const k = c.join(','); if (!keys.has(k)) { keys.add(k); cells.push(c); } }
+  const mlo = [1e9, 1e9, 1e9], mhi = [-1e9, -1e9, -1e9]; let nMat = 0;
+  for (let y = 0; y < g.ny; y++) for (let z = 0; z < g.nz; z++) for (let x = 0; x < g.nx; x++) if (g.mat[g.idx(x, y, z)] >= MAT_MIN) {
+    nMat++; [x, y, z].forEach((v, i) => { mlo[i] = Math.min(mlo[i], v); mhi[i] = Math.max(mhi[i], v); }); }
+  if (!nMat || !cells.length) return null;
+  const isMat = (x, y, z) => x >= 0 && y >= 0 && z >= 0 && x < g.nx && y < g.ny && z < g.nz && g.mat[g.idx(x, y, z)] >= MAT_MIN;
+  let best = null; const bestPerRot = [];
+  for (const r of o.rots || ROTS.keys()) {   // o.rots: only these turns (the page's Turn button)
+    const A = bmMul(ROTS[r], GRID_TO_TOOL), P = cells.map(c => bmApp(A, c));
+    const lo = [0, 1, 2].map(i => Math.min(...P.map(p => p[i]))), hi = [0, 1, 2].map(i => Math.max(...P.map(p => p[i])));
+    // shifts that put the reference's box within `span` cells of the material's box on every side
+    const range = [0, 1, 2].map(i => { const a = mlo[i] - lo[i], b = mhi[i] - hi[i]; return [Math.min(a, b) - span, Math.max(a, b) + span]; });
+    let rb = null;
+    for (let tx = range[0][0]; tx <= range[0][1]; tx++) for (let ty = range[1][0]; ty <= range[1][1]; ty++) for (let tz = range[2][0]; tz <= range[2][1]; tz++) {
+      let ov = 0; for (const p of P) if (isMat(p[0] + tx, p[1] + ty, p[2] + tz)) ov++;
+      const s = ov / (P.length + nMat - ov);
+      if (!rb || s > rb.score) rb = { rot: r, t: [tx, ty, tz], score: s };
+    }
+    bestPerRot.push(rb);
+    if (!best || rb.score > best.score) best = rb;
+  }
+  const next = Math.max(0, ...bestPerRot.filter(b => b.rot !== best.rot).map(b => b.score));
+  return { ...best, score: +best.score.toFixed(4), next: +next.toFixed(4) };
+}
+
+// ---------- the comparison
+// One category per cell where either side has a block (README, "Benchmark"):
+//   match, turn (same card, other turn), rank-miss (the reference's card is among the cell's alternatives),
+//   candidate-miss (it isn't), not-in-library (its card is switched off for the fit), missing (fit left the cell empty;
+//   sub 'dropped' where the model has material, 'beyond' where it has none or the cell is outside the grid), extra (fit
+//   has a block where the reference has none; sub 'functional' where a reference functional block sits, else 'open'),
+//   shifted (a miss whose reference block the fit put in a neighbouring cell), unmapped (reference block no card holds).
+// Scored over every category but unmapped: exact = match, shape = match + turn, overlap = mean mask IoU (0 for a block
+// against nothing). Armour grades (light/heavy, a mod's thickness) aren't the fit's choice: a matched cell whose exported
+// block (pickBlock with o.armour) differs from the reference's only counts in gradeDiff.
+// fitAt(ci) -> template index, or < 0 for no block (default g.fit; the page passes its edits).
+const SCORED = ['match', 'turn', 'rank-miss', 'candidate-miss', 'not-in-library', 'shifted', 'missing', 'extra'];
+function compareReference(blocks, al, g, T, lib, o = {}) {
+  const fitAt = o.fitAt || (ci => g.fit[ci]), size = o.size || (g.b > 1 ? 'Large' : 'Small');
+  const inGrid = p => p[0] >= 0 && p[1] >= 0 && p[2] >= 0 && p[0] < g.nx && p[1] < g.ny && p[2] < g.nz;
+  const A = bmMul(ROTS[al.rot], GRID_TO_TOOL);
+  const ref = new Map(), outside = [];   // tool cell key -> reference entry
+  for (const b of blocks) {
+    let rot = -1;
+    if (b.kind === 'armour') rot = bmRotIndex(bmMul(bmMul(A, b.M), bmTr(orientMatrix(b.orient[0], b.orient[1]))));
+    for (const c of b.cells) {
+      const p = toolCell(al, c), k = p.join(',');
+      if (ref.has(k)) continue;
+      const e = { b, rot, p };
+      if (!inGrid(p)) outside.push(e); else ref.set(k, e);
+    }
+  }
+  const masks = new Map(), refMask = (si, rot) => { const k = si + ':' + rot;
+    if (!masks.has(k)) { const sh = lib[si]; if (!sh._m) sh._m = shapeMask(sh); masks.set(k, turnMask(sh._m.mask, rot)); } return masks.get(k); };
+  const iou = (a, b) => { let i = 0, u = 0; for (let k = 0; k < NS; k++) { const x = getBit(a, k), y = getBit(b, k); i += x & y; u += x | y; } return u ? i / u : 1; };
+  const key = si => lib[si].key, rows = [], counts = {}, unmapped = {}, notInLibrary = {};
+  let gradeDiff = 0;
+  const add = (p, cat, extra) => { counts[cat] = (counts[cat] || 0) + 1; rows.push({ column: p[0] + 1, layer: p[1] + 1, row: p[2] + 1, cat, ...extra }); };
+  const fitInfo = fi => fi >= 0 ? { key: key(T.list[fi].shape), shape: lib[T.list[fi].shape].id } : 'none';
+  const refInfo = e => ({ key: e.b.si != null ? key(e.b.si) : null, shape: e.b.si != null ? lib[e.b.si].id : null, subtype: e.b.subtype, typeId: e.b.typeId });
+  const cardOfFit = new Map();   // tool cell key -> fitted card index (for shifted)
+  const seen = new Set();
+  for (let y = 0; y < g.ny; y++) for (let z = 0; z < g.nz; z++) for (let x = 0; x < g.nx; x++) {
+    const ci = g.idx(x, y, z), fi = fitAt(ci), k = x + ',' + y + ',' + z, e = ref.get(k);
+    if (fi >= 0) cardOfFit.set(k, T.list[fi].shape);
+    if (!e && fi < 0) continue;
+    seen.add(k);
+    const p = [x, y, z], fit = fitInfo(fi);
+    if (!e) { add(p, 'extra', { sub: 'open', fit, iou: 0 }); continue; }
+    if (e.b.kind === 'unmapped') { unmapped[e.b.subtype] = (unmapped[e.b.subtype] || 0) + 1; add(p, 'unmapped', { ref: refInfo(e), fit }); continue; }
+    if (e.b.kind === 'functional') { if (fi >= 0) add(p, 'extra', { sub: 'functional', ref: refInfo(e), fit, iou: 0 }); continue; }
+    const si = e.b.si, rm = refMask(si, e.rot), r = refInfo(e);
+    const vol = fi >= 0 ? +((maskCount(T.list[fi].mask) - maskCount(rm)) / NS).toFixed(3) : +(-maskCount(rm) / NS).toFixed(3);
+    const ov = fi >= 0 ? +iou(T.list[fi].mask, rm).toFixed(3) : 0;
+    if (!lib[si].use) { const nm = `${lib[si].name} [${key(si)}]`; notInLibrary[nm] = (notInLibrary[nm] || 0) + 1; add(p, 'not-in-library', { ref: r, fit, iou: ov, vol }); continue; }
+    if (fi < 0) { add(p, 'missing', { sub: g.mat[ci] >= MAT_MIN ? 'dropped' : 'beyond', ref: r, fit, iou: 0, vol }); continue; }
+    if (T.list[fi].shape === si) {
+      const tr2 = T.turns && T.turns.get(si), same = tr2 ? tr2[e.rot] === fi : ov === 1;
+      const pb = pickBlock(lib[si], size, o.armour || 'light');
+      if (pb && pb.subtype !== e.b.subtype) gradeDiff++;
+      add(p, same ? 'match' : 'turn', { ref: r, fit, iou: ov, ...(pb && pb.subtype !== e.b.subtype ? { exported: pb.subtype } : {}) });
+      continue;
+    }
+    let rank = 0; for (let a = 0; a < g.ALT && !rank; a++) { const ti = g.alt[ci * g.ALT + a]; if (ti >= 0 && T.list[ti].shape === si) rank = a + 1; }
+    add(p, rank ? 'rank-miss' : 'candidate-miss', { ref: r, fit, iou: ov, vol, ...(rank ? { rank } : {}) });
+  }
+  for (const e of outside) if (e.b.kind === 'armour') add(e.p, 'missing', { sub: 'outside', ref: refInfo(e), fit: 'none', iou: 0 });
+    else if (e.b.kind === 'unmapped') { unmapped[e.b.subtype] = (unmapped[e.b.subtype] || 0) + 1; add(e.p, 'unmapped', { ref: refInfo(e), fit: 'none' }); }
+  // shifted: a miss whose reference card the fit put in a neighbouring cell that itself is a miss (an extra, or another card)
+  const at = new Map(rows.map(r => [(r.column - 1) + ',' + (r.layer - 1) + ',' + (r.row - 1), r]));
+  const N6 = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+  const miss = c => c === 'rank-miss' || c === 'candidate-miss' || c === 'missing' || c === 'extra';
+  const moves = [];
+  for (const r of rows) {
+    if (!miss(r.cat) || !r.ref || r.ref.key == null || r.cat === 'extra') continue;
+    const si = lib.findIndex(s => s.id === r.ref.shape), p = [r.column - 1, r.layer - 1, r.row - 1];
+    for (const d of N6) { const q = p.map((v, i) => v + d[i]).join(','), n = at.get(q);
+      if (cardOfFit.get(q) === si && n && miss(n.cat)) { moves.push([r, d]); break; } }
+  }
+  for (const [r, d] of moves) { counts[r.cat]--; r.was = r.cat; r.cat = 'shifted'; r.by = d; counts.shifted = (counts.shifted || 0) + 1; }
+  for (const c of Object.keys(counts)) if (!counts[c]) delete counts[c];
+  const scored = rows.filter(r => r.cat !== 'unmapped'), n = scored.length;
+  const exact = counts.match || 0, shape = exact + (counts.turn || 0);
+  const overlap = n ? scored.reduce((s, r) => s + (r.iou || 0), 0) / n : 0;
+  return { n, exact, shape, overlap: +overlap.toFixed(4), counts, gradeDiff, unmapped, notInLibrary,
+    functional: blocks.filter(b => b.kind === 'functional').length, sizeUnknown: [...new Set(blocks.filter(b => b.sizeUnknown).map(b => b.typeId + ':' + b.subtype))],
+    cells: rows };
+}
+
+// ---------- the benchmark file (se-grid-builder-benchmark v1): the edits file's model/grid/library, the reference
+// (raw block rows, so it maps again when the library changes) with its line-up, and the result when exported
+function benchmarkFile({ model, grid, library, reference, result }) {
+  const { cells, ...summary } = result || {};
+  return { format: 'se-grid-builder-benchmark', version: 1, exported: new Date().toISOString(), model, grid, library, reference,
+    ...(result ? { result: { ...summary, mismatches: cells.filter(c => c.cat !== 'match') } } : {}) };
+}
+const pct = (a, n) => n ? (100 * a / n).toFixed(1) + '%' : '-';
+function summaryLine(r) {
+  const order = ['match', 'turn', 'rank-miss', 'candidate-miss', 'not-in-library', 'shifted', 'missing', 'extra', 'unmapped'];
+  return `right block and turn ${r.exact}/${r.n} (${pct(r.exact, r.n)}), right block ${r.shape}/${r.n} (${pct(r.shape, r.n)}), shape overlap ${(100 * r.overlap).toFixed(1)}%; ` +
+    order.filter(c => r.counts[c]).map(c => `${c} ${r.counts[c]}`).join(', ');
+}
 
 // ---- importer.js
 // Import blocks from a world's mod list into the Cube Library.
@@ -4353,6 +4576,7 @@ async function rebuild() {
 }
 function drawCells() {
   const v = B.view; disposeGroup(v.cellGroup); disposeGroup(v.gridGroup); disposeGroup(v.selGroup);
+  benchCompare();
   const g = B.grid; if (!g) { drawMap(); return; }
   const { nx, ny, nz, b, ox, oy, oz, cell, idx } = g, T = B.T;
   const L = parseInt(el('layer').value) - 1, mode = el('layerMode').value;
@@ -4538,7 +4762,9 @@ function showSel() {
     if (!(k in B.overrides)) what += `, fills ${Math.round(g.fill[g.idx(x, y, z)] * 100)}%`;
     if (bl.length) blocks = '\nGame blocks: ' + bl.slice(0, 6).join(', ') + (bl.length > 6 ? ` and ${bl.length - 6} more` : ''); }
   const info = `Column ${x + 1}, row ${z + 1}, layer ${y + 1}: ${what}${k in B.overrides ? ' (edited)' : ' (auto)'}`;
-  el('selInfo').textContent = info; el('selInfo').title = info + blocks;
+  const br = B.bench && B.bench.at && B.bench.at.get(k);
+  const refLine = br ? ` · reference: ${br.ref ? (br.ref.key || '') + ' ' + br.ref.subtype : 'none'} (${br.cat}${br.rank ? ', its rank ' + br.rank : ''}${br.sub ? ', ' + br.sub : ''})` : '';
+  el('selInfo').textContent = info + refLine; el('selInfo').title = info + refLine + blocks;
   // the best-matching blocks for this cell, as one-click choices
   const box = el('altList'); box.innerHTML = '';
   const ci = g.idx(x, y, z), list = [];
@@ -4804,6 +5030,75 @@ el('cellReport').addEventListener('click', async () => {
   try { await navigator.clipboard.writeText(text); el('cellReport').textContent = 'Copied: paste it in the chat'; setTimeout(() => el('cellReport').textContent = 'Copy cell report for Claude', 2500); }
   catch (e) { prompt('Copy this:', text); }
 });
+// ---------------------------------------------------------------- benchmark: a finished blueprint as the reference
+// (benchmark.js, design-benchmark.md). The reference is extra state: the fit and the edits are untouched, and the
+// comparison takes the cells as shown (edits included) as the fit's picks.
+const BENCH_COLOR = { match: '#3fb950', turn: '#e3b341', 'rank-miss': '#f0883e', 'candidate-miss': '#f85149', 'not-in-library': '#a371f7',
+  shifted: '#39c5cf', missing: '#db61a2', extra: '#8b949e', unmapped: '#6e7681' };
+B.bench = null;   // { source, bp, gi (the grid compared), blocks, align, result, at: 'x,y,z' -> result cell }
+const benchSizes = () => new Map();   // functional blocks: no list here yet, so each is taken as one cell
+function benchBlocks() { const bn = B.bench, grid = bn.bp.grids[bn.gi]; bn.blocks = referenceBlocks(grid, LIB, { sizes: benchSizes(grid.size) }); bn.align = null; }
+function benchCompare() {
+  const bn = B.bench, st = el('benchStatus');
+  if (!bn) { st.textContent = ''; return; }
+  const g = B.grid, grid = bn.bp.grids[bn.gi];
+  if (!g || !g.mat) { st.textContent = 'Load and fit the model to compare.'; return; }
+  if ((g.b > 1 ? 'Large' : 'Small') !== grid.size) { bn.result = bn.at = null; st.textContent = `The reference is a ${grid.size.toLowerCase()} grid; set Block size to match.`; return; }
+  if (!bn.align) bn.align = alignReference(bn.blocks, g);
+  if (!bn.align) { bn.result = bn.at = null; st.textContent = 'Nothing to line up: the reference has no blocks or the model no material.'; return; }
+  const fitAt = ci => effFit(ci % g.nx, Math.floor(ci / (g.nx * g.nz)), Math.floor(ci / g.nx) % g.nz);
+  const r = bn.result = compareReference(bn.blocks, bn.align, g, B.T, LIB, { armour: el('bpArmour').value, fitAt });
+  bn.at = new Map(r.cells.map(c => [cellKey(c.column - 1, c.layer - 1, c.row - 1), c]));
+  const top = (o, n = 6) => Object.entries(o).sort((a, b) => b[1] - a[1]).slice(0, n).map(([k, v]) => `${esc(k)} ${v}`).join(', ');
+  const legend = Object.keys(BENCH_COLOR).filter(c => r.counts[c]).map(c => `<span style="display:inline-block;width:9px;height:9px;border:2px solid ${BENCH_COLOR[c]};margin:0 3px 0 6px"></span>${c} ${r.counts[c]}`).join('');
+  st.innerHTML = `<b>${esc(bn.bp.name || bn.source)}</b> / ${esc(grid.name)}: ${grid.blocks.length} blocks, line-up ${bn.align.score} (best other turn ${bn.align.next})<br>` +
+    `Right block and turn <b>${pct(r.exact, r.n)}</b> (${r.exact}/${r.n}), right block <b>${pct(r.shape, r.n)}</b>, shape overlap ${(100 * r.overlap).toFixed(1)}%<br>${legend}` +
+    (Object.keys(r.notInLibrary).length ? `<br>Reference blocks switched off here: ${top(r.notInLibrary)}` : '') +
+    (Object.keys(r.unmapped).length ? `<br>Not in the library: ${top(r.unmapped)}` : '') +
+    (r.gradeDiff ? `<br>${r.gradeDiff} matched cells export another grade than the reference (not counted)` : '');
+}
+function benchShow() {
+  const sel = el('benchGrid'); sel.innerHTML = '';
+  if (B.bench) B.bench.bp.grids.forEach((g, i) => { const o = document.createElement('option'); o.value = i; o.textContent = `${g.name || 'grid ' + (i + 1)} (${g.blocks.length} blocks)`; sel.appendChild(o); });
+  if (B.bench) sel.value = B.bench.gi;
+  if (B.grid) { drawCells(); showSel(); } else benchCompare();
+}
+el('benchLoad').addEventListener('click', () => el('benchFile').click());
+el('benchFile').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  const bp = parseBlueprint(await f.text());
+  if (!bp.grids.length) { alert('No grids in ' + f.name + '.'); return; }
+  B.bench = { source: f.name === 'bp.sbc' && bp.name ? bp.name + '/bp.sbc' : f.name, bp, gi: bp.grids.indexOf(mainGrid(bp)) };
+  benchBlocks(); benchShow();
+});
+el('benchClear').addEventListener('click', () => { B.bench = null; benchShow(); });
+el('benchGrid').addEventListener('change', () => { if (!B.bench) return; B.bench.gi = +el('benchGrid').value; benchBlocks(); benchShow(); });
+el('benchAlign').addEventListener('click', () => { if (!B.bench) return; B.bench.align = null; benchShow(); });
+el('benchTurn').addEventListener('click', () => {   // a quarter turn about the vertical, then the best shift for it
+  const bn = B.bench; if (!bn || !bn.align || !B.grid) return;
+  const Ry = [[0, 0, 1], [0, 1, 0], [-1, 0, 0]], R = ROTS[bn.align.rot];
+  const rot = ROTS.findIndex(Q => Q.every((row, i) => row.every((v, j) => v === Ry[i][0] * R[0][j] + Ry[i][1] * R[1][j] + Ry[i][2] * R[2][j])));
+  bn.align = alignReference(bn.blocks, B.grid, { rots: [rot] }); benchShow();
+});
+document.querySelectorAll('[data-bshift]').forEach(b => b.addEventListener('click', () => {
+  const bn = B.bench; if (!bn || !bn.align) return; const [ax, d] = b.dataset.bshift.split(',').map(Number);
+  bn.align = { ...bn.align, t: bn.align.t.map((v, i) => i === ax ? v + d : v), score: 'moved by hand' }; benchShow();
+}));
+el('benchMap').addEventListener('change', drawMap);
+el('benchExport').addEventListener('click', () => {
+  const bn = B.bench; if (!bn || !bn.result) { alert('Load a reference blueprint and fit the model first.'); return; }
+  const grid = bn.bp.grids[bn.gi];
+  const data = benchmarkFile({ model: { file: B.modelName, length: +el('bLength').value, front: el('bFront').value, up: el('bUp').value, groups: el('bGroups').value, groupsOn: [...groupOn] },
+    grid: { scale: +el('scale').value / 100, block: +el('block').value, centre: el('centre').value, offX: +el('offX').value, offY: +el('offY').value, fill: el('fill').value,
+      penaltyScale: +el('simplify').value, buildable: opts().buildable, armour: el('bpArmour').value },
+    library: LIB.filter(s => s.use).map(s => s.id),
+    reference: { name: bn.bp.name || bn.source, source: bn.source, grid: grid.name, size: grid.size, blocks: grid.blocks, align: bn.align,
+      otherGrids: bn.bp.grids.filter(x => x !== grid).map(x => `${x.name} (${x.blocks.length})`) }, result: bn.result });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }));
+  a.download = `grid-benchmark-${B.modelName.replace(/\.[^.]+$/, '').replace(/[^\w-]+/g, '_')}.json`; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+});
 function drawMap() {
   const cv = el('map'), wrap = el('mapWrap'), g = B.grid;
   if (!g) { cv.width = cv.height = 1; return; }
@@ -4812,12 +5107,15 @@ function drawMap() {
   cv.width = nx * cs + 2 * pad; cv.height = nz * cs + 2 * pad;
   const c = cv.getContext('2d');
   c.fillStyle = '#101316'; c.fillRect(0, 0, cv.width, cv.height);
+  const benchOn = B.bench && B.bench.at && el('benchMap').checked;
   for (let z = 0; z < nz; z++) for (let x = 0; x < nx; x++) {
     const f = effFit(x, L, z), v = cell[idx(x, L, z)] || f >= 0, edited = (x + ',' + L + ',' + z) in B.overrides;
     const px = pad + x * cs, py = pad + z * cs;
     if (v && f !== -3) { c.fillStyle = f >= 0 ? T.list[f].color.getStyle() : '#2a3038'; c.fillRect(px, py, cs, cs); }
     c.strokeStyle = '#353c44'; c.strokeRect(px + 0.5, py + 0.5, cs, cs);
     if (edited) { c.fillStyle = '#ff8c1a'; c.fillRect(px + cs - 6, py + 1, 5, 5); }
+    const br = benchOn && B.bench.at.get(cellKey(x, L, z));
+    if (br) { c.strokeStyle = BENCH_COLOR[br.cat]; c.lineWidth = 3; c.strokeRect(px + 3.5, py + 3.5, cs - 6, cs - 6); c.lineWidth = 1; }
     if (B.selected && B.selected[0] === x && B.selected[1] === L && B.selected[2] === z) { c.strokeStyle = '#ff8c1a'; c.lineWidth = 3; c.strokeRect(px + 1.5, py + 1.5, cs - 3, cs - 3); c.lineWidth = 1; }
     if (f === -3 && cs >= 14) { c.fillStyle = '#8a96a3'; c.font = 'bold ' + Math.floor(cs * 0.5) + 'px system-ui'; c.textAlign = 'center'; c.fillText('×', px + cs / 2, py + cs * 0.68); }
     if (v && f !== -3 && cs >= 14) { const lab = f >= 0 ? LIB[T.list[f].shape].key : '·'; c.fillStyle = f >= 0 ? '#101316' : '#8a96a3';

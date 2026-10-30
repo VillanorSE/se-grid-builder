@@ -302,6 +302,21 @@
     <div class="btnrow"><button id="editsExport">Export my edits for Claude</button></div>
     <div class="hint">Saves every cell you've edited (for this model and grid settings) with what the tool had picked, so
     the fitting can be tuned towards your choices. Send Claude the file's location.</div>
+
+    <h2>Benchmark</h2>
+    <div class="btnrow"><button id="benchLoad">Load reference blueprint</button><button id="benchClear">Clear</button></div>
+    <input type="file" id="benchFile" accept=".sbc,.xml" hidden>
+    <label>Grid <select id="benchGrid" style="flex:1"></select></label>
+    <div class="btnrow"><button id="benchAlign" title="Search the line-up again">Line up</button><button id="benchTurn" title="Turn the reference 90 degrees about the vertical">Turn</button>
+      <button data-bshift="0,1" title="Move the reference one cell forward">F+</button><button data-bshift="0,-1">F-</button>
+      <button data-bshift="1,1" title="Move the reference one cell up">U+</button><button data-bshift="1,-1">U-</button>
+      <button data-bshift="2,1" title="Move the reference one cell to the side">S+</button><button data-bshift="2,-1">S-</button></div>
+    <label><input type="checkbox" id="benchMap" checked> Mark the layer map by category</label>
+    <div id="benchStatus" class="hint"></div>
+    <div class="btnrow"><button id="benchExport">Export benchmark for Claude</button></div>
+    <div class="hint">Compares the fit with a blueprint you built of this model (a <code>bp.sbc</code> from
+    Blueprints\local, or a prefab <code>.sbc</code>): the reference is lined up with the model's grid and every cell is
+    put in a category. The fit and your edits stay as they are; the comparison counts your edits as the fit's picks.</div>
   </div>
   <div class="main">
     <div class="view" id="bView"><div class="empty" id="bEmpty">Load an .obj or .stl model to start.</div></div>
@@ -1053,6 +1068,7 @@ async function rebuild() {
 }
 function drawCells() {
   const v = B.view; disposeGroup(v.cellGroup); disposeGroup(v.gridGroup); disposeGroup(v.selGroup);
+  benchCompare();
   const g = B.grid; if (!g) { drawMap(); return; }
   const { nx, ny, nz, b, ox, oy, oz, cell, idx } = g, T = B.T;
   const L = parseInt(el('layer').value) - 1, mode = el('layerMode').value;
@@ -1238,7 +1254,9 @@ function showSel() {
     if (!(k in B.overrides)) what += `, fills ${Math.round(g.fill[g.idx(x, y, z)] * 100)}%`;
     if (bl.length) blocks = '\nGame blocks: ' + bl.slice(0, 6).join(', ') + (bl.length > 6 ? ` and ${bl.length - 6} more` : ''); }
   const info = `Column ${x + 1}, row ${z + 1}, layer ${y + 1}: ${what}${k in B.overrides ? ' (edited)' : ' (auto)'}`;
-  el('selInfo').textContent = info; el('selInfo').title = info + blocks;
+  const br = B.bench && B.bench.at && B.bench.at.get(k);
+  const refLine = br ? ` · reference: ${br.ref ? (br.ref.key || '') + ' ' + br.ref.subtype : 'none'} (${br.cat}${br.rank ? ', its rank ' + br.rank : ''}${br.sub ? ', ' + br.sub : ''})` : '';
+  el('selInfo').textContent = info + refLine; el('selInfo').title = info + refLine + blocks;
   // the best-matching blocks for this cell, as one-click choices
   const box = el('altList'); box.innerHTML = '';
   const ci = g.idx(x, y, z), list = [];
@@ -1504,6 +1522,75 @@ el('cellReport').addEventListener('click', async () => {
   try { await navigator.clipboard.writeText(text); el('cellReport').textContent = 'Copied: paste it in the chat'; setTimeout(() => el('cellReport').textContent = 'Copy cell report for Claude', 2500); }
   catch (e) { prompt('Copy this:', text); }
 });
+// ---------------------------------------------------------------- benchmark: a finished blueprint as the reference
+// (benchmark.js, design-benchmark.md). The reference is extra state: the fit and the edits are untouched, and the
+// comparison takes the cells as shown (edits included) as the fit's picks.
+const BENCH_COLOR = { match: '#3fb950', turn: '#e3b341', 'rank-miss': '#f0883e', 'candidate-miss': '#f85149', 'not-in-library': '#a371f7',
+  shifted: '#39c5cf', missing: '#db61a2', extra: '#8b949e', unmapped: '#6e7681' };
+B.bench = null;   // { source, bp, gi (the grid compared), blocks, align, result, at: 'x,y,z' -> result cell }
+const benchSizes = () => new Map();   // functional blocks: no list here yet, so each is taken as one cell
+function benchBlocks() { const bn = B.bench, grid = bn.bp.grids[bn.gi]; bn.blocks = referenceBlocks(grid, LIB, { sizes: benchSizes(grid.size) }); bn.align = null; }
+function benchCompare() {
+  const bn = B.bench, st = el('benchStatus');
+  if (!bn) { st.textContent = ''; return; }
+  const g = B.grid, grid = bn.bp.grids[bn.gi];
+  if (!g || !g.mat) { st.textContent = 'Load and fit the model to compare.'; return; }
+  if ((g.b > 1 ? 'Large' : 'Small') !== grid.size) { bn.result = bn.at = null; st.textContent = `The reference is a ${grid.size.toLowerCase()} grid; set Block size to match.`; return; }
+  if (!bn.align) bn.align = alignReference(bn.blocks, g);
+  if (!bn.align) { bn.result = bn.at = null; st.textContent = 'Nothing to line up: the reference has no blocks or the model no material.'; return; }
+  const fitAt = ci => effFit(ci % g.nx, Math.floor(ci / (g.nx * g.nz)), Math.floor(ci / g.nx) % g.nz);
+  const r = bn.result = compareReference(bn.blocks, bn.align, g, B.T, LIB, { armour: el('bpArmour').value, fitAt });
+  bn.at = new Map(r.cells.map(c => [cellKey(c.column - 1, c.layer - 1, c.row - 1), c]));
+  const top = (o, n = 6) => Object.entries(o).sort((a, b) => b[1] - a[1]).slice(0, n).map(([k, v]) => `${esc(k)} ${v}`).join(', ');
+  const legend = Object.keys(BENCH_COLOR).filter(c => r.counts[c]).map(c => `<span style="display:inline-block;width:9px;height:9px;border:2px solid ${BENCH_COLOR[c]};margin:0 3px 0 6px"></span>${c} ${r.counts[c]}`).join('');
+  st.innerHTML = `<b>${esc(bn.bp.name || bn.source)}</b> / ${esc(grid.name)}: ${grid.blocks.length} blocks, line-up ${bn.align.score} (best other turn ${bn.align.next})<br>` +
+    `Right block and turn <b>${pct(r.exact, r.n)}</b> (${r.exact}/${r.n}), right block <b>${pct(r.shape, r.n)}</b>, shape overlap ${(100 * r.overlap).toFixed(1)}%<br>${legend}` +
+    (Object.keys(r.notInLibrary).length ? `<br>Reference blocks switched off here: ${top(r.notInLibrary)}` : '') +
+    (Object.keys(r.unmapped).length ? `<br>Not in the library: ${top(r.unmapped)}` : '') +
+    (r.gradeDiff ? `<br>${r.gradeDiff} matched cells export another grade than the reference (not counted)` : '');
+}
+function benchShow() {
+  const sel = el('benchGrid'); sel.innerHTML = '';
+  if (B.bench) B.bench.bp.grids.forEach((g, i) => { const o = document.createElement('option'); o.value = i; o.textContent = `${g.name || 'grid ' + (i + 1)} (${g.blocks.length} blocks)`; sel.appendChild(o); });
+  if (B.bench) sel.value = B.bench.gi;
+  if (B.grid) { drawCells(); showSel(); } else benchCompare();
+}
+el('benchLoad').addEventListener('click', () => el('benchFile').click());
+el('benchFile').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  const bp = parseBlueprint(await f.text());
+  if (!bp.grids.length) { alert('No grids in ' + f.name + '.'); return; }
+  B.bench = { source: f.name === 'bp.sbc' && bp.name ? bp.name + '/bp.sbc' : f.name, bp, gi: bp.grids.indexOf(mainGrid(bp)) };
+  benchBlocks(); benchShow();
+});
+el('benchClear').addEventListener('click', () => { B.bench = null; benchShow(); });
+el('benchGrid').addEventListener('change', () => { if (!B.bench) return; B.bench.gi = +el('benchGrid').value; benchBlocks(); benchShow(); });
+el('benchAlign').addEventListener('click', () => { if (!B.bench) return; B.bench.align = null; benchShow(); });
+el('benchTurn').addEventListener('click', () => {   // a quarter turn about the vertical, then the best shift for it
+  const bn = B.bench; if (!bn || !bn.align || !B.grid) return;
+  const Ry = [[0, 0, 1], [0, 1, 0], [-1, 0, 0]], R = ROTS[bn.align.rot];
+  const rot = ROTS.findIndex(Q => Q.every((row, i) => row.every((v, j) => v === Ry[i][0] * R[0][j] + Ry[i][1] * R[1][j] + Ry[i][2] * R[2][j])));
+  bn.align = alignReference(bn.blocks, B.grid, { rots: [rot] }); benchShow();
+});
+document.querySelectorAll('[data-bshift]').forEach(b => b.addEventListener('click', () => {
+  const bn = B.bench; if (!bn || !bn.align) return; const [ax, d] = b.dataset.bshift.split(',').map(Number);
+  bn.align = { ...bn.align, t: bn.align.t.map((v, i) => i === ax ? v + d : v), score: 'moved by hand' }; benchShow();
+}));
+el('benchMap').addEventListener('change', drawMap);
+el('benchExport').addEventListener('click', () => {
+  const bn = B.bench; if (!bn || !bn.result) { alert('Load a reference blueprint and fit the model first.'); return; }
+  const grid = bn.bp.grids[bn.gi];
+  const data = benchmarkFile({ model: { file: B.modelName, length: +el('bLength').value, front: el('bFront').value, up: el('bUp').value, groups: el('bGroups').value, groupsOn: [...groupOn] },
+    grid: { scale: +el('scale').value / 100, block: +el('block').value, centre: el('centre').value, offX: +el('offX').value, offY: +el('offY').value, fill: el('fill').value,
+      penaltyScale: +el('simplify').value, buildable: opts().buildable, armour: el('bpArmour').value },
+    library: LIB.filter(s => s.use).map(s => s.id),
+    reference: { name: bn.bp.name || bn.source, source: bn.source, grid: grid.name, size: grid.size, blocks: grid.blocks, align: bn.align,
+      otherGrids: bn.bp.grids.filter(x => x !== grid).map(x => `${x.name} (${x.blocks.length})`) }, result: bn.result });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }));
+  a.download = `grid-benchmark-${B.modelName.replace(/\.[^.]+$/, '').replace(/[^\w-]+/g, '_')}.json`; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+});
 function drawMap() {
   const cv = el('map'), wrap = el('mapWrap'), g = B.grid;
   if (!g) { cv.width = cv.height = 1; return; }
@@ -1512,12 +1599,15 @@ function drawMap() {
   cv.width = nx * cs + 2 * pad; cv.height = nz * cs + 2 * pad;
   const c = cv.getContext('2d');
   c.fillStyle = '#101316'; c.fillRect(0, 0, cv.width, cv.height);
+  const benchOn = B.bench && B.bench.at && el('benchMap').checked;
   for (let z = 0; z < nz; z++) for (let x = 0; x < nx; x++) {
     const f = effFit(x, L, z), v = cell[idx(x, L, z)] || f >= 0, edited = (x + ',' + L + ',' + z) in B.overrides;
     const px = pad + x * cs, py = pad + z * cs;
     if (v && f !== -3) { c.fillStyle = f >= 0 ? T.list[f].color.getStyle() : '#2a3038'; c.fillRect(px, py, cs, cs); }
     c.strokeStyle = '#353c44'; c.strokeRect(px + 0.5, py + 0.5, cs, cs);
     if (edited) { c.fillStyle = '#ff8c1a'; c.fillRect(px + cs - 6, py + 1, 5, 5); }
+    const br = benchOn && B.bench.at.get(cellKey(x, L, z));
+    if (br) { c.strokeStyle = BENCH_COLOR[br.cat]; c.lineWidth = 3; c.strokeRect(px + 3.5, py + 3.5, cs - 6, cs - 6); c.lineWidth = 1; }
     if (B.selected && B.selected[0] === x && B.selected[1] === L && B.selected[2] === z) { c.strokeStyle = '#ff8c1a'; c.lineWidth = 3; c.strokeRect(px + 1.5, py + 1.5, cs - 3, cs - 3); c.lineWidth = 1; }
     if (f === -3 && cs >= 14) { c.fillStyle = '#8a96a3'; c.font = 'bold ' + Math.floor(cs * 0.5) + 'px system-ui'; c.textAlign = 'center'; c.fillText('×', px + cs / 2, py + cs * 0.68); }
     if (v && f !== -3 && cs >= 14) { const lab = f >= 0 ? LIB[T.list[f].shape].key : '·'; c.fillStyle = f >= 0 ? '#101316' : '#8a96a3';

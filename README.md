@@ -158,6 +158,38 @@ by `test_blueprint.mjs`) and two MIT-licensed tools, se-blueprinter (imivi) and 
 their licence notice is in `blueprint.js`.
 
 
+## Benchmark
+
+Grid Builder > Benchmark compares the fit with a blueprint you built of the same model, to see where and how the
+fit differs from a finished build. **Load reference blueprint** takes a `bp.sbc` (from `Blueprints\local\<name>`) or
+a prefab `.sbc`; a file with several grids compares the one with most blocks (pick another under Grid; subgrids such as
+turrets on rotors and wheels are not compared together with it). The fit and your edits are untouched: the reference is
+only compared, and your edited cells count as the fit's picks.
+
+- **Line-up.** A hand-built grid has its own origin and facing, so the reference is turned (24 ways, never mirrored) and
+  moved a whole cell at a time until its cells cover the model's material best (the fit's result plays no part). The
+  score and the best score with another turn are shown; a close second means the line-up is unsure. **Turn** turns it
+  a quarter about the vertical and finds the best shift for that; F/U/S +/- move it one cell (forward, up, side);
+  **Line up** searches again. The reference must be the grid size of Block size; Build scale and the grid offsets are
+  yours to match (a reference built wider or taller than the model's proportions can't line up well).
+- **Reading the blocks.** Blueprint export run backwards: a block's subtype finds its card (vanilla armour by topology,
+  imported blocks by their own subtype), its BlockOrientation the card's turn. Every card counts, used or not. Blocks no
+  card holds are *unmapped* (listed, not scored); non-armour blocks are *functional* and keep their cells.
+- **Categories**, one per cell where either side has a block, marked on the layer map (Mark the layer map by category)
+  and named in the selected cell's line:
+  match; turn (same block, other turn); rank-miss (the reference's block was among the cell's best 5); candidate-miss
+  (it wasn't); not-in-library (its card is switched off); shifted (the fit put it in a neighbouring cell); missing (the
+  fit left the cell empty: *dropped* where the model has material, *beyond* where it has none, *outside* the grid);
+  extra (the fit has a block the reference doesn't: *open*, or *functional* where a reference functional block sits);
+  unmapped.
+- **Scores**: right block and turn, right block (the same measures as the edits files), and shape overlap (the two
+  blocks' shared volume, so near misses count partly), over every category but unmapped. Armour grade (light, heavy,
+  a mod's thickness) is not the fit's choice: a match that would export another grade is only counted apart.
+- **Export benchmark for Claude** saves `grid-benchmark-<model>.json` (format `se-grid-builder-benchmark` v1): the model
+  and grid settings and library as in the edits file, the reference's blocks and line-up, and the result with every
+  mismatch.
+
+
 ## Development
 
 | File | Holds |
@@ -167,6 +199,7 @@ their licence notice is in `blueprint.js`.
 | `fit_worker.js` | The fit running in Web Workers (inlined with `core.js` by `build.py` and started from a Blob URL) |
 | `mwm.js` | Reads triangles from Space Engineers `.mwm` models (classic tagged layout) |
 | `importer.js` | World import (mods -> block definitions -> shapes) over a small folder interface |
+| `benchmark.js` | Blueprint benchmark: reads a blueprint or prefab, lines it up with the fit and compares them (no DOM) |
 | `seed.js`, `armor_data.js`, `panel_data.js` | The starting library |
 | `build.py` | Bundles everything into `docs/index.html` (the published page) |
 | `test_core.mjs`, `bench_fit.mjs` | Node tests and the fit benchmark (models built from known blocks) |

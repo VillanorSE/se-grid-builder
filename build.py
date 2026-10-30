@@ -3,7 +3,7 @@
     python tools/se-grid-builder/build.py [--out <file.html>]
 
 1. armor_data.js <- tools/grid-overlay/armor_shapes.json (the owner-confirmed vanilla armour shapes)
-2. se-grid-builder.html <- app.html with core.js, mwm.js, seed.js and armor_data.js inlined (a page opened from disk
+2. se-grid-builder.html <- app.html with core.js, mwm.js, seed.js, armor_data.js, blueprint.js and benchmark.js inlined (a page opened from disk
    can't load ES modules from neighbouring files), written next to this script unless --out is given.
 """
 import argparse
@@ -38,7 +38,7 @@ def main():
     a = ap.parse_args()
     n = armor_data() if SHAPES.exists() else "committed"
     app = (HERE / "app.html").read_text(encoding="utf-8")
-    bundle = "\n".join(module_body(m) for m in ("armor_data.js", "panel_data.js", "core.js", "mwm.js", "seed.js", "blueprint.js", "importer.js", "blueprint_ui.js"))
+    bundle = "\n".join(module_body(m) for m in ("armor_data.js", "panel_data.js", "core.js", "mwm.js", "seed.js", "blueprint.js", "benchmark.js", "importer.js", "blueprint_ui.js"))
     marker = "/*__MODULES__*/"
     assert app.count(marker) == 1
     out = app.replace(marker, bundle)

@@ -1090,7 +1090,8 @@ export function computeGrid(parts, o) {
       if (best >= 0) fit[c] = best; else if (cleared.has(c)) fit[c] = base[c];
     }
   }
-  return { nx, ny, nz, b, ox, oy, oz, cell, fit, fill, idx, alt, altScore, ALT, hiddenShare: seen ? hidden / seen : 0 };
+  // mat: the model's material per cell (inside or surface samples, of NS), for benchmark.js
+  return { nx, ny, nz, b, ox, oy, oz, cell, fit, fill, mat: matOf, idx, alt, altScore, ALT, hiddenShare: seen ? hidden / seen : 0 };
 
 }
 

@@ -85,6 +85,44 @@ if (fs.existsSync(obj)) {
   check(panelOn(0, 1, 1, 1), 'armour skin: front panel in the cell in front');
 }
 
+// blueprint benchmark (README, "Benchmark"): a fit exported as a blueprint and read back is its own reference, also
+// when the blueprint's grid is turned and moved (a hand-built grid's own origin and facing)
+{
+  const BP = await import(pathToFileURL(path.join(here, 'blueprint.js')));
+  const BM = await import(pathToFileURL(path.join(here, 'benchmark.js')));
+  const box = (x0, y0, z0, x1, y1, z1) => { const v = [[x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0], [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]];
+    return [[0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7], [0, 1, 5], [0, 5, 4], [3, 7, 6], [3, 6, 2], [0, 4, 7], [0, 7, 3], [1, 2, 6], [1, 6, 5]].flatMap(f => f.flatMap(i => v[i])); };
+  // a box with a ramp on its front top (x is the front): not the same turned any way, so the line-up has one answer
+  const ramp = (x0, x1, y0, y1, z0, z1) => { const v = [[x0, y0, z0], [x1, y0, z0], [x0, y1, z0], [x0, y0, z1], [x1, y0, z1], [x0, y1, z1]];
+    return [[0, 2, 1], [3, 4, 5], [0, 1, 4], [0, 4, 3], [0, 3, 5], [0, 5, 2], [1, 2, 5], [1, 5, 4]].flatMap(f => f.flatMap(i => v[i])); };
+  const parts = [{ name: 'hull', group: 'body', tris: Float32Array.from([...box(0, 0, -1, 2.5, 1, 1), ...ramp(2.5, 3.5, 0, 1, -1, 1), ...box(0, 1, -1, 1, 1.5, 1)]) }];
+  const g = C.computeGrid(parts, { scale: 1, block: 0.5, offX: 0, offY: 0, centre: 'col', fill: 'solid', penaltyScale: 4,
+    groupsOn: new Set(['body']), groupNames: ['body'], groupPriority: ['body'], shapes: lib, T });
+  const BPmod = BP;
+  const exported = ci => g.fit[ci] >= 0 && BPmod.pickBlock(lib[T.list[g.fit[ci]].shape], 'Small') ? g.fit[ci] : -1;
+  const cellAt = (x, y, z) => { const f = exported(g.idx(x, y, z)); return f >= 0 ? { shape: lib[T.list[f].shape], rot: T.list[f].rot } : null; };
+  const out = BP.gridBlocks({ nx: g.nx, ny: g.ny, nz: g.nz, centre: 'col' }, cellAt, { size: 'Small', armour: 'light' });
+  const xml = BP.blueprintXml({ name: 'Bench', gridSize: 'Small', blocks: out.blocks, mirror: out.mirror });
+  const shapes = new Set(out.blocks.map(b => b.card));
+  const run = (gx, label) => {
+    const bp = BM.parseBlueprint(gx), grid = BM.mainGrid(bp);
+    const blocks = BM.referenceBlocks(grid, lib), al = BM.alignReference(blocks, g);
+    const r = BM.compareReference(blocks, al, g, T, lib, { fitAt: exported });
+    check(grid.blocks.length === out.blocks.length && r.n === out.blocks.length && r.exact === r.n && r.overlap === 1,
+      `benchmark round trip${label}: ${r.n} blocks (${shapes.size} cards), ${BM.summaryLine(r)}; line-up ${al.score} (next turn ${al.next})`);
+    return al;
+  };
+  const al = run(xml, '');
+  check(al.rot === C.ROTS.findIndex(R => R.every((row, i) => row.every((v, j) => v === (i === j ? 1 : 0)))), 'benchmark: the exported grid lines up unturned');
+  // the same grid turned (grid Forward to Left, Up stays) and moved: Min and BlockOrientation turn with it
+  const Q = BP.orientMatrix('Left', 'Up'), app = (M, v) => [0, 1, 2].map(i => M[i][0] * v[0] + M[i][1] * v[1] + M[i][2] * v[2]);
+  const turned = BP.blueprintXml({ name: 'Bench', gridSize: 'Small', blocks: out.blocks.map(b => {
+    const M = BP.orientMatrix(b.forward, b.up), QM = [0, 1, 2].map(i => [0, 1, 2].map(j => Q[i][0] * M[0][j] + Q[i][1] * M[1][j] + Q[i][2] * M[2][j]));
+    const [forward, up] = BP.orientOf(QM), m = app(Q, b.min);
+    return { ...b, min: [m[0] + 7, m[1] - 3, m[2] + 11], forward, up }; }) });
+  run(turned, ', grid turned and moved');
+}
+
 // 4. STL round trip (binary)
 {
   const tri = [0,0,0, 1,0,0, 0,1,0], buf = new ArrayBuffer(84 + 50); const dv = new DataView(buf); dv.setUint32(80, 1, true);
