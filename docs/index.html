@@ -15,7 +15,8 @@
   .tabs button { border:0; border-bottom:2px solid transparent; border-radius:0; background:none; padding:0 14px; font-size:13px; color:var(--muted); }
   .tabs button.on { color:var(--text); border-bottom-color:var(--accent); }
   .tabs button:hover { color:var(--text); }
-  #saveState { margin-left:auto; color:var(--muted); font-size:12px; }
+  #tabNote { margin-left:auto; color:var(--warn); font-size:12px; }
+  #saveState { margin-left:12px; color:var(--muted); font-size:12px; }
   .page { flex:1; min-height:0; display:none; }
   .page.on { display:flex; }
   .side { width:310px; flex:none; background:var(--panel); border-right:1px solid var(--line); overflow-y:auto; padding:12px 14px; }
@@ -37,6 +38,15 @@
   .btnrow { display:flex; gap:4px; margin:4px 0; flex-wrap:wrap; }
   .btnrow button { flex:1; }
   .hint { color:var(--muted); font-size:12px; }
+  details.sec { border-top:1px solid var(--line); padding:4px 0 8px; }
+  details.sec:first-child { border-top:0; }
+  details.sec > summary { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); cursor:pointer; list-style:none; padding:4px 0; user-select:none; }
+  details.sec > summary::-webkit-details-marker { display:none; }
+  details.sec > summary::before { content:'\25B8'; display:inline-block; width:14px; }
+  details.sec[open] > summary::before { content:'\25BE'; }
+  details.sec > summary:hover { color:var(--text); }
+  .side [title] { cursor:help; }
+  .side button[title], .side input[title], .side select[title] { cursor:pointer; }
   .warn { color:var(--warn); }
   .okc { color:var(--ok); }
   .sw { width:12px; height:12px; border-radius:2px; display:inline-block; flex:none; }
@@ -120,6 +130,7 @@
     <button data-tab="libPage">Cube Library</button>
     <button data-tab="skPage">Sketch</button>
   </nav>
+  <span id="tabNote" title="Another tab has this model open at the same grid settings: edits made in either tab show up in both"></span>
   <span id="saveState"></span>
 </header>
 
@@ -209,58 +220,53 @@
 <!-- ============================== Grid Builder ============================== -->
 <section id="bPage" class="page on">
   <div class="side">
-    <!-- set up -->
-    <h2>Model</h2>
+    <details class="sec" data-sec="model" open><summary>Model</summary>
     <div class="drop" id="bDrop">Drop an .obj or .stl here, or <button id="bPick">choose a file</button></div>
     <input type="file" id="bFile" accept=".obj,.stl" hidden>
     <div id="bModelName" class="hint" style="margin-top:4px"></div>
-    <label>Real length (m) <input type="number" id="bLength" step="0.01" min="0.01" value="5"></label>
-    <div class="hint">The real length of the thing along its front axis. The model is scaled to it.</div>
-    <label>Front axis <select id="bFront"><option>+x</option><option>-x</option><option>+y</option><option>-y</option><option>+z</option><option>-z</option></select>
+    <label title="The real length along the front axis; the model is scaled to it">Real length (m) <input type="number" id="bLength" step="0.01" min="0.01" value="5"></label>
+    <label>Front <select id="bFront"><option>+x</option><option>-x</option><option>+y</option><option>-y</option><option>+z</option><option>-z</option></select>
       Up <select id="bUp"><option>y</option><option>z</option><option>x</option></select></label>
-    <label style="display:block">Part groups <input type="text" id="bGroups" style="width:100%"></label>
-    <div class="hint">group=words in part names, separated by ";". Everything else is "body". Parts are the model's objects.</div>
-    <div class="hint" style="margin-top:6px">Build these parts (unticked: not built and hidden, their space kept clear; wheels are off by
-    default because suspension blocks go there):</div>
+    <div class="hint" title="Unticked parts are not built and their space is kept clear (wheels: suspension goes there)">Build these parts:</div>
     <div id="groups"></div>
+    <label style="display:block" title="group=words in the model's part names, separated by ;. Everything else is body.">Part names <input type="text" id="bGroups" style="width:100%"></label>
+    </details>
 
-    <h2>Scale and grid</h2>
+    <details class="sec" data-sec="show" open><summary>Show</summary>
+    <label><input type="checkbox" id="showModel" checked> Model <input type="range" id="opacity" min="0.05" max="1" step="0.05" value="0.3" title="Model opacity"></label>
+    <label><input type="checkbox" id="showCells" checked> Blocks <input type="range" id="cellOpacity" min="0.05" max="1" step="0.05" value="0.75" title="Block opacity"></label>
+    <label title="blocks: blocks drawn over the model. model: model drawn over the blocks. both solid: one depth test, so any model you see is model sticking out past the blocks.">On top <select id="onTop"><option value="blocks">blocks</option><option value="model">model</option><option value="solid">both solid</option></select></label>
+    <label>Model colour <select id="modelColour"><option value="gray">gray</option><option value="red">by part</option></select>
+      <span title="The model's edges as red lines over everything">outline <select id="outline"><option value="off">off</option><option value="on">on</option></select></span></label>
+    <label title="The cells of the selected layer as a wireframe (not in all-layers mode)"><input type="checkbox" id="showGrid" checked> Wireframe on the layer</label>
+    </details>
+
+    <details class="sec" data-sec="grid" open><summary>Grid</summary>
     <label>Build scale % <input type="number" id="scale" step="5" value="100"></label>
     <label>Block size <select id="block"><option value="0.5">0.5 m (small grid)</option><option value="2.5">2.5 m (large grid)</option></select></label>
-    <label>Width centre on <select id="centre"><option value="col">a block column (odd width)</option><option value="line">a grid line (even width)</option></select></label>
-    <label>Move grid forward (blocks) <input type="number" id="offX" step="0.1" value="0"></label>
-    <label>Move grid up (blocks) <input type="number" id="offY" step="0.1" value="0"></label>
-    <label>Cells <select id="fill"><option value="solid">all filled cells</option><option value="shell">outer cells only</option><option value="skin">armour skin (hollow hull)</option></select>
-      <span class="hint">armour skin: the inside stays empty for functional blocks; flat sides get panels (the floor's under the hull), sloped ones shaped blocks</span></label>
-    <label>Simplify <input type="number" id="simplify" min="0" max="6" step="0.5" value="4"> <span class="hint">0 = follow the model exactly; higher = cubes, halves and slopes win more often</span></label>
-    <label>Buildable surfaces <select id="buildable"><option value="auto">auto (on for outer cells at large grid)</option><option value="on">on</option><option value="off">off</option></select>
-      <span class="hint">round the skin outward, never inward: full blocks on decks and other tops, hull sides kept full width, blocks that hold all of the model where it narrows</span></label>
-    <div class="hint">A block is considered for a cell only when the model fills at least a fifth of <i>the block's own</i>
-    volume (a plate: of the model's thin skin). Among those, the winner is the block whose faces best match the model's
-    surface in the cell: the surface should lie on the block's faces, and every face the block shows should have model
-    surface on it. Simpler blocks take near-ties. Thin bits of a neighbour poking through a grid line get no block.</div>
+    <label title="Odd width: centred on a block column. Even width: on a grid line.">Width centre <select id="centre"><option value="col">block column</option><option value="line">grid line</option></select></label>
+    <label title="Move the grid against the model, in blocks">Move grid: fwd <input type="number" id="offX" step="0.1" value="0" style="width:52px"> up <input type="number" id="offY" step="0.1" value="0" style="width:52px"></label>
+    <label title="armour skin: the inside stays empty for functional blocks; flat sides get panels, sloped ones shaped blocks">Cells <select id="fill"><option value="solid">all filled</option><option value="shell">outer only</option><option value="skin">armour skin (hollow hull)</option></select></label>
+    <label title="Round the skin outward, never inward: full blocks on tops, hull sides kept full width">Buildable surfaces <select id="buildable"><option value="auto">auto</option><option value="on">on</option><option value="off">off</option></select></label>
     <div id="info"></div>
+    </details>
 
-    <!-- while building -->
-    <h2>Layer</h2>
-    <label>Mode <select id="layerMode"><option value="only">only the layer</option><option value="upto" selected>up to the layer</option><option value="all">all layers</option></select></label>
-    <label><input type="range" id="layer" min="1" max="1" value="1"> <span id="layerLabel"></span></label>
-    <div class="hint">The map is the selected layer seen from above: front on the right, columns numbered from the rear, rows from
-    the -Z side (row 1 at the top). Letters are block keys (click a cell for the full name); a dot is a cell the model touches
-    where no block fits.</div>
+    <details class="sec" data-sec="layer" open><summary>Layer</summary>
+    <label title="The map is the layer seen from above, front on the right. A dot: the model touches the cell but no block fits.">
+      <select id="layerMode"><option value="only">only the layer</option><option value="upto" selected>up to the layer</option><option value="all">all layers</option></select>
+      <input type="range" id="layer" min="1" max="1" value="1"> <span id="layerLabel"></span></label>
+    </details>
 
-    <h2>Edit a cell</h2>
-    <div class="hint">Click a cell on the layer map, or a block in the 3D view, to select it. Edits are kept in this browser for
-    this model and grid settings.</div>
+    <details class="sec" data-sec="edit" open><summary>Edit a cell</summary>
+    <div id="selInfo" class="hint" title="Click a cell on the map or a block in the 3D view. Edits are kept in this browser.">No cell selected.</div>
     <div class="btnrow"><button data-act="prev">&#9664; shape</button><button data-act="next">shape &#9654;</button><button data-act="none">no block</button></div>
     <div class="btnrow"><button data-act="ry">turn vertical</button><button data-act="rx">turn length</button><button data-act="rz">turn width</button></div>
     <div class="btnrow"><button data-act="reset">auto</button><button data-act="undo">undo</button><button data-act="resetAll">clear all edits</button></div>
     <div class="btnrow"><button id="pickUp" title="Copy the selected cell's block, turned as it is (Ctrl+C)">pick up</button><button id="paintBtn" title="Click or drag on the layer map, or click blocks in the 3D view, to put the picked-up block there (Esc to stop)">paint</button>
       <label title="Every edit is also made on the other side of the centreline, mirrored"><input type="checkbox" id="mirror" checked> mirror</label></div>
     <div id="brushInfo" class="hint"></div>
-    <div id="selInfo" class="hint">No cell selected.</div>
     <div id="altList"></div>
-    <div class="hint">All blocks in use: click one for this cell, then pick its turn below. <span id="keyBuf"></span></div>
+    <div class="hint">All blocks in use <span id="keyBuf"></span></div>
     <input type="search" id="palSearch" placeholder="Search name, key, block or mod" style="width:100%;margin-bottom:4px">
     <div id="palette"></div>
     <div id="turns"></div>
@@ -270,40 +276,26 @@
       no block; <b>Backspace</b>: auto. Arrows move along the layer, <b>Page Up</b> / <b>Page Down</b> change layer,
       <b>Tab</b> / <b>Shift+Tab</b> the next / previous cell with material. <b>Ctrl+C</b> picks up, <b>Ctrl+V</b> puts the
       picked-up block in the selected cell, <b>Ctrl+Z</b> undoes, <b>Esc</b> stops painting.</div></details>
+    </details>
 
-    <h2>Show</h2>
-    <label><input type="checkbox" id="showModel" checked> Model, opacity <input type="range" id="opacity" min="0.05" max="1" step="0.05" value="0.3"></label>
-    <label>On top <select id="onTop"><option value="blocks">blocks (model shows through see-through blocks)</option><option value="model">model (blocks show through a see-through model)</option></select></label>
-    <label><input type="checkbox" id="showCells" checked> Blocks as <select id="cellMode"><option value="shapes">fitted shapes</option><option value="cubes">cubes</option></select></label>
-    <label>Block opacity <input type="range" id="cellOpacity" min="0.05" max="1" step="0.05" value="0.75"></label>
-    <label><input type="checkbox" id="showGrid" checked> Grid lines on the layer</label>
 
-    <!-- finishing, and rarely used -->
-    <h2>Blueprint</h2>
+    <details class="sec" data-sec="bp"><summary>Blueprint</summary>
     <label>Name <input type="text" id="bpName" style="flex:1"></label>
-    <label>Armour <select id="bpArmour"><option value="light">light</option><option value="heavy">heavy</option></select></label>
-    <label>Colour <select id="bpColour"><option value="none">game default</option><option value="kind">per block kind</option><option value="one">one colour</option></select>
+    <label>Armour <select id="bpArmour"><option value="light">light</option><option value="heavy">heavy</option></select>
+      Colour <select id="bpColour"><option value="none">game default</option><option value="kind">per block kind</option><option value="one">one colour</option></select>
       <input type="color" id="bpColourPick" value="#8a9099" style="width:28px;padding:0"></label>
-    <div class="btnrow"><button id="bpExport" class="primary">Export blueprint</button><button id="bpZip">Download zip</button><button id="bpFolder" title="Choose the Blueprints\local folder again">folder&hellip;</button></div>
+    <div class="btnrow"><button id="bpExport" class="primary" title="Writes into %APPDATA%\SpaceEngineers\Blueprints\local\(name); pick that folder once. In game: F10, then paste.">Export blueprint</button><button id="bpZip">Download zip</button><button id="bpFolder" title="Choose the Blueprints\local folder again">folder&hellip;</button></div>
     <div id="bpStatus" class="hint"></div>
-    <div class="hint">One grid of the block size above, every fitted cell with your edits. Export writes straight into
-    %APPDATA%\SpaceEngineers\Blueprints\local\&lt;name&gt; (pick that folder once); in game F10, then paste. The in-game
-    symmetry plane is set on the hull centreline.</div>
+    </details>
 
-    <h2>Session</h2>
-    <div class="btnrow"><button id="sessSave">Save session</button><button id="sessOpen">Open session</button></div>
+    <details class="sec" data-sec="session"><summary>Session</summary>
+    <div class="btnrow"><button id="sessSave" title="One file with the model, settings, edits and block library; asks where to save it">Save session</button><button id="sessOpen">Open session</button></div>
     <input type="file" id="sessFile" accept=".sgb,.json,application/json" hidden>
-    <div class="hint">One file with the model, settings, cell edits and block library, to keep or to send to someone with
-    this page.</div>
+    </details>
 
-    <h2>Help tune the fit</h2>
-    <div class="btnrow"><button id="cellReport">Copy cell report for Claude</button></div>
-    <div class="hint">Select a cell the tool got wrong, click this, and paste it into the chat with the block you would use.</div>
-    <div class="btnrow"><button id="editsExport">Export my edits for Claude</button></div>
-    <div class="hint">Saves every cell you've edited (for this model and grid settings) with what the tool had picked, so
-    the fitting can be tuned towards your choices. Send Claude the file's location.</div>
-
-    <h2>Benchmark</h2>
+    <details class="sec" data-sec="tune"><summary>Tuning (for Claude)</summary>
+    <div class="btnrow"><button id="editsExport" title="Saves every cell you have edited with what the tool had picked">Export my edits</button></div>
+    <div class="hint" style="margin-top:8px" title="Compare the fit with a blueprint or prefab you built of this model">Benchmark</div>
     <div class="btnrow"><button id="benchLoad">Load reference blueprint</button><button id="benchClear">Clear</button></div>
     <input type="file" id="benchFile" accept=".sbc,.xml" hidden>
     <label>Grid <select id="benchGrid" style="flex:1"></select></label>
@@ -311,13 +303,11 @@
       <button data-bshift="0,1" title="Move the reference one cell forward">F+</button><button data-bshift="0,-1">F-</button>
       <button data-bshift="1,1" title="Move the reference one cell up">U+</button><button data-bshift="1,-1">U-</button>
       <button data-bshift="2,1" title="Move the reference one cell to the side">S+</button><button data-bshift="2,-1">S-</button></div>
-    <label><input type="checkbox" id="benchMap" checked> Mark the layer map by category</label>
-    <label><input type="checkbox" id="benchGhost"> Show the reference in 3D, <select id="benchGhostMode"><option value="plain">see-through blue</option><option value="cat">by category</option></select></label>
+    <label><input type="checkbox" id="benchMap" checked> Mark the map by category</label>
+    <label><input type="checkbox" id="benchGhost"> Reference in 3D <select id="benchGhostMode"><option value="plain">see-through blue</option><option value="cat">by category</option></select></label>
     <div id="benchStatus" class="hint"></div>
-    <div class="btnrow"><button id="benchExport">Export benchmark for Claude</button></div>
-    <div class="hint">Compares the fit with a blueprint you built of this model (a <code>bp.sbc</code> from
-    Blueprints\local, or a prefab <code>.sbc</code>): the reference is lined up with the model's grid and every cell is
-    put in a category. The fit and your edits stay as they are; the comparison counts your edits as the fit's picks.</div>
+    <div class="btnrow"><button id="benchExport" title="Saves the comparison (the reference blueprint against the fit, every cell) as a file for Claude, to tune the fit towards how you built it">Export benchmark</button></div>
+    </details>
   </div>
   <div class="main">
     <div class="view" id="bView"><div class="empty" id="bEmpty">Load an .obj or .stl model to start.</div></div>
@@ -3907,6 +3897,22 @@ const DB = (() => {
   return { get: k => run('readonly', s => s.get(k)).catch(() => undefined), set: (k, v) => run('readwrite', s => s.put(v, k)), del: k => run('readwrite', s => s.delete(k)),
     keys: () => run('readonly', s => s.getAllKeys()).catch(() => []) };
 })();
+// several tabs can each work on their own project (owner, 2026-10-30). Models are kept by name (the last MODELS_KEPT),
+// so each tab reopens its own; 'model' names the last one opened, for a new tab
+const MODELS_KEPT = 4;
+async function storeModel(name, buf) {
+  await DB.set('model:' + name, buf);
+  const list = ((await DB.get('models')) || []).filter(n => n !== name); list.unshift(name);
+  for (const n of list.splice(MODELS_KEPT)) { await DB.del('model:' + n).catch(() => {}); await DB.del('settings:' + n).catch(() => {}); await DB.del('lastFitMs:' + n).catch(() => {}); }
+  await DB.set('models', list); await DB.set('model', { name });
+}
+const storedModel = async name => { const buf = name && await DB.get('model:' + name); return buf ? { name, buf } : null; };
+// this tab's own model and settings (sessionStorage: kept over a reload of this tab, not shared with other tabs)
+const TAB = (() => { try { return JSON.parse(sessionStorage.getItem('sgb-tab')) || {}; } catch (e) { return {}; } })();
+const saveTab = () => { try { sessionStorage.setItem('sgb-tab', JSON.stringify(TAB)); } catch (e) {} };
+// the other tabs of this page: the library and the edits of the same model and grid stay in step
+const CHANNEL = 'BroadcastChannel' in window ? new BroadcastChannel('se-grid-builder') : null;
+const tell = msg => { try { if (CHANNEL) CHANNEL.postMessage(msg); } catch (e) {} };
 
 // ---------------------------------------------------------------- library state
 let LIB = [];
@@ -3919,7 +3925,7 @@ function libChanged(shape) {
   el('saveState').textContent = 'saving…';
   clearTimeout(saveTimer);
   saveTimer = setTimeout(async () => {
-    try { await DB.set('library', LIB.map(stripped)); el('saveState').textContent = 'saved in this browser'; }
+    try { await DB.set('library', LIB.map(stripped)); el('saveState').textContent = 'saved in this browser'; tell({ t: 'library' }); }
     catch (e) { el('saveState').textContent = 'could not save: ' + e.message; }
   }, 400);
 }
@@ -3978,7 +3984,8 @@ function makeView(container, opts = {}) {
     const s2 = new THREE.DirectionalLight(0xffffff, 1.3); s2.position.set(5, 10, 7); v.overlay.add(s2); renderer.autoClear = false; }
   renderer.setAnimationLoop(() => { if (!v.active) return; controls.update();
     if (!v.overlay) { renderer.render(scene, camera); return; }
-    renderer.clear(); renderer.render(scene, camera); renderer.clearDepth(); renderer.render(v.overlay, camera); });
+    renderer.clear(); renderer.render(scene, camera); renderer.clearDepth(); renderer.render(v.overlay, camera);
+    if (v.top) { renderer.clearDepth(); renderer.render(v.top, camera); } });
   return v;
 }
 const cellOutline = () => { const l = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)), new THREE.LineBasicMaterial({ color: 0x7a8794 })); l.position.set(.5, .5, .5); return l; };
@@ -4081,7 +4088,7 @@ el('libExport').addEventListener('click', () => {
   a.download = 'cube-library.json'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 });
 // ---------------------------------------------------------------- sessions: everything needed to see the same grid elsewhere
-const VIEW_SETTINGS = ['layerMode', 'opacity', 'cellOpacity', 'cellMode'];
+const VIEW_SETTINGS = ['layerMode', 'opacity', 'cellOpacity'];
 // session file v2: the session JSON, then the model's own bytes, then a fixed-size trailer giving the JSON's length, so
 // no string ever holds the model (a 300 MB STL as base64 inside one JSON string is past Firefox's string limit)
 const SESS_TRAILER = len => `\nSGB-SESSION-2 ${String(len).padStart(12, '0')}\n`, SESS_TRAILER_LEN = SESS_TRAILER(0).length;
@@ -4094,8 +4101,8 @@ async function readSession(f) {
 }
 const fromB64 = b => { const s = atob(b), u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u.buffer; };
 el('sessSave').addEventListener('click', async () => {
-  const m = await DB.get('model');
-  if (!m || !m.buf) { alert('Load a model first.'); return; }
+  const m = B.modelBuf && { name: B.modelName, buf: B.modelBuf };   // this tab's model (another tab may have stored a newer one)
+  if (!m) { alert('Load a model first.'); return; }
   const settings = {}; [...SETTINGS, ...VIEW_SETTINGS].forEach(id => settings[id] = el(id).value);
   settings.layer = el('layer').value; settings.showModel = el('showModel').checked; settings.showCells = el('showCells').checked; settings.showGrid = el('showGrid').checked;
   const edits = {};
@@ -4104,10 +4111,15 @@ el('sessSave').addEventListener('click', async () => {
     model: { name: m.name, bytes: m.buf.byteLength }, settings, groupsOn: [...groupOn], edits,
     library: LIB.map(s => { const o = stripped(s);
       o.solids = (s.solids || []).map(sol => sol.type === 'tris' ? { type: 'tris', tris: Array.from(sol.tris, v => Math.round(v * 1e4) / 1e4) } : sol); return o; }) };
-  const a = document.createElement('a');
   const head = new TextEncoder().encode(JSON.stringify(data));
-  a.href = URL.createObjectURL(new Blob([head, m.buf, SESS_TRAILER(head.length)], { type: 'application/octet-stream' }));
-  a.download = m.name.replace(/\.[^.]+$/, '').replace(/[^\w-]+/g, '_') + '-session.sgb'; a.click();
+  const blob = new Blob([head, m.buf, SESS_TRAILER(head.length)], { type: 'application/octet-stream' });
+  const name = m.name.replace(/\.[^.]+$/, '').replace(/[^\w-]+/g, '_') + '-session.sgb';
+  if (window.showSaveFilePicker) {     // Chrome/Edge: a save dialog, starting where the last session went
+    let h; try { h = await window.showSaveFilePicker({ id: 'sgb-session', suggestedName: name,
+      types: [{ description: 'SE Grid Builder session', accept: { 'application/octet-stream': ['.sgb'] } }] }); } catch (e) { return; }
+    const w = await h.createWritable(); await w.write(blob); await w.close(); return;
+  }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 });
 el('sessOpen').addEventListener('click', () => el('sessFile').click());
@@ -4124,7 +4136,7 @@ el('sessFile').addEventListener('change', async e => {
   for (const [k, v] of Object.entries(d.edits || {})) await DB.set(k, v);
   Object.entries(d.settings || {}).forEach(([id, v]) => { const x = el(id); if (!x) return; if (x.type === 'checkbox') x.checked = !!v; else x.value = v; });
   saveBuilderSettings(); applyDrawOrder();
-  await DB.set('model', { name: d.model.name, buf }).catch(() => {});
+  await storeModel(d.model.name, buf).catch(() => {});
   B.pendingGroups = d.groupsOn || null; B.ovKey = '';   // reload the edits for these settings
   showTab('bPage');
   await setModel(d.model.name, buf, true);
@@ -4367,12 +4379,16 @@ const B = { view: null, raw: null, model: null, parts: null, grid: null, T: null
 const GROUP_PRIORITY = ['turret', 'body', 'wheels', 'antennas'];
 const GROUP_COLORS = { body: '#e0606e', turret: '#d6a05a', wheels: '#8a8f96', antennas: '#b86464' };   // the model in a red no block uses (blocks: blue, tan, green)
 const colorOfGroup = g => GROUP_COLORS[g] || '#6f9a6f';
+// the model's colour in the 3D view: gray (owner, 2026-10-30: the coloured blocks stand out on it) or red by part
+const modelColor = g => el('modelColour').value === 'gray' ? '#a3a8ad' : colorOfGroup(g);
 let groupNames = [], groupOn = new Set(), modelMeshes = [];
 
 function initBuilderView() {
   const v = B.view = makeView(el('bView'), { overlay: true });
   v.modelGroup = new THREE.Group(); v.cellGroup = new THREE.Group(); v.gridGroup = new THREE.Group();
-  v.selGroup = new THREE.Group(); v.selGroup.renderOrder = 999; v.overlay.add(v.selGroup);   // selected cell: always on top
+  // a third pass over both (makeView): the model's outline, then the selected cell, always on top
+  v.top = new THREE.Scene(); v.outlineGroup = new THREE.Group(); v.top.add(v.outlineGroup);
+  v.selGroup = new THREE.Group(); v.selGroup.renderOrder = 999; v.top.add(v.selGroup);
   v.scene.add(v.gridGroup); applyDrawOrder();
   initViewPicking();
 }
@@ -4407,7 +4423,7 @@ function tplGeometry(i) {
 
 async function loadModelFile(file) {
   const buf = await file.arrayBuffer();
-  await DB.set('model', { name: file.name, buf }).catch(() => {});
+  await storeModel(file.name, buf).catch(() => {});
   setModel(file.name, buf, true, true);
 }
 // a newly loaded model: Front axis is its longest side (owner, 2026-10-20); Up stays unless it is that side
@@ -4424,7 +4440,7 @@ function setModel(name, buf, fresh, newFile) {
     const raw = /\.stl$/i.test(name) ? parseStl(buf) : parseObj(new TextDecoder().decode(buf));
     if (!raw.length) throw new Error('no triangles found');
     if (newFile) chooseAxes(raw, name);
-    B.raw = raw; B.modelName = name;
+    B.raw = raw; B.modelName = name; B.modelBuf = buf; TAB.model = name; saveTab();
     el('bModelName').textContent = `${name}: ${raw.length} part${raw.length > 1 ? 's' : ''}, ${raw.reduce((n, p) => n + p.tris.length / 9, 0)} triangles`;
     el('bEmpty').style.display = 'none';
     done = prepare(fresh);
@@ -4451,7 +4467,7 @@ async function prepare(frame) {
   });
   if (!groupNames.includes('wheels')) el('groups').insertAdjacentHTML('beforeend', '<div class="hint">No part matches the wheels words in Part groups, ' +
     'so wheels cannot be left out (an .stl, or an .obj with the wheels joined to the body, is one part).</div>');
-  const v = B.view; disposeGroup(v.modelGroup); modelMeshes = [];
+  const v = B.view; disposeGroup(v.modelGroup); disposeGroup(v.outlineGroup); modelMeshes = [];
   // the 3D view draws a big model simplified (merge box 1/500 of its longest side: about 1 cm on a 5 m car)
   const nTris = B.parts.reduce((k, p) => k + p.tris.length / 9, 0);
   const shown = nTris > VIEW_MAX_TRIS ? clusterParts(B.parts, Math.max(...prep.size) / 500) : B.parts;
@@ -4462,9 +4478,9 @@ async function prepare(frame) {
     // the model is an overlay drawn over the finished block view (see makeView): a depth-only pass, then colour on its
     // nearest surface only, so the opacity slider fades it over the blocks without showing its own back faces
     const depth = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ colorWrite: false, side: THREE.DoubleSide })); depth.renderOrder = 1;
-    const mat = new THREE.MeshLambertMaterial({ color: colorOfGroup(g), transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false, depthFunc: THREE.LessEqualDepth });
+    const mat = new THREE.MeshLambertMaterial({ color: modelColor(g), transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false, depthFunc: THREE.LessEqualDepth });
     const color = new THREE.Mesh(geo, mat); color.renderOrder = 2;
-    modelMeshes.push({ g, depth, color, mat }); v.modelGroup.add(depth, color);
+    modelMeshes.push({ g, depth, color, mat, geo }); v.modelGroup.add(depth, color);
   });
   applyModelVisibility();   // unticked parts (wheels) hidden while the first fit runs, not only after it
   saveBuilderSettings();
@@ -4476,17 +4492,20 @@ function frameModel() {
   const g = B.grid, v = B.view, c = new THREE.Vector3(g.ox + g.nx * g.b / 2, g.oy + g.ny * g.b / 2, 0);
   v.controls.target.copy(c); v.camera.position.set(c.x - g.nx * g.b * 0.9, c.y + g.ny * g.b * 1.4, c.z + g.nz * g.b * 2.2);
 }
+// how strongly near-ties go to simpler blocks (cube, half, slope...): a setting ("Simplify") until 2026-10-30, now fixed
+const PENALTY_SCALE = 4;
 function opts() {
   return { scale: (parseFloat(el('scale').value) || 100) / 100, block: parseFloat(el('block').value), offX: parseFloat(el('offX').value) || 0,
     offY: parseFloat(el('offY').value) || 0, centre: el('centre').value, fill: el('fill').value,
-    penaltyScale: isNaN(parseFloat(el('simplify').value)) ? 4 : parseFloat(el('simplify').value),
+    penaltyScale: PENALTY_SCALE,
     buildable: el('buildable').value === 'auto' ? undefined : el('buildable').value === 'on',
     groupsOn: groupOn, groupNames, groupPriority: GROUP_PRIORITY };
 }
 // manual edits: cell "x,y,z" -> template signature (stable when the library changes), or 'none'; per model + grid settings
 const gridSig = () => { const o = opts(); return [B.modelName, el('bLength').value, el('bFront').value, el('bUp').value, o.scale, o.block, o.centre, o.offX, o.offY].join('|'); };
-async function loadOverrides() { B.ovKey = gridSig(); B.overrides = (await DB.get('ov:' + B.ovKey)) || {}; B.undo = []; }
-const saveOverrides = () => DB.set('ov:' + B.ovKey, B.overrides).catch(() => {});
+async function loadOverrides() { const was = B.ovKey; B.ovKey = gridSig();
+  if (was !== B.ovKey) { if (was) tell({ t: 'bye', key: was }); shared(false); tell({ t: 'hello', key: B.ovKey }); } B.overrides = (await DB.get('ov:' + B.ovKey)) || {}; B.undo = []; }
+const saveOverrides = () => DB.set('ov:' + B.ovKey, B.overrides).then(() => tell({ t: 'edits', key: B.ovKey })).catch(() => {});
 function effFit(x, y, z) {             // >= 0 template, -2 no block passes, -1 empty, -3 forced no block
   const k = x + ',' + y + ',' + z;
   if (k in B.overrides) { const v = B.overrides[k]; if (v === 'none') return -3; const ti = B.T.bySig.get(v); if (ti !== undefined) return ti; }
@@ -4611,7 +4630,7 @@ async function rebuild() {
   if (/^fitting/.test(state.textContent)) state.textContent = before;
   installTemplates(T, ver);
   B.grid = grid; B.fitMs = performance.now() - t0;
-  DB.set('lastFitMs', B.fitMs).catch(() => {});
+  DB.set('lastFitMs:' + B.modelName, B.fitMs).catch(() => {});
   if (gridSig() !== B.ovKey) { await loadOverrides(); B.selected = null; }
   showSel(); applyModelVisibility(); updateInfo(); drawCells();
 }
@@ -4623,21 +4642,19 @@ function drawCells() {
   const L = parseInt(el('layer').value) - 1, mode = el('layerMode').value;
   const shown = y => mode === 'all' || (mode === 'upto' ? y <= L : y === L);
   if (el('showCells').checked) {
-    const op = parseFloat(el('cellOpacity').value), shapes = el('cellMode').value === 'shapes', byGeo = new Map(), edges = [];
+    const op = parseFloat(el('cellOpacity').value), byGeo = new Map(), edges = [];
     for (let y = 0; y < ny; y++) { if (!shown(y)) continue;
       for (let z = 0; z < nz; z++) for (let x = 0; x < nx; x++) {
         const ci = idx(x, y, z), cv = cell[ci], f = effFit(x, y, z);
         if (f === -3 || (!cv && f < 0)) continue;
         const c = [ox + (x + .5) * b, oy + (y + .5) * b, oz + (z + .5) * b];
-        if (shapes && f === -2) { edges.push({ geo: boxEdges, c, s: b * 0.9, faint: true }); continue; }
-        if (!shapes && !cv) continue;
-        const key = shapes ? f : 'cube';
-        if (!byGeo.has(key)) byGeo.set(key, []);
-        byGeo.get(key).push({ c, v: cv || 1, cell: [x, y, z] });
+        if (f === -2) { edges.push({ geo: boxEdges, c, s: b * 0.9, faint: true }); continue; }
+        if (!byGeo.has(f)) byGeo.set(f, []);
+        byGeo.get(f).push({ c, cell: [x, y, z] });
       } }
     const m = new THREE.Matrix4(), col = new THREE.Color();
     byGeo.forEach((list, key) => {
-      const geo = key === 'cube' ? boxGeo : tplGeometry(key);
+      const geo = tplGeometry(key);
       // see-through blocks show only their nearest surface (a depth-only pass first, like the model), so the opacity
       // slider is the real see-through amount instead of many stacked faces adding up to nearly solid
       const see = op < 1;
@@ -4649,12 +4666,10 @@ function drawCells() {
         depth.instanceMatrix = inst.instanceMatrix; depth.renderOrder = 1; v.cellGroup.add(depth);
       }
       list.forEach((it, n) => {
-        const sz = key === 'cube' ? b * 0.94 : b * 0.98;
+        const sz = b * 0.98;
         m.makeScale(sz, sz, sz); m.setPosition(it.c[0], it.c[1], it.c[2]); inst.setMatrixAt(n, m);
-        if (key === 'cube') { col.set(colorOfGroup(groupNames[Math.abs(it.v) - 1])); if (it.v < 0) col.lerp(new THREE.Color('#ffffff'), 0.4); }
-        else col.copy(T.list[key].color);
-        inst.setColorAt(n, col);
-        edges.push({ geo: key === 'cube' ? boxEdges : tplEdges[key], c: it.c, s: sz });
+        inst.setColorAt(n, col.copy(T.list[key].color));
+        edges.push({ geo: tplEdges[key], c: it.c, s: sz });
       });
       inst.userData.cells = list.map(it => it.cell);
       v.cellGroup.add(inst);
@@ -4680,11 +4695,15 @@ function drawCells() {
   }
   v.gridGroup.add(new THREE.Box3Helper(new THREE.Box3(new THREE.Vector3(ox, oy, oz), new THREE.Vector3(ox + nx * b, oy + ny * b, oz + nz * b)), 0x55606c));
   if (el('showGrid').checked && mode !== 'all') {
-    const y = oy + L * b, pts = [];
-    for (let x = 0; x <= nx; x++) pts.push(ox + x * b, y, oz, ox + x * b, y, oz + nz * b);
-    for (let z = 0; z <= nz; z++) pts.push(ox, y, oz + z * b, ox + nx * b, y, oz + z * b);
+    // the layer's cells as a wireframe: its floor and ceiling grids and the uprights between them
+    const y0 = oy + L * b, y1 = y0 + b, pts = [];
+    for (const y of [y0, y1]) {
+      for (let x = 0; x <= nx; x++) pts.push(ox + x * b, y, oz, ox + x * b, y, oz + nz * b);
+      for (let z = 0; z <= nz; z++) pts.push(ox, y, oz + z * b, ox + nx * b, y, oz + z * b);
+    }
+    for (let x = 0; x <= nx; x++) for (let z = 0; z <= nz; z++) pts.push(ox + x * b, y0, oz + z * b, ox + x * b, y1, oz + z * b);
     const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
-    v.gridGroup.add(new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: 0xe8a33d, transparent: true, opacity: 0.6 })));
+    v.gridGroup.add(new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: 0xe8a33d, transparent: true, opacity: 0.5 })));
   }
   v.gridGroup.add(new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(ox + nx * b + 0.3, oy, 0), 1.2, 0xe8a33d, 0.35, 0.2));
   drawMap();
@@ -5049,28 +5068,12 @@ el('editsExport').addEventListener('click', () => {
   });
   const data = { format: 'se-grid-builder-edits', version: 1, exported: new Date().toISOString(),
     model: { file: B.modelName, length: +el('bLength').value, front: el('bFront').value, up: el('bUp').value, groups: el('bGroups').value, groupsOn: [...groupOn] },
-    grid: { scale: +el('scale').value / 100, block: +el('block').value, centre: el('centre').value, offX: +el('offX').value, offY: +el('offY').value, fill: el('fill').value, penaltyScale: +el('simplify').value, buildable: opts().buildable },
+    grid: { scale: +el('scale').value / 100, block: +el('block').value, centre: el('centre').value, offX: +el('offX').value, offY: +el('offY').value, fill: el('fill').value, penaltyScale: PENALTY_SCALE, buildable: opts().buildable },
     library: LIB.filter(s => s.use).map(s => s.id), cells };
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }));
   a.download = `grid-edits-${B.modelName.replace(/\.[^.]+$/, '').replace(/[^\w-]+/g, '_')}.json`; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-});
-el('cellReport').addEventListener('click', async () => {
-  if (!B.selected || !B.grid) { alert('Select a cell on the layer map first.'); return; }
-  const [x, y, z] = B.selected, g = B.grid, ci = g.idx(x, y, z), f = effFit(x, y, z), name = ti => LIB[B.T.list[ti].shape].key;
-  const alts = [];
-  for (let a = 0; a < g.ALT; a++) { const ti = g.alt[ci * g.ALT + a]; if (ti >= 0) alts.push(`${name(ti)} ${g.altScore[ci * g.ALT + a].toFixed(2)}`); }
-  const used = LIB.filter(s => s.use), mods = used.filter(s => s.id.startsWith('mesh:'));
-  const text = [`SE Grid Builder cell report`,
-    `model: ${B.modelName}; length ${el('bLength').value} m; front ${el('bFront').value}; up ${el('bUp').value}; groups "${el('bGroups').value}"; on: ${[...groupOn].join(', ')}`,
-    `grid: scale ${el('scale').value}%; block ${el('block').value} m; centre ${el('centre').value}; forward ${el('offX').value}; up ${el('offY').value}; cells ${el('fill').value}; simplify ${el('simplify').value}; buildable surfaces ${el('buildable').value}`,
-    `library: ${used.length} blocks in use (${mods.length} mod blocks${mods.length ? ': ' + mods.slice(0, 12).map(s => s.key).join(' ') + (mods.length > 12 ? ' ...' : '') : ''})`,
-    `cell: column ${x + 1}, layer ${y + 1}, row ${z + 1}; shown: ${f >= 0 ? name(f) : f === -3 ? 'no block (edited)' : 'no block'}${(x + ',' + y + ',' + z) in B.overrides ? ' (edited)' : ''}`,
-    `best matches: ${alts.join(', ') || 'none'}`,
-    `I would use: `].join('\n');
-  try { await navigator.clipboard.writeText(text); el('cellReport').textContent = 'Copied: paste it in the chat'; setTimeout(() => el('cellReport').textContent = 'Copy cell report for Claude', 2500); }
-  catch (e) { prompt('Copy this:', text); }
 });
 // ---------------------------------------------------------------- benchmark: a finished blueprint as the reference
 // (benchmark.js, design-benchmark.md). The reference is extra state: the fit and the edits are untouched, and the
@@ -5173,7 +5176,7 @@ el('benchExport').addEventListener('click', () => {
   const grid = bn.bp.grids[bn.gi];
   const data = benchmarkFile({ model: { file: B.modelName, length: +el('bLength').value, front: el('bFront').value, up: el('bUp').value, groups: el('bGroups').value, groupsOn: [...groupOn] },
     grid: { scale: +el('scale').value / 100, block: +el('block').value, centre: el('centre').value, offX: +el('offX').value, offY: +el('offY').value, fill: el('fill').value,
-      penaltyScale: +el('simplify').value, buildable: opts().buildable, armour: el('bpArmour').value },
+      penaltyScale: PENALTY_SCALE, buildable: opts().buildable, armour: el('bpArmour').value },
     library: LIB.filter(s => s.use).map(s => s.id),
     reference: { name: bn.bp.name || bn.source, source: bn.source, grid: grid.name, size: grid.size, blocks: grid.blocks, align: bn.align,
       otherGrids: bn.bp.grids.filter(x => x !== grid).map(x => `${x.name} (${x.blocks.length})`) }, result: bn.result });
@@ -5216,32 +5219,55 @@ function updateInfo() {
   if (!g) { el('info').textContent = B.parts ? 'No model parts selected.' : ''; return; }
   const { nx, ny, nz, b, cell, fit } = g;
   let blocks = 0, none = 0; for (let i = 0; i < cell.length; i++) if (cell[i]) { if (fit[i] >= 0) blocks++; else none++; }
-  el('info').innerHTML = `Grid <b>${nx}</b> long x <b>${nz}</b> wide x <b>${ny}</b> high blocks<br>= ${(nx * b).toFixed(1)} x ${(nz * b).toFixed(1)} x ${(ny * b).toFixed(1)} m<br>` +
-    `<b>${blocks}</b> blocks, ${none} cells with no block passing<br><span class="hint">${B.T.list.length} block orientations from ${LIB.filter(s => s.use).length} library blocks, fitted in ${Math.round(B.fitMs)} ms${B.fitTris ? `; model simplified to ${B.fitTris.toLocaleString()} triangles for the fit` : ''}</span>`;
+  el('info').innerHTML = `Grid <b>${nx}</b> long x <b>${nz}</b> wide x <b>${ny}</b> high blocks<br><b>${blocks}</b> blocks, ${none} cells with no block passing`;
   const lay = el('layer'); lay.max = ny; if (parseInt(lay.value) > ny) lay.value = ny;
   el('layerLabel').textContent = `layer ${lay.value} of ${ny}`;
 }
 function applyModelVisibility() {
-  const on = el('showModel').checked, op = parseFloat(el('opacity').value);
-  B.view.modelGroup.scale.setScalar(opts().scale);
-  modelMeshes.forEach(m => { const vis = on && groupOn.has(m.g); m.depth.visible = vis; m.color.visible = vis; m.mat.opacity = op; });
+  const on = el('showModel').checked, op = parseFloat(el('opacity').value), solid = el('onTop').value === 'solid', outline = el('outline').value === 'on';
+  B.view.modelGroup.scale.setScalar(opts().scale); B.view.outlineGroup.scale.setScalar(opts().scale);
+  modelMeshes.forEach(m => { const vis = on && groupOn.has(m.g);
+    // both solid: model and blocks in one depth test, the model pushed back a little so a block face lying on its surface
+    // wins; whatever model shows is model sticking out past the blocks. Both opacity sliders still work: the model's
+    // depth-only and colour passes go after the blocks and their edges (three.js draws transparent objects by
+    // renderOrder), so the model fades over the blocks behind it and hides none in front of it
+    m.depth.visible = vis; m.color.visible = vis; m.mat.opacity = op;
+    m.depth.renderOrder = solid ? 5 : 1; m.color.renderOrder = solid ? 6 : 2;
+    m.depth.material.transparent = solid; m.depth.material.polygonOffset = solid; m.depth.material.polygonOffsetFactor = 1; m.depth.material.polygonOffsetUnits = 2;
+    m.depth.material.needsUpdate = true;
+    m.mat.color.set(modelColor(m.g)); m.mat.polygonOffset = solid; m.mat.polygonOffsetFactor = 1; m.mat.polygonOffsetUnits = 2; m.mat.needsUpdate = true;
+    const ovis = outline && groupOn.has(m.g);   // the outline stands on its own: model surface off, outline over solid blocks
+    if (ovis && !m.outline) makeOutline(m);
+    if (m.outline) { m.outline.visible = ovis; m.odepth.visible = ovis; } });
+}
+// the model's outline: its sharp edges (over 30 degrees; higher loses a cast turret's lines and still keeps grilles) as lines over everything, only where the model itself would
+// be seen (its own depth-only pass, pushed back so its edges pass), so the shape reads over solid blocks
+function makeOutline(m) {
+  m.odepth = new THREE.Mesh(m.geo, new THREE.MeshBasicMaterial({ colorWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 2 }));
+  m.odepth.renderOrder = 1;
+  m.outline = new THREE.LineSegments(new THREE.EdgesGeometry(m.geo, 30), new THREE.LineBasicMaterial({ color: 0xff2238, transparent: true, opacity: 0.75, depthFunc: THREE.LessEqualDepth }));
+  m.outline.renderOrder = 2; B.view.outlineGroup.add(m.odepth, m.outline);
 }
 // what is drawn on top: the overlay scene is drawn after a depth clear, so whatever is in it is never hidden by the other
 function applyDrawOrder() {
   const v = B.view; if (!v) return;
-  const blocksOnTop = el('onTop').value !== 'model';
+  const top = el('onTop').value;
   v.scene.remove(v.cellGroup, v.modelGroup); v.overlay.remove(v.cellGroup, v.modelGroup);
-  if (blocksOnTop) { v.scene.add(v.modelGroup); v.overlay.add(v.cellGroup); } else { v.scene.add(v.cellGroup); v.overlay.add(v.modelGroup); }
+  if (top === 'solid') v.scene.add(v.cellGroup, v.modelGroup);
+  else if (top === 'model') { v.scene.add(v.cellGroup); v.overlay.add(v.modelGroup); } else { v.scene.add(v.modelGroup); v.overlay.add(v.cellGroup); }
 }
-const SETTINGS = ['bLength', 'bFront', 'bUp', 'bGroups', 'scale', 'block', 'centre', 'offX', 'offY', 'fill', 'simplify', 'buildable', 'onTop'];
-function saveBuilderSettings() { const s = {}; SETTINGS.forEach(id => s[id] = el(id).value); DB.set('builder', s).catch(() => {}); }
+const SETTINGS = ['bLength', 'bFront', 'bUp', 'bGroups', 'scale', 'block', 'centre', 'offX', 'offY', 'fill', 'buildable', 'onTop', 'outline', 'modelColour'];
+function saveBuilderSettings() { const s = {}; SETTINGS.forEach(id => s[id] = el(id).value); DB.set('builder', s).catch(() => {});
+  if (B.modelName) DB.set('settings:' + B.modelName, s).catch(() => {});
+  TAB.settings = s; saveTab(); }
 ['bLength', 'bFront', 'bUp', 'bGroups'].forEach(id => el(id).addEventListener('change', () => prepare(true)));
-['scale', 'block', 'centre', 'offX', 'offY', 'fill', 'simplify', 'buildable'].forEach(id => el(id).addEventListener('change', () => { saveBuilderSettings(); rebuild(); }));
-['showCells', 'showGrid', 'layerMode', 'cellMode'].forEach(id => el(id).addEventListener('change', drawCells));
+['scale', 'block', 'centre', 'offX', 'offY', 'fill', 'buildable'].forEach(id => el(id).addEventListener('change', () => { saveBuilderSettings(); rebuild(); }));
+['showCells', 'showGrid', 'layerMode'].forEach(id => el(id).addEventListener('change', drawCells));
 el('cellOpacity').addEventListener('input', drawCells);
 el('layer').addEventListener('input', () => { if (B.selected) B.selected[1] = parseInt(el('layer').value) - 1; updateInfo(); showSel(); drawCells(); });
 el('showModel').addEventListener('change', applyModelVisibility);
-el('onTop').addEventListener('change', () => { applyDrawOrder(); saveBuilderSettings(); });
+el('onTop').addEventListener('change', () => { applyDrawOrder(); applyModelVisibility(); drawCells(); saveBuilderSettings(); });
+['outline', 'modelColour'].forEach(id => el(id).addEventListener('change', () => { applyModelVisibility(); saveBuilderSettings(); }));
 el('opacity').addEventListener('input', applyModelVisibility);
 el('bPick').addEventListener('click', () => el('bFile').click());
 el('bFile').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; if (f) loadModelFile(f); });
@@ -5262,11 +5288,32 @@ function showTab(id) {
   if (id === 'bPage') { BPUI.refreshArmour(); B.view.resize(); if (B.parts && B.Tver !== libVersion && B.fitLibVer !== libVersion) rebuild(); else drawMap(); }
 }
 document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
+// side bar sections: open or closed as last left in this browser
+document.querySelectorAll('details.sec').forEach(d => {
+  try { const s = localStorage.getItem('sgb-sec-' + d.dataset.sec); if (s) d.open = s === '1'; } catch {}
+  d.addEventListener('toggle', () => { try { localStorage.setItem('sgb-sec-' + d.dataset.sec, d.open ? '1' : '0'); } catch {} });
+});
 window.addEventListener('resize', () => { if (current === 'skPage') SK.view.resize(); if (current === 'bPage') { B.view.resize(); drawMap(); } });
 
 // blueprint export (blueprint.js, blueprint_ui.js)
 const BPUI = initBlueprintUI({ THREE, el, DB, B, lib: () => LIB, effFit, shapeGeometry, shapeColor });
 
+// what another tab changed: the library is shared; edits only when it has the same model and grid
+// open (then this tab's undo starts over, since its steps may no longer match)
+const shared = on => { el('tabNote').textContent = on === false ? '' : 'also open in another tab: edits are shared'; };
+if (CHANNEL) CHANNEL.onmessage = async ({ data: m }) => {
+  if (m.t === 'library') {
+    const saved = await DB.get('library'); if (!Array.isArray(saved)) return;
+    LIB = saved; libVersion++; thumbCache.clear(); renderLibrary(); refreshSketchList(); if (B.raw) rebuild();
+  }
+  else if (!B.ovKey || m.key !== B.ovKey) return;
+  else if (m.t === 'edits') {
+    B.overrides = (await DB.get('ov:' + B.ovKey)) || {}; B.undo = []; showSel(); drawCells(); shared();
+  } else if (m.t === 'hello') { tell({ t: 'here', key: B.ovKey }); shared(); }
+  else if (m.t === 'here') shared();
+  else if (m.t === 'bye') { shared(false); tell({ t: 'hello', key: B.ovKey }); }
+};
+addEventListener('pagehide', () => { if (B.ovKey) tell({ t: 'bye', key: B.ovKey }); });
 window.SGB = { B, SK };   // for debugging in the browser console
 (async function start() {
   el('saveState').textContent = 'loading the saved library and model...';
@@ -5286,14 +5333,17 @@ window.SGB = { B, SK };   // for debugging in the browser console
   }
   else { LIB = seedLibrary(); adoptOldSketches(); libChanged(); }
   el('bGroups').value = 'turret=turret;wheels=wheel;antennas=antenn';
-  const bs = await DB.get('builder'); if (bs) SETTINGS.forEach(id => { if (bs[id] !== undefined) el(id).value = bs[id]; });
+  const last = await DB.get('model');
+  if (last && last.buf) await storeModel(last.name, last.buf).catch(() => {});   // stored before 2026-10-30: one model only
+  const startModel = TAB.model || (last && last.name);
+  const bs = TAB.settings || await DB.get('settings:' + startModel) || await DB.get('builder'); if (bs) SETTINGS.forEach(id => { if (bs[id] !== undefined) el(id).value = bs[id]; });
   initSketchView(); initBuilderView();
   refreshSketchList(); renderLibrary(); restoreDirs(); BPUI.refreshArmour();
   showTab('bPage');                     // the Grid Builder is the working tab; the other two are reference
   // a long last fit, or a grid more than 60 blocks long (a ship hull), waits for "Fit now" instead of fitting on open
-  const lastFit = await DB.get('lastFitMs'), blocksLong = +el('bLength').value * (+el('scale').value / 100) / +el('block').value;
+  const lastFit = await DB.get('lastFitMs:' + startModel), blocksLong = +el('bLength').value * (+el('scale').value / 100) / +el('block').value;
   if (lastFit > 15000 || blocksLong > 60) B.deferFit = Math.max(lastFit || 0, 1);
-  const m = await DB.get('model'); if (m && m.buf) await setModel(m.name, m.buf, true);
+  const m = await storedModel(startModel); if (m) await setModel(m.name, m.buf, true);
   el('saveState').textContent = 'saved in this browser';
   window.sgbReady = true;
 })().catch(err => sgbError('Could not start: ' + (err && err.message || err)));
